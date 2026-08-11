@@ -216,3 +216,16 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# EMBED-ME project-specific
+releases/
+docs/
+HANDOFF*.md
+TODO.md
+notes_ideas_alex.txt
+*.bundle
+.claude/
+*.tif
+*.tiff
+.cache/
+*.aux.xml
