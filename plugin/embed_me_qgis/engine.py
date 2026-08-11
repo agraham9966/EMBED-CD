@@ -16,7 +16,7 @@ there is no vendored copy; `__init__.py` puts the repo root on sys.path for that
 """
 try:
     from .embed_me import (                        # noqa: F401  (zip install)
-        cells, gdalio, grid, head, job, objects, score, vrt)
+        cells, gdalio, grid, head, job, objects, score, source, vrt)
 except ImportError:                                          # dev mode: engine at the repo root
     from embed_me import (                          # noqa: F401
-        cells, gdalio, grid, head, job, objects, score, vrt)
+        cells, gdalio, grid, head, job, objects, score, source, vrt)

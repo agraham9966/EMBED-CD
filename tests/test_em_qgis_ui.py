@@ -192,7 +192,7 @@ def _tiny_job(d):
     mb[2, 2] = 1.0
     n = np.full((4, 4), 256.0, np.float32)
     s = np.full((4, 4), 0.4, np.float32)
-    CE.write_cells(os.path.join(d, "cells_2019-2024_16px_EPSG32610_500000_5399360.tif"),
+    CE.write_cells(os.path.join(d, "cells_2019-2024_160m_EPSG32610_500000_5399360.tif"),
                    ma, mb, n, s, s, "EPSG:32610", from_origin(x0, y0, res, res), 16)
     return vrt
 

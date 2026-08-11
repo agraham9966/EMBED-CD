@@ -123,11 +123,11 @@ def test_adjacent_tiles_produce_aligned_non_overlapping_cells():
 
 def test_filename_is_a_full_signature():
     t = Tile(CRS, 400000.0, 5400000.0, 410240.0, 5410240.0)
-    base = CE.cells_filename(t, 2019, 2024, 16)
-    assert base != CE.cells_filename(t, 2020, 2024, 16), "years must change the name"
-    assert base != CE.cells_filename(t, 2019, 2024, 32), "cell size must change the name"
+    base = CE.cells_filename(t, 2019, 2024, 160)
+    assert base != CE.cells_filename(t, 2020, 2024, 160), "years must change the name"
+    assert base != CE.cells_filename(t, 2019, 2024, 320), "cell size must change the name"
     other = Tile(CRS, 410240.0, 5400000.0, 420480.0, 5410240.0)
-    assert base != CE.cells_filename(other, 2019, 2024, 16), "position must change the name"
+    assert base != CE.cells_filename(other, 2019, 2024, 160), "position must change the name"
     print(f"ok filename is a full signature: {base}")
 
 
@@ -142,13 +142,13 @@ def test_job_writes_cells_and_resumes_correctly():
     assert not [f for f in os.listdir(d) if f.startswith("cells_")]
 
     src2 = T.FakeAlphaEarth(T.TILES)
-    job.run(T.BBOX, 2019, 2024, d, dst_crs="EPSG:3857", res_m=T.RES, src=src2, cell_px=16)
+    job.run(T.BBOX, 2019, 2024, d, dst_crs="EPSG:3857", res_m=T.RES, src=src2, cell_m=160)
     made = [f for f in os.listdir(d) if f.startswith("cells_")]
     assert src2.fetches, "must re-fetch: the tiles existed but the cells did not"
     assert len(made) == 2, made
 
     src3 = T.FakeAlphaEarth(T.TILES)
-    job.run(T.BBOX, 2019, 2024, d, dst_crs="EPSG:3857", res_m=T.RES, src=src3, cell_px=16)
+    job.run(T.BBOX, 2019, 2024, d, dst_crs="EPSG:3857", res_m=T.RES, src=src3, cell_m=160)
     assert not src3.fetches, "with both tiles and cells present, resume fetches nothing"
     print("ok job writes the cell store and resumes on it correctly")
 

@@ -33,7 +33,28 @@ _S3_BASE = "s3://us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/"
 
 _UA = "embed-me/0.11 (QGIS plugin)"
 TILE_PX = 1024          # = the COG block size; see fact 3. 10.24 km at native 10 m.
+NATIVE_RES = 10.0
+MAX_FACTOR = 16         # 160 m — one whole embedding cell per source pixel, the useful floor
 NODATA_RAW = -128
+
+
+def factor_for(res_m):
+    """Which built-in overview to read for a target output resolution: the coarsest power-of-two
+    reduction that is still at least as fine as what was asked for, so nothing is ever upsampled.
+
+    These COGs carry 13 overview levels (20 m .. 80 km), and reading one is dramatically cheaper
+    per unit of GROUND: a 1024 px read at factor 8 covers the whole 82 km file for the same bytes
+    a full-res read spends on 10 km. Measured: 24.6 s per 1000 km2 at full res, 0.59 s at 80 m.
+
+    Capped at MAX_FACTOR because the pooled embedding cells are 160 m; past that a cell would be
+    smaller than one source pixel and the classifier would have nothing to pool.
+    """
+    f = 1
+    while f * 2 <= MAX_FACTOR and NATIVE_RES * f * 2 <= res_m:
+        f *= 2
+    return f
+
+
 _PARQUET_COLS = ["path", "year", "crs",
                  "utm_west", "utm_south", "utm_east", "utm_north",
                  "wgs84_west", "wgs84_south", "wgs84_east", "wgs84_north"]
@@ -150,9 +171,15 @@ class Index:
 class AlphaEarthSource:
     """The change job's view of AlphaEarth: list tiles for an area, fetch a tile for a year."""
 
-    def __init__(self, cache_dir=None, tile_px=TILE_PX, index=None):
+    def __init__(self, cache_dir=None, tile_px=TILE_PX, index=None, factor=1):
         self.index = index or Index(cache_dir)
         self.tile_px = tile_px
+        # `factor` reads a built-in overview instead of full res. The tile stays tile_px PIXELS,
+        # so it covers `factor` times more GROUND for identical memory — which is the whole trick:
+        # a big area becomes few large reads rather than thousands of small ones, and peak RAM
+        # does not move.
+        self.factor = int(factor)
+        self.res = NATIVE_RES * self.factor
         self._by_zone = {}
 
     def years(self):
@@ -172,7 +199,7 @@ class AlphaEarthSource:
         from .gdalio import transform_bounds
 
         tiles = set()
-        step = self.tile_px * 10.0                     # native resolution is 10 m
+        step = self.tile_px * self.res                 # ground per tile scales with the overview
         for r in self.index.covering(bbox_4326, year):
             crs = str(r["crs"])
             left, bottom, right, top = transform_bounds("EPSG:4326", crs, *bbox_4326)
@@ -209,12 +236,12 @@ class AlphaEarthSource:
             # GDAL needs the /vsicurl/ prefix spelled out. rasterio recognised a bare https URL
             # and added it silently, so the port looked fine against the local-file tests and
             # fetched precisely nothing from the real bucket.
-            ds = G.open_ds(_vsicurl(row["path"]))
+            ds = G.open_ds(_vsicurl(row["path"]), self.factor)
             x0, y0 = float(row["utm_west"]), float(row["utm_south"])   # bottom-left (fact 1)
-            col_off = int(round((tile.west - x0) / 10.0))
-            row_off = int(round((tile.south - y0) / 10.0))             # rows count NORTHWARD
-            width = int(round((tile.east - tile.west) / 10.0))
-            height = int(round((tile.north - tile.south) / 10.0))
+            col_off = int(round((tile.west - x0) / self.res))
+            row_off = int(round((tile.south - y0) / self.res))         # rows count NORTHWARD
+            width = int(round((tile.east - tile.west) / self.res))
+            height = int(round((tile.north - tile.south) / self.res))
             width = min(width, ds.RasterXSize - col_off)
             height = min(height, ds.RasterYSize - row_off)
             if width <= 0 or height <= 0:
@@ -224,7 +251,8 @@ class AlphaEarthSource:
 
         raw = raw[:, ::-1, :]                                          # flip to north-up
         cube = _dequantize(np.moveaxis(raw, 0, -1))                    # -> [H,W,64] float32
-        transform = G.Transform.from_origin(tile.west, tile.south + height * 10.0, 10.0, 10.0)
+        transform = G.Transform.from_origin(tile.west, tile.south + height * self.res,
+                                            self.res, self.res)
         return cube, str(row["crs"]), transform
 
     def _row_for(self, tile, year):

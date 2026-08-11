@@ -25,7 +25,7 @@ def _write_change(path, arr):
 
 def _write_cells_for(d, ma, mb, n, smean, smax, west, north, cell_px=16, ya=2019, yb=2024):
     tr = GD.Transform.from_origin(west, north, RES, RES)
-    name = (f"cells_{ya}-{yb}_{cell_px}px_{CRS.replace(':', '')}_"
+    name = (f"cells_{ya}-{yb}_{cell_px * RES:g}m_{CRS.replace(':', '')}_"
             f"{int(west)}_{int(north - ma.shape[0] * cell_px * RES)}.tif")
     return CE.write_cells(os.path.join(d, name), ma, mb, n, smean, smax, CRS, tr, cell_px)
 
@@ -83,7 +83,7 @@ def test_vector_is_the_count_weighted_mean_of_covered_cells():
 
         polys, crs = OB.polygonize(p, 0.1, min_area_ha=0.1)
         assert len(polys) == 1
-        idx = OB.CellIndex(d, 2019, 2024, 16)
+        idx = OB.CellIndex(d, 2019, 2024, 160)
         assert idx, "cell files should be discovered"
         vec = OB.attach_vectors(polys, idx, str(crs))[0]
         assert vec.shape == (2 * depth,)
@@ -111,7 +111,7 @@ def test_unequal_counts_are_weighted_not_averaged():
         _write_cells_for(d, ma, mb, n, smean, smean, X0, Y0)
 
         polys, crs = OB.polygonize(p, 0.1, min_area_ha=0.1)
-        vec = OB.attach_vectors(polys, OB.CellIndex(d, 2019, 2024, 16), str(crs))[0]
+        vec = OB.attach_vectors(polys, OB.CellIndex(d, 2019, 2024, 160), str(crs))[0]
         expect = (0.0 * 256 + 4.0 * 64) / (256 + 64)          # = 0.8, not 2.0
         assert np.allclose(vec[:depth], expect), (vec[:depth], expect)
         print(f"ok cells are count-weighted ({expect:.2f}), not averaged flat (2.00)")
@@ -135,7 +135,7 @@ def test_pool_cutoff_selects_high_change_cells_and_never_blanks_a_polygon():
         _write_cells_for(d, ma, mb, n, smean, smean, X0, Y0)
 
         polys, crs = OB.polygonize(p, 0.1, min_area_ha=0.1)
-        idx = OB.CellIndex(d, 2019, 2024, 16)
+        idx = OB.CellIndex(d, 2019, 2024, 160)
         loose = OB.attach_vectors(polys, idx, str(crs))[0][:depth]
         tight = OB.attach_vectors(polys, idx, str(crs), pool_cutoff=0.5)[0][:depth]
         assert np.allclose(loose, (10.0 + 3 * 1.0) / 4), loose

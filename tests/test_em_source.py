@@ -160,6 +160,51 @@ def test_live():
           f"p99={np.percentile(sc[ok], 99):.4f}")
 
 
+def test_factor_picks_an_overview_that_is_never_coarser_than_asked():
+    """Detail must never be upsampled from a coarser overview, and must stop at 160 m because
+    that is one whole embedding cell per source pixel — past it the classifier has nothing to
+    pool."""
+    from embed_me.source import factor_for, NATIVE_RES, MAX_FACTOR
+
+    for res, want in ((10, 1), (20, 2), (30, 2), (50, 4), (100, 8), (160, 16), (5000, 16)):
+        got = factor_for(res)
+        assert got == want, f"factor_for({res}) = {got}, expected {want}"
+        assert NATIVE_RES * got <= max(res, NATIVE_RES), "never read coarser than requested"
+    assert factor_for(1e9) == MAX_FACTOR, "capped so 160 m cells stay buildable"
+    print("ok factor_for picks the coarsest overview that is still fine enough")
+
+
+def test_a_coarse_tile_covers_proportionally_more_ground():
+    """The win is per unit GROUND, not per pixel: a tile stays 1024 px (so memory is flat) and
+    covers `factor` times more ground on each side. Without this a coarse job would issue just
+    as many HTTP round trips and save almost nothing."""
+    from embed_me.source import AlphaEarthSource
+
+    base = AlphaEarthSource(index=object(), factor=1)
+    coarse = AlphaEarthSource(index=object(), factor=8)
+    assert base.res == 10.0 and coarse.res == 80.0
+    assert base.tile_px == coarse.tile_px, "same pixels = same memory per tile"
+    ground = lambda s: s.tile_px * s.res
+    assert ground(coarse) == ground(base) * 8, "8x the ground for the same bytes"
+    assert abs(ground(coarse) / 1000 - 81.92) < 1e-6, "one whole COG per read at 80 m"
+    print("ok a coarse tile covers 8x the ground for the same memory")
+
+
+def test_the_same_physical_cell_has_the_same_name_at_every_detail():
+    """A 160 m cell is 16 px of full-res source but 2 px of the 80 m overview, and the two build
+    the SAME vector (measured: cosine 0.99998). Naming cells by pixel count would invent a cache
+    miss between identical files and silently re-download the area on a Detail change."""
+    from embed_me import cells as CE
+    from embed_me.source import Tile
+
+    t = Tile("EPSG:32610", 500000.0, 5399360.0, 510240.0, 5409600.0)
+    assert CE.cells_filename(t, 2019, 2024, 160.0) == CE.cells_filename(t, 2019, 2024, 160.0)
+    assert "160m" in CE.cells_filename(t, 2019, 2024, 160.0)
+    assert CE.cells_filename(t, 2019, 2024, 160.0) != CE.cells_filename(t, 2019, 2024, 320.0), \
+        "a genuinely different cell size must still change the name"
+    print("ok cell files are named by ground size, so Detail does not invalidate them")
+
+
 if __name__ == "__main__":
     test_dequantize()
     test_fetch_flips_and_places()
@@ -170,4 +215,7 @@ if __name__ == "__main__":
         test_live()
     else:
         print("(skipped live bucket test; set AEF_LIVE=1 to run it)")
+    test_factor_picks_an_overview_that_is_never_coarser_than_asked()
+    test_a_coarse_tile_covers_proportionally_more_ground()
+    test_the_same_physical_cell_has_the_same_name_at_every_detail()
     print("all ok")

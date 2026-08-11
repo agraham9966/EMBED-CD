@@ -21,11 +21,12 @@ import os
 
 import numpy as np
 
+CELL_M = 160.0            # the cell size that matters, in GROUND metres — see cells_filename
 CELL_PX = 16              # 16 x 10 m = 160 m cells. 1024 / 16 = 64, so cells never cross tiles.
 N_BAND, SMEAN_BAND, SMAX_BAND = -3, -2, -1
 
 
-def cells_filename(tile, year_a, year_b, cell_px=CELL_PX):
+def cells_filename(tile, year_a, year_b, cell_m=CELL_M):
     """Every input that changes the CONTENT of the file appears in its name — the same rule the
     tile files learned the hard way in 0.5.2, where a re-run at a different Detail silently reused
     tiles built for another grid.
@@ -33,8 +34,14 @@ def cells_filename(tile, year_a, year_b, cell_px=CELL_PX):
     The output CRS and resolution are deliberately absent: pooling happens on the fetched cube in
     its native UTM grid before anything is reprojected, so changing Detail does not invalidate
     these files.
+
+    Named by GROUND size, not by pixel count, and that distinction is load-bearing now that a
+    coarse Detail reads an overview: a 160 m cell is 16 px of full-res source but only 2 px of the
+    80 m overview. Measured, the two routes agree to a cosine of 0.99998 — they are the same
+    vector — so naming them by `cell_px` would invent a cache miss between identical files and
+    re-download the area for nothing.
     """
-    return (f"cells_{year_a}-{year_b}_{cell_px}px_"
+    return (f"cells_{year_a}-{year_b}_{cell_m:g}m_"
             f"{tile.crs.replace(':', '')}_{int(tile.west)}_{int(tile.south)}.tif")
 
 

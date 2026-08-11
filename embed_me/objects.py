@@ -74,8 +74,10 @@ def polygonize(vrt_path, threshold, min_area_ha=1.0):
 class CellIndex:
     """The cell stores of one job, opened once and reused across every polygon."""
 
-    def __init__(self, out_dir, year_a, year_b, cell_px=CE.CELL_PX):
-        prefix = f"cells_{year_a}-{year_b}_{cell_px}px_"
+    def __init__(self, out_dir, year_a, year_b, cell_m=CE.CELL_M):
+        # Ground metres, matching cells_filename. Naming these by PIXELS would make the same
+        # 160 m cells invisible to the classifier whenever Detail changed which overview was read.
+        prefix = f"cells_{year_a}-{year_b}_{cell_m:g}m_"
         self.files = sorted(os.path.join(out_dir, f) for f in os.listdir(out_dir)
                             if f.startswith(prefix) and f.endswith(".tif")) if \
             os.path.isdir(out_dir) else []

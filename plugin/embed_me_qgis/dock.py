@@ -36,9 +36,14 @@ except ImportError:
 _YEARS = [str(y) for y in range(2017, 2026)]
 _NODATA = -1.0
 _DETAIL = {"10 m (full)": 10.0, "20 m": 20.0, "50 m": 50.0, "100 m": 100.0}
-_CELL_PX = 16          # 160 m embedding cells; see embed_me/cells.py
+_CELL_M = 160.0        # embedding cell size in GROUND metres; see embed_me/cells.py
 _TILE_KM = 10.24       # one COG block at 10 m — the unit everything is fetched in
-_SEC_PER_TILE = 4.5    # measured on a home connection; both years of one tile
+# Both years of one tile, measured on a home connection. A coarse tile is the same 1024 px but
+# reads from an overview, and costs ~11 s rather than ~4.5 — while covering up to 64x the ground,
+# which is the entire point. Estimating both at the full-res number would badly overstate a big
+# coarse job (and understate a small one).
+_SEC_PER_TILE = 4.5
+_SEC_PER_COARSE_TILE = 11.0
 
 
 def _scoped(owner, category, name):
@@ -133,11 +138,13 @@ class ChangeDock(QDockWidget):
         self.detail.currentTextChanged.connect(
             lambda _t: self._describe_area() if self.bbox else None)
         self.detail.setToolTip(
-            "Output pixel size. This does NOT reduce the download — the same embeddings are "
-            "read at every setting, because a tile is one COG block at 10 m. What it does "
-            "shrink is the output raster and the memory 'Make polygons' needs, which is what "
-            "makes large areas practical. The 160 m embedding cells behind the classifier are "
-            "unaffected either way.")
+            "Output pixel size — and, above 10 m, how much gets downloaded. A coarser setting "
+            "reads the data's own built-in reduced-resolution copies, so a large area takes "
+            "minutes instead of hours (a 200x200 km job: ~59 GB at 10 m, ~2 GB at 100 m). The "
+            "160 m embedding cells behind the classifier are identical either way, so coarse "
+            "Detail still gives you polygons and classes. Coarse maps do read very slightly "
+            "conservative near the cutoff. On a small area, use 10 m — a coarse setting there "
+            "costs the same download and gives you a handful of pixels.")
         yrow.addWidget(self.detail)
         lay.addLayout(yrow)
 
@@ -309,34 +316,51 @@ class ChangeDock(QDockWidget):
 
     def _estimate(self):
         """What this area will cost, before committing to it. Measured constants:
-        a tile is 1024 source px = 10.24 km, and each tile-year is ~67 MB of embeddings.
+        a tile is 1024 source px and each tile-year is ~67 MB of embeddings.
 
-        Note the download depends ONLY on area — Detail does not reduce it. Coarser Detail
-        shrinks the output raster (and what polygonize has to hold), not the network.
+        Detail now genuinely changes the bill. A coarse job reads a built-in overview, so a
+        tile still costs ~67 MB but covers `factor` times more ground on each side — 10.24 km
+        at 10 m, 81.92 km at 100 m. That is why a huge area at coarse Detail is minutes rather
+        than hours.
         """
         import math
+        from .engine import source as SRC
         lo, la, hi, ha = self.bbox
         w = (hi - lo) * 111.32 * math.cos(math.radians((la + ha) / 2))
         h = (ha - la) * 110.57
+        res = _DETAIL[self.detail.currentText()]
+        factor = SRC.factor_for(res)
+        tile_km = _TILE_KM * factor
         # +1 per axis: the area is not aligned to the COG block grid, so a rectangle that is
         # nominally one tile wide almost always straddles two. Measured — an 8x9 km box needs
         # 4 tiles, a 16x16 km box needs 9. Better to overestimate the bill than surprise you.
-        tiles = (math.ceil(w / _TILE_KM) + 1) * (math.ceil(h / _TILE_KM) + 1)
-        res = _DETAIL[self.detail.currentText()]
+        tiles = (math.ceil(w / tile_km) + 1) * (math.ceil(h / tile_km) + 1)
         px = (w * 1000 / res) * (h * 1000 / res)
-        return {"w": w, "h": h, "tiles": tiles,
+        across = min(w, h) * 1000 / res         # pixels along the SHORT side of the output
+        return {"w": w, "h": h, "tiles": tiles, "factor": factor,
+                "src_m": SRC.NATIVE_RES * factor,
                 "gb": tiles * 2 * 67e6 / 1e9,
-                "minutes": tiles * _SEC_PER_TILE / 60.0,
-                "out_px": px,
+                "minutes": tiles * (_SEC_PER_TILE if factor == 1
+                                    else _SEC_PER_COARSE_TILE) / 60.0,
+                "out_px": px, "across": across,
                 # polygonize holds the change band, its int32 labels and a bool mask at once
                 "poly_gb": px * 4 * 2.25 / 1e9}
 
     def _describe_area(self):
         e = self._estimate()
-        self.area_lbl.setText(
-            f"Area ~{e['w']:.0f}×{e['h']:.0f} km · ~{e['tiles']} tiles · "
-            f"~{e['gb']:.1f} GB to read · ~{e['minutes']:.0f} min · "
-            f"output {e['out_px'] / 1e6:.1f} Mpx. Pick years, then Make change map.")
+        msg = (f"Area ~{e['w']:.0f}×{e['h']:.0f} km · ~{e['tiles']} tiles · "
+               f"~{e['gb']:.1f} GB to read · ~{e['minutes']:.0f} min · "
+               f"output {e['out_px'] / 1e6:.1f} Mpx")
+        # Too few pixels to be a map. At 100 m a 0.5 km box is 5x5 px, every polygon is a 1 ha
+        # square, and it still costs a whole block to download — you pay full price for nothing.
+        if e["across"] < 50:
+            msg += (f" ⚠ only {e['across']:.0f} px across at this Detail — "
+                    f"use a finer Detail or draw a bigger area.")
+        elif e["across"] < 200:
+            msg += f" ⚠ {e['across']:.0f} px across — polygons will be blocky."
+        else:
+            msg += ". Pick years, then Make change map."
+        self.area_lbl.setText(msg)
 
     # ---------------- run ----------------
     def _browse(self):
@@ -366,8 +390,8 @@ class ChangeDock(QDockWidget):
             return
 
         e = self._estimate()
-        # The download scales with AREA and nothing else, so a big rectangle is the one way to
-        # start something that runs for an hour. Say so before it starts, not after.
+        # The bill scales with area AND Detail now that coarse jobs read overviews, so the one
+        # way to start an hour-long job is a big rectangle at 10 m. Say so before it starts.
         if e["gb"] > 8 or e["poly_gb"] > 1.0:
             msg = (f"This area is ~{e['w']:.0f}×{e['h']:.0f} km:\n\n"
                    f"  • ~{e['tiles']} tiles, ~{e['gb']:.1f} GB to download\n"
@@ -399,7 +423,8 @@ class ChangeDock(QDockWidget):
             "cache_dir": self._cache_dir(), "name": f"change_{ya}_{yb}",
             # Pool the embeddings while the tiles are briefly in memory. Always on: it costs
             # under 1% of job time, and it is the only chance to capture them at all.
-            "cell_px": _CELL_PX,
+            # Sized in GROUND metres, so it means the same thing at every Detail.
+            "cell_m": _CELL_M,
         }
         root = self._engine_root()
         self._remove_layer()

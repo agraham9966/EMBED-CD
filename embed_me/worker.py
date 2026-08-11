@@ -52,7 +52,9 @@ def main():
     stop_file = os.path.join(out_dir, ".cancel")
 
     try:
-        src = job.open_source(spec.get("cache_dir"))
+        # The source must know the target resolution BEFORE listing tiles: a coarse job
+        # reads an overview, and a tile then covers proportionally more ground.
+        src = job.open_source(spec.get("cache_dir"), spec["res_m"])
         bbox = tuple(spec["bbox"])
         all_tiles, both, partial = job.list_tiles(src, bbox, spec["year_a"], spec["year_b"])
         if not all_tiles:
@@ -92,7 +94,7 @@ def main():
             dst_crs=spec["dst_crs"], res_m=spec["res_m"],
             cache_dir=spec.get("cache_dir"), on_tile=on_tile,
             should_stop=lambda: os.path.exists(stop_file),
-            cell_px=spec.get("cell_px"),
+            cell_m=spec.get("cell_m"),
         )
         if not records:
             print("ERR No tiles produced a result.", flush=True)

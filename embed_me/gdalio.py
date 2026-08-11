@@ -104,8 +104,18 @@ def transform_bounds(src_crs, dst_crs, west, south, east, north, densify=21):
     return tuple(ct.TransformBounds(west, south, east, north, densify))
 
 
-def open_ds(path):
-    return _gdal().Open(path)
+def open_ds(path, factor=1):
+    """`factor` > 1 opens one of the file's built-in overviews instead of the full-res image,
+    so the dataset reports the reduced size and reads only the reduced bytes.
+
+    GDAL's OVERVIEW_LEVEL is 0-based over the overviews themselves, so level 0 IS the first
+    overview (a 2x reduction) and there is no value meaning "full res" — hence the branch.
+    """
+    g = _gdal()
+    if factor <= 1:
+        return g.Open(path)
+    level = int(factor).bit_length() - 2          # 2->0, 4->1, 8->2, 16->3
+    return g.OpenEx(path, open_options=[f"OVERVIEW_LEVEL={level}"])
 
 
 def read(path, band=None):

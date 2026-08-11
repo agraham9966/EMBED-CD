@@ -54,7 +54,11 @@ class FakeAlphaEarth:
     tile doesn't change at all. `bad` tiles raise on read; `missing_in_b` tiles have no COG for
     the later year (which the real source reports as a None result, not an exception)."""
 
-    def __init__(self, tiles, bad=(), missing_in_b=()):
+    def __init__(self, tiles, bad=(), missing_in_b=(), factor=1):
+        # The real source reports the resolution it is reading at, because that is what decides
+        # how many source pixels a 160 m cell spans. Full res here.
+        self.factor = factor
+        self.res = 10.0 * factor
         self._tiles = list(tiles)
         self._bad = set(bad)
         self._missing_b = set(missing_in_b)

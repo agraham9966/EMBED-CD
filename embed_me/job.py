@@ -18,10 +18,13 @@ import numpy as np
 
 from . import grid as G
 from . import score as S
+from .cells import CELL_M as CE_CELL_M
 
-def open_source(cache_dir=None):
-    from .source import AlphaEarthSource
-    return AlphaEarthSource(cache_dir)
+def open_source(cache_dir=None, res_m=None):
+    """`res_m` is the OUTPUT resolution being asked for. It picks which built-in overview to
+    read, so a coarse job stops paying full-resolution download for detail it will throw away."""
+    from .source import AlphaEarthSource, factor_for
+    return AlphaEarthSource(cache_dir, factor=1 if res_m is None else factor_for(res_m))
 
 
 def list_tiles(src, bbox, year_a, year_b):
@@ -83,22 +86,23 @@ def tile_filename(tile, year_a, year_b, out_grid):
             f"{tile.crs.replace(':', '')}_{int(tile.west)}_{int(tile.south)}.tif")
 
 
-def _cells_done(out_dir, tile, year_a, year_b, cell_px):
+def _cells_done(out_dir, tile, year_a, year_b, cell_px, cell_m):
     """A finished tile is only a reason to skip the fetch if the cell store is finished too —
     otherwise turning capture on for an existing job would resume past every tile and produce
     a change map with no embeddings behind it."""
     if not cell_px:
         return True
     from . import cells as CE
-    return os.path.exists(os.path.join(out_dir, CE.cells_filename(tile, year_a, year_b, cell_px)))
+    return os.path.exists(os.path.join(out_dir, CE.cells_filename(tile, year_a, year_b, cell_m)))
 
 
-def _write_cells(a, b, sc, cov, crs, transform, tile, year_a, year_b, out_dir, cell_px):
+def _write_cells(a, b, sc, cov, crs, transform, tile, year_a, year_b, out_dir,
+                 cell_px, cell_m):
     """Pool and write the cell store. A failure here must not lose the tile itself — the change
     map is the primary product and it is already computed by this point."""
     from . import cells as CE
     try:
-        path = os.path.join(out_dir, CE.cells_filename(tile, year_a, year_b, cell_px))
+        path = os.path.join(out_dir, CE.cells_filename(tile, year_a, year_b, cell_m))
         if os.path.exists(path):
             return
         ma, mb, n, smean, smax = CE.pool(a, b, sc, cov == S.COV_OK, cell_px)
@@ -107,7 +111,8 @@ def _write_cells(a, b, sc, cov, crs, transform, tile, year_a, year_b, out_dir, c
         pass
 
 
-def process_tile(src, tile, year_a, year_b, out_grid, out_dir, cell_px=None):
+def process_tile(src, tile, year_a, year_b, out_grid, out_dir, cell_px=None,
+                 cell_m=CE_CELL_M):
     """Fetch, score, reproject, write. Returns the tile record for the VRT, or None if the
     tile falls outside the output grid or neither year could be fetched.
 
@@ -117,7 +122,7 @@ def process_tile(src, tile, year_a, year_b, out_grid, out_dir, cell_px=None):
     from .gdalio import array_bounds
 
     path = os.path.join(out_dir, tile_filename(tile, year_a, year_b, out_grid))
-    if os.path.exists(path) and _cells_done(out_dir, tile, year_a, year_b, cell_px):
+    if os.path.exists(path) and _cells_done(out_dir, tile, year_a, year_b, cell_px, cell_m):
         rec = _record_for_existing(path, out_grid)   # resumable: already done
         if rec is not None:
             return rec                             # else it's stale — fall through and rebuild
@@ -155,7 +160,8 @@ def process_tile(src, tile, year_a, year_b, out_grid, out_dir, cell_px=None):
         if cell_px:
             # LAST CHANCE: after this the embeddings are gone and only a re-download brings them
             # back. No threshold is applied — see cells.py for why that has to wait.
-            _write_cells(a, b, sc, cov, crs, transform, tile, year_a, year_b, out_dir, cell_px)
+            _write_cells(a, b, sc, cov, crs, transform, tile, year_a, year_b, out_dir,
+                         cell_px, cell_m)
     del a, b                                        # free the 2x64 bands immediately
 
     dst_transform = G.transform_of(out_grid, r0, c0)
@@ -185,10 +191,14 @@ def process_tile(src, tile, year_a, year_b, out_grid, out_dir, cell_px=None):
 
 
 def run(bbox, year_a, year_b, out_dir, dst_crs="EPSG:3857", res_m=10.0,
-        cache_dir=None, on_tile=None, should_stop=None, src=None, cell_px=None):
+        cache_dir=None, on_tile=None, should_stop=None, src=None, cell_m=None):
     """Run the whole job, yielding progress. `on_tile(done, total, rec, hist_total)` is called
     as each tile lands so the caller can refresh a map. Returns (grid, tiles, hist_total)."""
-    src = src or open_source(cache_dir)
+    src = src or open_source(cache_dir, res_m)
+    # Cells are a fixed size on the GROUND (160 m), so how many source pixels that is depends on
+    # which overview we are reading. Deriving it here is what keeps the cell store valid across
+    # Detail changes instead of silently re-fetching.
+    cell_px = None if not cell_m else max(1, int(round(cell_m / src.res)))
     all_tiles, both, partial = list_tiles(src, bbox, year_a, year_b)
     out_grid = G.make_grid(bbox, dst_crs, res_m)
     os.makedirs(out_dir, exist_ok=True)
@@ -204,7 +214,8 @@ def run(bbox, year_a, year_b, out_dir, dst_crs="EPSG:3857", res_m=10.0,
         if should_stop is not None and should_stop():
             break
         try:
-            rec = process_tile(src, tile, year_a, year_b, out_grid, out_dir, cell_px)
+            rec = process_tile(src, tile, year_a, year_b, out_grid, out_dir,
+                               cell_px, cell_m)
         except Exception:
             rec = None                               # a bad tile must not kill the job
         done += 1
