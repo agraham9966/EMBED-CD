@@ -3,15 +3,15 @@
 The invariant that makes deferred geometry sound is the last test here — a polygon spanning two
 tiles must get the EXACT count-weighted mean of its pixels. If that drifts, every vector in a
 multi-tile job is subtly wrong and nothing downstream can tell.
-Run: python tests/test_ae_objects.py
+Run: python tests/test_em_objects.py
 """
 import os
 import tempfile
 
 import numpy as np
-from alphaearth_change import gdalio as GD
+from embed_me import gdalio as GD
 
-from alphaearth_change import cells as CE, objects as OB, score as S
+from embed_me import cells as CE, objects as OB, score as S
 
 CRS = "EPSG:32610"
 RES = 10.0

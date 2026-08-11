@@ -4,14 +4,14 @@
   - adding a class does not disturb the classes already there
 Plus: it must agree with the sklearn original it was ported from (checked when sklearn is
 available, skipped when it isn't).
-Run: python tests/test_ae_head.py
+Run: python tests/test_em_head.py
 """
 import os
 import tempfile
 
 import numpy as np
 
-from alphaearth_change import head as H
+from embed_me import head as H
 
 DEPTH = 64
 

@@ -11,10 +11,10 @@ import os
 import tempfile
 
 import numpy as np
-from alphaearth_change import gdalio as GD
+from embed_me import gdalio as GD
 
-from alphaearth_change import score as S
-from alphaearth_change.source import AlphaEarthSource, Index, Tile, _dequantize
+from embed_me import score as S
+from embed_me.source import AlphaEarthSource, Index, Tile, _dequantize
 
 CRS = "EPSG:32610"
 X0, Y0 = 336160.0, 5406720.0       # bottom-left, as the real files are
@@ -131,7 +131,7 @@ def test_remote_paths_get_the_vsicurl_prefix():
     """The offline tests all use LOCAL file paths, so none of them can see how a remote URL is
     opened — and GDAL, unlike rasterio, will not infer /vsicurl/ from an https:// URL. That gap
     let a port ship that fetched exactly nothing from the real bucket while 8/8 suites passed."""
-    from alphaearth_change.source import _vsicurl
+    from embed_me.source import _vsicurl
     assert _vsicurl("https://data.source.coop/x.tiff") == "/vsicurl/https://data.source.coop/x.tiff"
     assert _vsicurl("/vsicurl/https://a/b") == "/vsicurl/https://a/b", "never double-prefix"
     local = os.path.join("C:" + os.sep, "tmp", "a.tiff")

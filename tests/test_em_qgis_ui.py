@@ -5,7 +5,7 @@ object that Qt takes OWNERSHIP of to two owners. It doesn't raise, it doesn't fa
 corrupts the heap and takes QGIS down later, when the old object is destroyed. No traceback, so
 nothing in a normal test would ever see it.
 
-Run:  "C:\\Program Files\\QGIS 4.0.1\\bin\\python-qgis.bat" tests/test_ae_qgis_ui.py
+Run:  "C:\\Program Files\\QGIS 4.0.1\\bin\\python-qgis.bat" tests/test_em_qgis_ui.py
 """
 import os
 import sys
@@ -26,7 +26,7 @@ QgsApplication.setPrefixPath(os.environ.get("QGIS_PREFIX_PATH", ""), True)
 _app = QgsApplication([], False)
 _app.initQgis()
 
-from alphaearth_change_qgis.classify import ClassifyPanel, UNKNOWN     # noqa: E402
+from embed_me_qgis.classify import ClassifyPanel, UNKNOWN     # noqa: E402
 
 
 def _qv():
@@ -170,7 +170,7 @@ def test_polygon_rows_are_read_from_idx_not_the_feature_id():
 def _tiny_job(d):
     """A change raster plus a matching cell store — the minimum a panel needs to work on."""
     import numpy as np
-    from alphaearth_change import cells as CE, gdalio as GD
+    from embed_me import cells as CE, gdalio as GD
 
     def from_origin(x, y, xr, yr):
         return GD.Transform.from_origin(x, y, xr, yr)
@@ -241,7 +241,7 @@ def test_the_whole_panel_loop_works():
     is classified. This is the loop the user actually performs, and nothing below the UI layer
     can prove it works."""
     import tempfile
-    from alphaearth_change_qgis.classify import ClassifyPanel
+    from embed_me_qgis.classify import ClassifyPanel
 
     d = tempfile.mkdtemp(prefix="aepanel_")
     vrt = _tiny_job(d)
@@ -283,7 +283,7 @@ def test_removing_the_layer_does_not_break_the_panel():
     wrapper survives, the C++ object does not, and the next touch raises RuntimeError from
     somewhere unrelated — it surfaced from refreshing the class list."""
     import tempfile
-    from alphaearth_change_qgis.classify import ClassifyPanel
+    from embed_me_qgis.classify import ClassifyPanel
 
     d = tempfile.mkdtemp(prefix="aegone_")
     vrt = _tiny_job(d)
@@ -311,7 +311,7 @@ def test_class_examples_survive_a_re_polygonize():
     the EXAMPLES can, because they are stored as vectors. Losing a session's labelling because
     the threshold moved would be the most annoying possible behaviour."""
     import tempfile
-    from alphaearth_change_qgis.classify import ClassifyPanel
+    from embed_me_qgis.classify import ClassifyPanel
 
     d = tempfile.mkdtemp(prefix="aebank_")
     vrt = _tiny_job(d)
@@ -335,7 +335,7 @@ def test_class_examples_survive_a_re_polygonize():
 def test_best_guess_option_reduces_unknowns():
     import tempfile
     import numpy as np
-    from alphaearth_change_qgis.classify import ClassifyPanel
+    from embed_me_qgis.classify import ClassifyPanel
 
     d = tempfile.mkdtemp(prefix="aeguess_")
     vrt = _tiny_job(d)
@@ -364,7 +364,7 @@ def test_pausing_makes_a_label_a_local_edit():
     must move that polygon and nothing else, while still being kept for saving."""
     import tempfile
     import numpy as np
-    from alphaearth_change_qgis.classify import ClassifyPanel
+    from embed_me_qgis.classify import ClassifyPanel
 
     d = tempfile.mkdtemp(prefix="aepause_")
     vrt = _tiny_job(d)
@@ -413,8 +413,8 @@ def test_a_users_correction_is_never_revised_by_the_model():
     import os
     import tempfile
     import numpy as np
-    from alphaearth_change_qgis.classify import ClassifyPanel
-    from alphaearth_change import head as H
+    from embed_me_qgis.classify import ClassifyPanel
+    from embed_me import head as H
 
     d = tempfile.mkdtemp(prefix="aelock_")
     vrt = _tiny_job(d)
@@ -480,7 +480,7 @@ def test_a_rewritten_vrt_is_only_seen_at_a_new_path():
     import tempfile
     import numpy as np
     from qgis.core import QgsRasterLayer, QgsRectangle
-    from alphaearth_change import gdalio as GD, vrt as V, grid as G
+    from embed_me import gdalio as GD, vrt as V, grid as G
 
     d = tempfile.mkdtemp(prefix="aevrt_")
     g = G.Grid("EPSG:3857", 0.0, 100.0, 10.0, 20, 10)

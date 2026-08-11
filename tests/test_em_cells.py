@@ -6,20 +6,20 @@ The things that would be silently wrong forever if they broke:
   - a clipped edge tile must report the RIGHT count, or cross-tile weighting is wrong
   - cell grids of adjacent tiles must align and never overlap
   - a file built for different settings must never be reused (the 0.5.2 lesson)
-Run: python tests/test_ae_cells.py
+Run: python tests/test_em_cells.py
 """
 import os
 import tempfile
 
 import numpy as np
-from alphaearth_change.gdalio import Transform
+from embed_me.gdalio import Transform
 
 
 def from_origin(x, y, xr, yr):
     return Transform.from_origin(x, y, xr, yr)
 
-from alphaearth_change import cells as CE, job, score as S
-from alphaearth_change.source import Tile
+from embed_me import cells as CE, job, score as S
+from embed_me.source import Tile
 
 CRS = "EPSG:32610"
 
@@ -134,7 +134,7 @@ def test_filename_is_a_full_signature():
 def test_job_writes_cells_and_resumes_correctly():
     """Turning capture on for a job that already has tiles must NOT resume past them, or you get
     a change map with no embeddings behind it."""
-    import test_ae_job as T
+    import test_em_job as T
 
     d = tempfile.mkdtemp(prefix="aecells_")
     src1 = T.FakeAlphaEarth(T.TILES)

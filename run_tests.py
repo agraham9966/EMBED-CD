@@ -17,7 +17,7 @@ os.environ["PYTHONPATH"] = HERE + os.pathsep + os.environ.get("PYTHONPATH", "")
 # AEF_LIVE hits the real bucket. Off by default (network), but the port proved why it matters:
 # every offline fixture is a local file, so nothing but a live read can check URL handling.
 tests = sorted(f for f in os.listdir(os.path.join(HERE, "tests"))
-               if f.startswith("test_ae_") and f.endswith(".py"))
+               if f.startswith("test_em_") and f.endswith(".py"))
 if len(sys.argv) > 1:
     tests = [t for t in tests if any(a in t for a in sys.argv[1:])]
 

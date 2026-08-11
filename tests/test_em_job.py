@@ -6,13 +6,13 @@ Verifies the things that only show up once tiles are streamed together:
   - a re-run skips finished tiles (resumable) and still reports them
   - cancelling stops early without corrupting the output
   - a tile that fails to read doesn't kill the job
-Run: python tests/test_ae_job.py
+Run: python tests/test_em_job.py
 """
 import os
 import tempfile
 
 import numpy as np
-from alphaearth_change.gdalio import Transform, transform_bounds
+from embed_me.gdalio import Transform, transform_bounds
 
 
 def from_origin(x, y, xr, yr):
@@ -21,11 +21,11 @@ def from_origin(x, y, xr, yr):
 
 def _read(path, *bands):
     """(band, ...) as arrays — the tests only ever want the pixels."""
-    from alphaearth_change import gdalio as GD
+    from embed_me import gdalio as GD
     return tuple(GD.read(path, band=b)[0] for b in bands)
 
-from alphaearth_change import job, score as S, vrt
-from alphaearth_change.source import Tile
+from embed_me import job, score as S, vrt
+from embed_me.source import Tile
 
 CRS = "EPSG:32610"
 TILE_PX = 100
