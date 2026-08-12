@@ -1,6 +1,6 @@
 """AlphaEarth (Google Satellite Embedding V1) as a change source: anonymous windowed COG reads.
 
-Replaces geotessera for EMBED-ME. Why: TESSERA only has dense global coverage for 2024,
+Replaces geotessera for EMBED-CD. Why: TESSERA only has dense global coverage for 2024,
 and a change map needs two dense years. AlphaEarth is global and complete for 2017-2025, 64-dim,
 10 m, public COGs on source.coop (CC-BY 4.0, no account, no Earth Engine).
 
@@ -31,7 +31,7 @@ _BASE = "https://data.source.coop/tge-labs/aef/v1/annual/"
 INDEX_URL = _BASE + "aef_index.parquet"
 _S3_BASE = "s3://us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/"
 
-_UA = "embed-me/0.11 (QGIS plugin)"
+_UA = "embed-cd/0.11 (QGIS plugin)"
 TILE_PX = 1024          # = the COG block size; see fact 3. 10.24 km at native 10 m.
 NATIVE_RES = 10.0
 MAX_FACTOR = 16         # 160 m — one whole embedding cell per source pixel, the useful floor

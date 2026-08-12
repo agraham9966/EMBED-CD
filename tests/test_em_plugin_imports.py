@@ -1,7 +1,7 @@
 """Guard the import rule that a released version already got wrong.
 
 The plugin must reach the engine through `.engine`, which imports the VENDORED copy sitting
-inside the plugin package. A top-level `from embed_me import ...` survives in
+inside the plugin package. A top-level `from embed_cd import ...` survives in
 sys.modules across a plugin upgrade — QGIS only purges the plugin's own package — so the new
 version's UI ends up calling the previous version's engine. In 0.7.1 that shipped as a current
 `classify.py` calling a stale `head.py`: "unexpected keyword argument 'pool'", a message that
@@ -16,8 +16,8 @@ import py_compile
 import re
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PLUGIN = os.path.join(os.path.dirname(HERE), "plugin", "embed_me_qgis")
-TOP_LEVEL = re.compile(r"^\s*(from\s+embed_me(\.|\s+import)|import\s+embed_me\b)",
+PLUGIN = os.path.join(os.path.dirname(HERE), "plugin", "embed_cd_qgis")
+TOP_LEVEL = re.compile(r"^\s*(from\s+embed_cd(\.|\s+import)|import\s+embed_cd\b)",
                        re.MULTILINE)
 
 
@@ -39,8 +39,8 @@ def test_plugin_reaches_the_engine_only_through_engine_py():
 def test_engine_py_tries_the_vendored_copy_first():
     """Order matters: the relative import has to be the one that wins when both are possible."""
     text = open(os.path.join(PLUGIN, "engine.py"), encoding="utf-8").read()
-    rel = text.index("from .embed_me import")
-    top = text.index("from embed_me import")
+    rel = text.index("from .embed_cd import")
+    top = text.index("from embed_cd import")
     assert rel < top, "engine.py must try the vendored subpackage BEFORE the top-level fallback"
     assert "except ImportError" in text
     print("ok engine.py prefers the vendored copy, falls back to the repo root for dev mode")
@@ -53,7 +53,7 @@ def test_release_vendors_the_engine_next_to_the_plugin():
                   encoding="utf-8").read()
     assert 'stage_plugin / engine_name' in script, \
         "make_release must copy the engine INTO the staged plugin folder"
-    assert '"change": ("embed_me_qgis", "embed_me")' in script
+    assert '"change": ("embed_cd_qgis", "embed_cd")' in script
     print("ok make_release vendors the engine inside the plugin package")
 
 

@@ -12,14 +12,14 @@ import os
 import tempfile
 
 import numpy as np
-from embed_me.gdalio import Transform
+from embed_cd.gdalio import Transform
 
 
 def from_origin(x, y, xr, yr):
     return Transform.from_origin(x, y, xr, yr)
 
-from embed_me import cells as CE, job, score as S
-from embed_me.source import Tile
+from embed_cd import cells as CE, job, score as S
+from embed_cd.source import Tile
 
 CRS = "EPSG:32610"
 

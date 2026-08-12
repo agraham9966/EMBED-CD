@@ -1,4 +1,4 @@
-"""EMBED-ME — QGIS plugin entry point."""
+"""EMBED-CD — QGIS plugin entry point."""
 import os
 import site
 import sys
@@ -10,7 +10,7 @@ if _USERSITE and os.path.isdir(_USERSITE):
     site.addsitedir(_USERSITE)
 
 _HERE = os.path.dirname(__file__)
-if not os.path.isdir(os.path.join(_HERE, "embed_me")):
+if not os.path.isdir(os.path.join(_HERE, "embed_cd")):
     # dev mode: engine lives at the repo root (this folder symlinked into the plugins dir)
     _ROOT = os.path.abspath(os.path.join(_HERE, "..", ".."))
     if _ROOT not in sys.path:
@@ -18,5 +18,5 @@ if not os.path.isdir(os.path.join(_HERE, "embed_me")):
 
 
 def classFactory(iface):
-    from .plugin import EmbedMePlugin
-    return EmbedMePlugin(iface)
+    from .plugin import EmbedCdPlugin
+    return EmbedCdPlugin(iface)

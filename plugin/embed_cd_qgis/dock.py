@@ -1,4 +1,4 @@
-"""EMBED-ME dock: draw an area, pick two years, run.
+"""EMBED-CD dock: draw an area, pick two years, run.
 
 The whole UI is one panel with ~8 controls. The job runs in a subprocess (PROJ/GDAL are
 unsafe on QGIS's threads) and writes one small GeoTIFF per tile plus a VRT; the dock reloads
@@ -36,7 +36,7 @@ except ImportError:
 _YEARS = [str(y) for y in range(2017, 2026)]
 _NODATA = -1.0
 _DETAIL = {"10 m (full)": 10.0, "20 m": 20.0, "50 m": 50.0, "100 m": 100.0}
-_CELL_M = 160.0        # embedding cell size in GROUND metres; see embed_me/cells.py
+_CELL_M = 160.0        # embedding cell size in GROUND metres; see embed_cd/cells.py
 _TILE_KM = 10.24       # one COG block at 10 m — the unit everything is fetched in
 # Both years of one tile, measured on a home connection. A coarse tile is the same 1024 px but
 # reads from an overview, and costs ~11 s rather than ~4.5 — while covering up to 64x the ground,
@@ -74,7 +74,7 @@ def _qvariant_string():
 
 class ChangeDock(QDockWidget):
     def __init__(self, iface):
-        super().__init__("EMBED-ME", iface.mainWindow())
+        super().__init__("EMBED-CD", iface.mainWindow())
         self.iface = iface
         self.canvas = iface.mapCanvas()
 
@@ -377,7 +377,7 @@ class ChangeDock(QDockWidget):
 
     def _engine_root(self):
         here = os.path.dirname(os.path.abspath(__file__))
-        if os.path.isdir(os.path.join(here, "embed_me")):
+        if os.path.isdir(os.path.join(here, "embed_cd")):
             return here                                  # vendored (zip install)
         return os.path.abspath(os.path.join(here, "..", ".."))   # dev mode
 
@@ -409,7 +409,7 @@ class ChangeDock(QDockWidget):
         if chosen:
             self.out_dir = os.path.join(chosen, f"change_{ya}_{yb}")
         else:
-            self._tmp_root = self._tmp_root or tempfile.mkdtemp(prefix="embed_me_")
+            self._tmp_root = self._tmp_root or tempfile.mkdtemp(prefix="embed_cd_")
             self.out_dir = os.path.join(self._tmp_root, f"change_{ya}_{yb}")
         os.makedirs(self.out_dir, exist_ok=True)
         cancel_flag = os.path.join(self.out_dir, ".cancel")
@@ -456,7 +456,7 @@ class ChangeDock(QDockWidget):
         self.status.setText("Checking coverage…")
         self._sync()
         self.proc.start(self._python_exe(),
-                        ["-m", "embed_me.worker", json.dumps(spec)])
+                        ["-m", "embed_cd.worker", json.dumps(spec)])
 
     def _cancel(self):
         if self.proc is None:
@@ -506,7 +506,7 @@ class ChangeDock(QDockWidget):
             self.status.setText(self.status.text() + "  (cancelled — rerun to resume)")
         elif exit_code != 0 and self.layer_id is None:
             self.iface.messageBar().pushMessage(
-                "EMBED-ME", self.status.text() or "The job failed.",
+                "EMBED-CD", self.status.text() or "The job failed.",
                 level=_scoped(Qgis, "MessageLevel", "Warning"), duration=6)
         self._sync()
 
@@ -686,7 +686,7 @@ class ChangeDock(QDockWidget):
             gdal.Translate(path, self.vrt_path, creationOptions=[
                 "COMPRESS=DEFLATE", "TILED=YES", "BIGTIFF=IF_SAFER"])
             self.iface.messageBar().pushMessage(
-                "EMBED-ME", f"Saved {path}",
+                "EMBED-CD", f"Saved {path}",
                 level=_scoped(Qgis, "MessageLevel", "Success"), duration=5)
         except Exception as exc:
             self.status.setText(f"Save failed: {exc}")
@@ -698,7 +698,7 @@ class ChangeDock(QDockWidget):
 
     def _cache_dir(self):
         from qgis.core import QgsApplication
-        return os.path.join(QgsApplication.qgisSettingsDirPath(), "cache", "embed_me")
+        return os.path.join(QgsApplication.qgisSettingsDirPath(), "cache", "embed_cd")
 
     def _remove_layer(self):
         for attr in ("layer_id", "cov_layer_id"):

@@ -9,9 +9,9 @@ import os
 import tempfile
 
 import numpy as np
-from embed_me import gdalio as GD
+from embed_cd import gdalio as GD
 
-from embed_me import cells as CE, objects as OB, score as S
+from embed_cd import cells as CE, objects as OB, score as S
 
 CRS = "EPSG:32610"
 RES = 10.0

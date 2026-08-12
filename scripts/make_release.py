@@ -6,7 +6,7 @@ version is read from that plugin's metadata.txt.
 
 Usage:
     python scripts/make_release.py            # build every plugin
-    python scripts/make_release.py change     # just EMBED-ME
+    python scripts/make_release.py change     # just EMBED-CD
     python scripts/make_release.py paint      # just Tessera Paint
 """
 import re
@@ -21,7 +21,7 @@ RELEASES_DIR = ROOT / "releases"
 # short name -> (plugin folder, engine package vendored inside it)
 PLUGINS = {
     "paint": ("tessera_paint_qgis", "tessera_paint"),
-    "change": ("embed_me_qgis", "embed_me"),
+    "change": ("embed_cd_qgis", "embed_cd"),
 }
 
 

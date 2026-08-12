@@ -10,9 +10,9 @@ import tempfile
 
 import numpy as np
 
-from embed_me import grid as G
-from embed_me import score as S
-from embed_me.vrt import write_vrt
+from embed_cd import grid as G
+from embed_cd import score as S
+from embed_cd.vrt import write_vrt
 
 _R = np.random.default_rng(5)
 _D = _R.normal(0, 1, (3, 64))
@@ -98,7 +98,7 @@ def test_grid_and_windows_tile_the_output_exactly():
 
 
 def test_vrt_stitches_tiles_and_is_readable():
-    from embed_me import gdalio as GD
+    from embed_cd import gdalio as GD
 
     d = tempfile.mkdtemp(prefix="tc_vrt_")
     g = G.Grid("EPSG:3857", 0.0, 100.0, 10.0, 20, 10)
@@ -128,7 +128,7 @@ def test_an_empty_overlapping_tile_cannot_erase_a_neighbours_coverage():
 
     The rule this locks in: wherever there is a change value, coverage must say COV_OK.
     """
-    from embed_me import gdalio as GD
+    from embed_cd import gdalio as GD
 
     d = tempfile.mkdtemp(prefix="tc_zone_")
     g = G.Grid("EPSG:3857", 0.0, 100.0, 10.0, 10, 10)
@@ -157,7 +157,7 @@ def test_an_empty_overlapping_tile_cannot_erase_a_neighbours_coverage():
 def test_coverage_still_reports_why_when_no_tile_has_data():
     """The override forces COV_OK from the change band, so check it does not also flatten the
     genuine diagnosis: where NOTHING has an answer, 'no data in 2019' must survive."""
-    from embed_me import gdalio as GD
+    from embed_cd import gdalio as GD
 
     d = tempfile.mkdtemp(prefix="tc_why_")
     g = G.Grid("EPSG:3857", 0.0, 100.0, 10.0, 10, 10)

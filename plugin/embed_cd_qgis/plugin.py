@@ -1,10 +1,10 @@
-"""Toolbar/menu entry that toggles the EMBED-ME dock."""
+"""Toolbar/menu entry that toggles the EMBED-CD dock."""
 from qgis.PyQt.QtWidgets import QAction
 from qgis.PyQt.QtCore import Qt
 
 from .dock import ChangeDock
 
-_MENU = "EMBED-ME"
+_MENU = "EMBED-CD"
 
 
 def _scoped(owner, category, name):
@@ -14,7 +14,7 @@ def _scoped(owner, category, name):
         return getattr(owner, name)
 
 
-class EmbedMePlugin:
+class EmbedCdPlugin:
     def __init__(self, iface):
         self.iface = iface
         self.dock = None

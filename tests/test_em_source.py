@@ -11,10 +11,10 @@ import os
 import tempfile
 
 import numpy as np
-from embed_me import gdalio as GD
+from embed_cd import gdalio as GD
 
-from embed_me import score as S
-from embed_me.source import AlphaEarthSource, Index, Tile, _dequantize
+from embed_cd import score as S
+from embed_cd.source import AlphaEarthSource, Index, Tile, _dequantize
 
 CRS = "EPSG:32610"
 X0, Y0 = 336160.0, 5406720.0       # bottom-left, as the real files are
@@ -131,7 +131,7 @@ def test_remote_paths_get_the_vsicurl_prefix():
     """The offline tests all use LOCAL file paths, so none of them can see how a remote URL is
     opened — and GDAL, unlike rasterio, will not infer /vsicurl/ from an https:// URL. That gap
     let a port ship that fetched exactly nothing from the real bucket while 8/8 suites passed."""
-    from embed_me.source import _vsicurl
+    from embed_cd.source import _vsicurl
     assert _vsicurl("https://data.source.coop/x.tiff") == "/vsicurl/https://data.source.coop/x.tiff"
     assert _vsicurl("/vsicurl/https://a/b") == "/vsicurl/https://a/b", "never double-prefix"
     local = os.path.join("C:" + os.sep, "tmp", "a.tiff")
@@ -164,7 +164,7 @@ def test_factor_picks_an_overview_that_is_never_coarser_than_asked():
     """Detail must never be upsampled from a coarser overview, and must stop at 160 m because
     that is one whole embedding cell per source pixel — past it the classifier has nothing to
     pool."""
-    from embed_me.source import factor_for, NATIVE_RES, MAX_FACTOR
+    from embed_cd.source import factor_for, NATIVE_RES, MAX_FACTOR
 
     for res, want in ((10, 1), (20, 2), (30, 2), (50, 4), (100, 8), (160, 16), (5000, 16)):
         got = factor_for(res)
@@ -178,7 +178,7 @@ def test_a_coarse_tile_covers_proportionally_more_ground():
     """The win is per unit GROUND, not per pixel: a tile stays 1024 px (so memory is flat) and
     covers `factor` times more ground on each side. Without this a coarse job would issue just
     as many HTTP round trips and save almost nothing."""
-    from embed_me.source import AlphaEarthSource
+    from embed_cd.source import AlphaEarthSource
 
     base = AlphaEarthSource(index=object(), factor=1)
     coarse = AlphaEarthSource(index=object(), factor=8)
@@ -194,8 +194,8 @@ def test_the_same_physical_cell_has_the_same_name_at_every_detail():
     """A 160 m cell is 16 px of full-res source but 2 px of the 80 m overview, and the two build
     the SAME vector (measured: cosine 0.99998). Naming cells by pixel count would invent a cache
     miss between identical files and silently re-download the area on a Detail change."""
-    from embed_me import cells as CE
-    from embed_me.source import Tile
+    from embed_cd import cells as CE
+    from embed_cd.source import Tile
 
     t = Tile("EPSG:32610", 500000.0, 5399360.0, 510240.0, 5409600.0)
     assert CE.cells_filename(t, 2019, 2024, 160.0) == CE.cells_filename(t, 2019, 2024, 160.0)

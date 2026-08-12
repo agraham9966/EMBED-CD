@@ -11,7 +11,7 @@ import tempfile
 
 import numpy as np
 
-from embed_me import head as H
+from embed_cd import head as H
 
 DEPTH = 64
 

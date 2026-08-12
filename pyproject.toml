@@ -6,7 +6,7 @@ requires-python = ">=3.9"
 dependencies = [
     "numpy",
     "geotessera",   # Tessera Paint only
-    "pyarrow",      # EMBED-ME: reads the published COG index (parquet)
+    "pyarrow",      # EMBED-CD: reads the published COG index (parquet)
 ]
 
 [build-system]

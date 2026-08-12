@@ -9,7 +9,7 @@ long job must never block the UI. Speaks a line protocol on stdout:
   ERR  <message>
   OK
 
-Usage: python -m embed_me.worker '<json spec>'
+Usage: python -m embed_cd.worker '<json spec>'
 """
 import json
 import os
@@ -44,7 +44,7 @@ def main():
               f"Setup (Advanced Install -> python3-{missing[0]}), or open the OSGeo4W Shell and "
               f"run:  python -m pip install {' '.join(missing)}", flush=True)
         return 3
-    from embed_me import job, score, vrt
+    from embed_cd import job, score, vrt
 
     out_dir = spec["out_dir"]
     name = spec.get("name", "change")
@@ -61,7 +61,7 @@ def main():
             print("ERR No AlphaEarth tiles cover this area in either year. Try a different "
                   "area.", flush=True)
             return 2
-        import embed_me.grid as G
+        import embed_cd.grid as G
         g = G.make_grid(bbox, spec["dst_crs"], spec["res_m"])
         est = G.estimate(g, len(both) or len(all_tiles))
         # partial tiles still produce a result (a nodata class), so report both counts

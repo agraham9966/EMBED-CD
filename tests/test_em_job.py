@@ -12,7 +12,7 @@ import os
 import tempfile
 
 import numpy as np
-from embed_me.gdalio import Transform, transform_bounds
+from embed_cd.gdalio import Transform, transform_bounds
 
 
 def from_origin(x, y, xr, yr):
@@ -21,11 +21,11 @@ def from_origin(x, y, xr, yr):
 
 def _read(path, *bands):
     """(band, ...) as arrays — the tests only ever want the pixels."""
-    from embed_me import gdalio as GD
+    from embed_cd import gdalio as GD
     return tuple(GD.read(path, band=b)[0] for b in bands)
 
-from embed_me import job, score as S, vrt
-from embed_me.source import Tile
+from embed_cd import job, score as S, vrt
+from embed_cd.source import Tile
 
 CRS = "EPSG:32610"
 TILE_PX = 100

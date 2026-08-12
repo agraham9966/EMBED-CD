@@ -1,4 +1,4 @@
-"""EMBED-ME — tiled year-over-year change maps from AlphaEarth satellite embeddings.
+"""EMBED-CD — tiled year-over-year change maps from AlphaEarth satellite embeddings.
 
 Streams tile by tile: read two years of one tile, reduce 2x64 bands to a single change
 band, reproject only that band into the job's output grid, write it, free the embeddings.
