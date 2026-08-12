@@ -518,6 +518,58 @@ def test_a_rewritten_vrt_is_only_seen_at_a_new_path():
     print("ok a rewritten VRT is invisible in place, and visible at a new path")
 
 
+def test_the_photo_strip_offers_every_embedding_year():
+    """The ground-truth strip must cover every year there are embeddings for, not just the two
+    the change map was built from — confirming WHEN something changed means scrubbing across
+    years. This is pure widget construction, which nothing else in the suite exercises.
+    """
+    from qgis.PyQt.QtWidgets import QMainWindow
+    from qgis.gui import QgsMapCanvas
+    from embed_cd_qgis.dock import ChangeDock, _YEARS
+    from embed_cd import basemap as BM
+
+    class _Iface:
+        def __init__(self, win, canvas):
+            self._w, self._c = win, canvas
+
+        def mainWindow(self):
+            return self._w
+
+        def mapCanvas(self):
+            return self._c
+
+    win, canvas = QMainWindow(), QgsMapCanvas()
+    dock = ChangeDock(_Iface(win, canvas))
+    years = sorted(dock.photo_btns)
+    assert years == sorted(int(y) for y in _YEARS), f"strip covers {years}, expected all _YEARS"
+
+    # Disabled until there is an area to clip to — the fetch has no bbox otherwise.
+    assert not any(b.isEnabled() for b in dock.photo_btns.values()), \
+        "photo buttons must be dead before an area is drawn"
+
+    # A year EOX does not publish has to SAY so; silently showing a neighbour's imagery would
+    # quietly invalidate the visual check the strip exists for.
+    substituted = [y for y in years if BM.nearest_year(y) != y]
+    assert substituted, "2017 has no EOX mosaic; this test is pointless if that changes silently"
+    for y in substituted:
+        assert f"No {y} mosaic" in dock.photo_btns[y].toolTip(), \
+            f"{y} substitutes {BM.nearest_year(y)} without saying so"
+
+    dock.bbox = (-126.05, 50.28, -125.90, 50.37)
+    dock._sync_photos()
+    assert all(b.isEnabled() for b in dock.photo_btns.values()), "an area should wake them up"
+
+    # Exclusive: turning one on must turn any other off, or two photos stack and hide each other.
+    dock.photo_btns[2019].setChecked(True)
+    dock.photo_btns[2021].setChecked(True)
+    for y, other in dock.photo_btns.items():
+        if y != 2021:
+            other.setChecked(False)
+    assert sum(b.isChecked() for b in dock.photo_btns.values()) == 1
+    dock.deleteLater()
+    print(f"ok photo strip covers all {len(years)} embedding years")
+
+
 if __name__ == "__main__":
     test_a_rewritten_vrt_is_only_seen_at_a_new_path()
     test_a_users_correction_is_never_revised_by_the_model()
@@ -529,4 +581,5 @@ if __name__ == "__main__":
     test_removing_the_layer_does_not_break_the_panel()
     test_class_examples_survive_a_re_polygonize()
     test_best_guess_option_reduces_unknowns()
+    test_the_photo_strip_offers_every_embedding_year()
     print("all ok")

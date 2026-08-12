@@ -88,7 +88,7 @@ class ChangeDock(QDockWidget):
         self.vrt_path = None
         self.layer_id = None
         self.cov_layer_id = None    # thematic 'why is there no answer here' layer
-        self.photo_id = None        # ground-truth imagery for one of the two years
+        self.photo_id = None        # the one ground-truth photo layer, whichever year
         self.n_tiles = 0
         self._canceled = False
         self._tmp_root = None
@@ -139,8 +139,6 @@ class ChangeDock(QDockWidget):
         self.detail.setCurrentText("10 m (full)")
         self.detail.currentTextChanged.connect(
             lambda _t: self._describe_area() if self.bbox else None)
-        for _combo in (self.year_a, self.year_b):
-            _combo.currentTextChanged.connect(lambda _t: self._sync_photos())
         self.detail.setToolTip(
             "Output pixel size — and, above 10 m, how much gets downloaded. A coarser setting "
             "reads the data's own built-in reduced-resolution copies, so a large area takes "
@@ -198,25 +196,28 @@ class ChangeDock(QDockWidget):
         trow.addWidget(self.auto_btn)
         lay.addLayout(trow)
 
-        # Ground truth: flip between the two years' actual photography. One row, because it is a
-        # glance-and-move-on control, not a step in the workflow.
+        # Ground truth: every year there are embeddings for, as a strip of small toggles. Binding
+        # this to the two chosen years would have been the obvious thing and the wrong one —
+        # confirming WHEN something changed means scrubbing across years, not just the two ends.
+        # Two-digit labels because nine four-digit buttons do not fit a docked panel.
         prow = QHBoxLayout()
-        prow.setSpacing(4)
+        prow.setSpacing(2)
         lbl = QLabel("Photo:")
-        lbl.setToolTip("Sentinel-2 cloudless imagery (EOX) for each year, clipped to your area — "
-                       "so you can check what the change map is claiming.")
+        lbl.setToolTip("Sentinel-2 cloudless imagery (EOX), clipped to your area, one year per "
+                       "button — so you can check what the change map is claiming, and see which "
+                       "year a change actually appeared in.\n\nOne at a time: clicking another "
+                       "year swaps it instantly, which is what makes the comparison readable. "
+                       "Click the active year to turn it off.")
         prow.addWidget(lbl)
         self.photo_btns = {}
-        for slot in ("a", "b"):
-            b = QPushButton("—")
+        for y in (int(v) for v in _YEARS):
+            b = QPushButton(f"{y % 100:02d}")
             b.setCheckable(True)
-            b.setMaximumWidth(58)
-            b.clicked.connect(lambda _c, s=slot: self._toggle_photo(s))
+            b.setFixedWidth(28)
+            b.clicked.connect(lambda _c, yr=y: self._toggle_photo(yr))
             prow.addWidget(b)
-            self.photo_btns[slot] = b
-        self.photo_lbl = QLabel("")
-        self.photo_lbl.setStyleSheet("color: palette(mid);")
-        prow.addWidget(self.photo_lbl, 1)
+            self.photo_btns[y] = b
+        prow.addStretch(1)
         lay.addLayout(prow)
 
         erow = QHBoxLayout()
@@ -668,31 +669,30 @@ class ChangeDock(QDockWidget):
             self.status.setText(f"Auto failed: {exc}")
 
     # ---------------- ground truth photos ----------------
-    def _photo_year(self, slot):
-        return int((self.year_a if slot == "a" else self.year_b).currentText())
-
     def _sync_photos(self):
-        """Button labels track the year combos, and show the EOX year actually available — a
-        button reading 2016 when you picked 2017 is the honest version of 'no 2017 imagery'."""
+        """Every year button is live once an area exists. A year EOX does not publish says so in
+        its tooltip rather than quietly showing a neighbouring year's imagery — the whole point
+        of the strip is checking what really happened, so the label has to be trustworthy."""
         from .engine import basemap as BM
-        for slot, btn in self.photo_btns.items():
-            want = self._photo_year(slot)
-            got = BM.nearest_year(want)
-            btn.setText(str(got))
-            btn.setEnabled(self.bbox is not None)
+        has_area = self.bbox is not None
+        for year, btn in self.photo_btns.items():
+            got = BM.nearest_year(year)
+            btn.setEnabled(has_area)
             btn.setToolTip(
-                f"Sentinel-2 cloudless {got}, clipped to your area."
-                + ("" if got == want else f"  (EOX has no {want} imagery — nearest is {got}.)"))
+                (f"Sentinel-2 cloudless {year}, clipped to your area." if got == year else
+                 f"No {year} mosaic exists — this shows {got} instead.")
+                + ("" if has_area else "  (draw an area first)"))
 
-    def _toggle_photo(self, slot):
-        other = "b" if slot == "a" else "a"
-        btn = self.photo_btns[slot]
+    def _toggle_photo(self, year):
+        btn = self.photo_btns[year]
         if not btn.isChecked():
             self._remove_photo()
-            self.photo_lbl.setText("")
+            self.status.setText("")
             return
-        self.photo_btns[other].setChecked(False)     # one at a time: this is an A/B comparison
-        if not self._show_photo(self._photo_year(slot)):
+        for y, other in self.photo_btns.items():     # one at a time: stacked photos just hide
+            if y != year:                            # each other, and swapping IS the comparison
+                other.setChecked(False)
+        if not self._show_photo(year):
             btn.setChecked(False)
 
     def _show_photo(self, year):
@@ -720,26 +720,26 @@ class ChangeDock(QDockWidget):
                 BM.fetch(path, self.bbox, got, callback=tick)
             except Exception as exc:
                 dlg.close()
-                self.photo_lbl.setText("fetch failed")
                 self.status.setText(f"Could not fetch {got} imagery: {exc}")
                 return False
             finally:
                 dlg.close()
             if not os.path.exists(path):               # cancelled
-                self.photo_lbl.setText("cancelled")
+                self.status.setText("Photo fetch cancelled.")
                 return False
 
         self._remove_photo()
         layer = QgsRasterLayer(path, f"photo {got}", "gdal")
         if not layer.isValid():
-            self.photo_lbl.setText("could not load")
+            self.status.setText(f"Could not load the {got} photo.")
             return False
         QgsProject.instance().addMapLayer(layer, False)
         # Bottom of the tree, so the change map and its polygons stay on top of it — the photo is
         # a backdrop to check them against, not a replacement for them.
         QgsProject.instance().layerTreeRoot().insertLayer(-1, layer)
         self.photo_id = layer.id()
-        self.photo_lbl.setText(f"{got} shown")
+        self.status.setText(f"Showing {got} imagery."
+                            + ("" if got == year else f"  (no {year} mosaic; nearest is {got}.)"))
         return True
 
     def _drop_photo(self):
@@ -747,8 +747,6 @@ class ChangeDock(QDockWidget):
         self._remove_photo()
         for b in getattr(self, "photo_btns", {}).values():
             b.setChecked(False)
-        if getattr(self, "photo_lbl", None) is not None:
-            self.photo_lbl.setText("")
 
     def _remove_photo(self):
         lid = getattr(self, "photo_id", None)
