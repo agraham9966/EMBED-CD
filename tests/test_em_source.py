@@ -205,6 +205,51 @@ def test_the_same_physical_cell_has_the_same_name_at_every_detail():
     print("ok cell files are named by ground size, so Detail does not invalidate them")
 
 
+def test_basemap_url_keeps_gdals_own_placeholders():
+    """The tile URL contains GDAL's ${x}/${y}/${z}, which str.format() would try to substitute
+    as fields of its own — that was a real KeyError, not a hypothetical."""
+    from embed_cd import basemap as BM
+
+    xml = BM._wms_xml(2019)
+    assert "${x}" in xml and "${y}" in xml and "${z}" in xml, "GDAL's placeholders must survive"
+    assert "s2cloudless-2019_3857" in xml, "the year has to reach the URL"
+    # YOrigin decides whether the world comes back upside down, and it fails silently.
+    assert "<YOrigin>top</YOrigin>" in xml, "these are WMTS rows, numbered from the north"
+
+
+def test_basemap_snaps_to_a_year_eox_actually_has():
+    """AlphaEarth starts in 2017; EOX has no 2017 mosaic. Snapping is fine, snapping SILENTLY
+    is not — the caller shows the returned year on the button."""
+    from embed_cd import basemap as BM
+
+    assert BM.nearest_year(2019) == 2019
+    assert BM.nearest_year(2017) in BM.EOX_YEARS and BM.nearest_year(2017) != 2017
+    for y in range(2017, 2026):
+        assert BM.nearest_year(y) in BM.EOX_YEARS
+
+
+def test_basemap_size_is_capped_so_a_huge_area_cannot_pull_a_country():
+    """Tile count follows resolution, so capping pixels caps the download. A whole-island area
+    must come back coarse rather than enormous."""
+    from embed_cd import basemap as BM
+
+    small = BM.size_for((-126.05, 50.28, -125.90, 50.37))
+    assert small[2] == 10.0, "a small area gets full 10 m detail, matching the embeddings"
+    w, h, res = BM.size_for((-128.5, 48.3, -125.0, 51.0))          # ~250 x 300 km
+    assert max(w, h) <= BM.MAX_PX, f"{w}x{h} exceeds the cap"
+    assert res > 10.0, "a huge area must coarsen instead of fetching millions of tiles"
+
+
+def test_basemap_cache_key_separates_years_and_areas():
+    from embed_cd import basemap as BM
+
+    a = (-126.05, 50.28, -125.90, 50.37)
+    b = (-126.05, 50.28, -125.90, 50.38)
+    assert BM.photo_filename(a, 2019) != BM.photo_filename(a, 2024), "years must differ"
+    assert BM.photo_filename(a, 2019) != BM.photo_filename(b, 2019), "areas must differ"
+    assert BM.photo_filename(a, 2019) == BM.photo_filename(a, 2019), "and be stable"
+
+
 if __name__ == "__main__":
     test_dequantize()
     test_fetch_flips_and_places()
@@ -218,4 +263,8 @@ if __name__ == "__main__":
     test_factor_picks_an_overview_that_is_never_coarser_than_asked()
     test_a_coarse_tile_covers_proportionally_more_ground()
     test_the_same_physical_cell_has_the_same_name_at_every_detail()
+    test_basemap_url_keeps_gdals_own_placeholders()
+    test_basemap_snaps_to_a_year_eox_actually_has()
+    test_basemap_size_is_capped_so_a_huge_area_cannot_pull_a_country()
+    test_basemap_cache_key_separates_years_and_areas()
     print("all ok")

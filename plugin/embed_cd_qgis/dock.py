@@ -19,6 +19,7 @@ from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import (
     QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QComboBox, QPushButton, QLabel,
     QSlider, QProgressBar, QLineEdit, QFileDialog, QScrollArea, QGroupBox, QMessageBox,
+    QApplication,
 )
 from qgis.core import (
     QgsProject, QgsRasterLayer, QgsCoordinateReferenceSystem, QgsCoordinateTransform,
@@ -87,6 +88,7 @@ class ChangeDock(QDockWidget):
         self.vrt_path = None
         self.layer_id = None
         self.cov_layer_id = None    # thematic 'why is there no answer here' layer
+        self.photo_id = None        # ground-truth imagery for one of the two years
         self.n_tiles = 0
         self._canceled = False
         self._tmp_root = None
@@ -137,6 +139,8 @@ class ChangeDock(QDockWidget):
         self.detail.setCurrentText("10 m (full)")
         self.detail.currentTextChanged.connect(
             lambda _t: self._describe_area() if self.bbox else None)
+        for _combo in (self.year_a, self.year_b):
+            _combo.currentTextChanged.connect(lambda _t: self._sync_photos())
         self.detail.setToolTip(
             "Output pixel size — and, above 10 m, how much gets downloaded. A coarser setting "
             "reads the data's own built-in reduced-resolution copies, so a large area takes "
@@ -193,6 +197,27 @@ class ChangeDock(QDockWidget):
         self.auto_btn.clicked.connect(self._auto)
         trow.addWidget(self.auto_btn)
         lay.addLayout(trow)
+
+        # Ground truth: flip between the two years' actual photography. One row, because it is a
+        # glance-and-move-on control, not a step in the workflow.
+        prow = QHBoxLayout()
+        prow.setSpacing(4)
+        lbl = QLabel("Photo:")
+        lbl.setToolTip("Sentinel-2 cloudless imagery (EOX) for each year, clipped to your area — "
+                       "so you can check what the change map is claiming.")
+        prow.addWidget(lbl)
+        self.photo_btns = {}
+        for slot in ("a", "b"):
+            b = QPushButton("—")
+            b.setCheckable(True)
+            b.setMaximumWidth(58)
+            b.clicked.connect(lambda _c, s=slot: self._toggle_photo(s))
+            prow.addWidget(b)
+            self.photo_btns[slot] = b
+        self.photo_lbl = QLabel("")
+        self.photo_lbl.setStyleSheet("color: palette(mid);")
+        prow.addWidget(self.photo_lbl, 1)
+        lay.addLayout(prow)
 
         erow = QHBoxLayout()
         self.poly_btn = QPushButton("Polygonize")
@@ -255,6 +280,8 @@ class ChangeDock(QDockWidget):
         self.browse_btn.setEnabled(not running)
         for w in (self.slider, self.auto_btn, self.poly_btn, self.save_btn):
             w.setEnabled(has_result)
+        if getattr(self, "photo_btns", None):
+            self._sync_photos()
         if getattr(self, "classify", None) is not None:
             self.classify_group.setEnabled(has_result)
             self.classify.sync()
@@ -298,6 +325,7 @@ class ChangeDock(QDockWidget):
             self.canvas.unsetMapTool(self.tool)
         self.area_lbl.setText("Draw an area to begin.")
         self.status.setText("")
+        self._drop_photo()          # it was clipped to the area that just went away
         self._sync()
 
     def _on_area(self, rect):
@@ -311,6 +339,7 @@ class ChangeDock(QDockWidget):
         if self.tool is not None:
             self.canvas.unsetMapTool(self.tool)
         self._show_area_band(rect)          # replaces any previous outline
+        self._drop_photo()                  # clipped to the previous area, not this one
         self._describe_area()
         self._sync()
 
@@ -637,6 +666,95 @@ class ChangeDock(QDockWidget):
                                 f"{S.fraction_above(hist, t)*100:.1f}% of the area changed.")
         except Exception as exc:
             self.status.setText(f"Auto failed: {exc}")
+
+    # ---------------- ground truth photos ----------------
+    def _photo_year(self, slot):
+        return int((self.year_a if slot == "a" else self.year_b).currentText())
+
+    def _sync_photos(self):
+        """Button labels track the year combos, and show the EOX year actually available — a
+        button reading 2016 when you picked 2017 is the honest version of 'no 2017 imagery'."""
+        from .engine import basemap as BM
+        for slot, btn in self.photo_btns.items():
+            want = self._photo_year(slot)
+            got = BM.nearest_year(want)
+            btn.setText(str(got))
+            btn.setEnabled(self.bbox is not None)
+            btn.setToolTip(
+                f"Sentinel-2 cloudless {got}, clipped to your area."
+                + ("" if got == want else f"  (EOX has no {want} imagery — nearest is {got}.)"))
+
+    def _toggle_photo(self, slot):
+        other = "b" if slot == "a" else "a"
+        btn = self.photo_btns[slot]
+        if not btn.isChecked():
+            self._remove_photo()
+            self.photo_lbl.setText("")
+            return
+        self.photo_btns[other].setChecked(False)     # one at a time: this is an A/B comparison
+        if not self._show_photo(self._photo_year(slot)):
+            btn.setChecked(False)
+
+    def _show_photo(self, year):
+        from qgis.PyQt.QtWidgets import QProgressDialog
+        from .engine import basemap as BM
+
+        if self.bbox is None:
+            return False
+        got = BM.nearest_year(year)
+        path = os.path.join(self._cache_dir(), "photos", BM.photo_filename(self.bbox, got))
+        if not os.path.exists(path):
+            w, h, res = BM.size_for(self.bbox)
+            dlg = QProgressDialog(f"Fetching {got} imagery ({w}×{h} px at {res:.0f} m)…",
+                                  "Cancel", 0, 100, self)
+            dlg.setWindowTitle("Ground truth photo")
+            dlg.setMinimumDuration(0)
+            dlg.setValue(0)
+
+            def tick(frac, _msg, _data):
+                dlg.setValue(int(frac * 100))
+                QApplication.processEvents()
+                return 0 if dlg.wasCanceled() else 1      # GDAL aborts on 0
+
+            try:
+                BM.fetch(path, self.bbox, got, callback=tick)
+            except Exception as exc:
+                dlg.close()
+                self.photo_lbl.setText("fetch failed")
+                self.status.setText(f"Could not fetch {got} imagery: {exc}")
+                return False
+            finally:
+                dlg.close()
+            if not os.path.exists(path):               # cancelled
+                self.photo_lbl.setText("cancelled")
+                return False
+
+        self._remove_photo()
+        layer = QgsRasterLayer(path, f"photo {got}", "gdal")
+        if not layer.isValid():
+            self.photo_lbl.setText("could not load")
+            return False
+        QgsProject.instance().addMapLayer(layer, False)
+        # Bottom of the tree, so the change map and its polygons stay on top of it — the photo is
+        # a backdrop to check them against, not a replacement for them.
+        QgsProject.instance().layerTreeRoot().insertLayer(-1, layer)
+        self.photo_id = layer.id()
+        self.photo_lbl.setText(f"{got} shown")
+        return True
+
+    def _drop_photo(self):
+        """Remove the layer AND clear the buttons — used when the area changes underneath it."""
+        self._remove_photo()
+        for b in getattr(self, "photo_btns", {}).values():
+            b.setChecked(False)
+        if getattr(self, "photo_lbl", None) is not None:
+            self.photo_lbl.setText("")
+
+    def _remove_photo(self):
+        lid = getattr(self, "photo_id", None)
+        if lid:
+            QgsProject.instance().removeMapLayer(lid)
+            self.photo_id = None
 
     # ---------------- export ----------------
     def _polygonize(self):
