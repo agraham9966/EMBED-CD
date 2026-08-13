@@ -88,7 +88,7 @@ class ChangeDock(QDockWidget):
         self.vrt_path = None
         self.layer_id = None
         self.cov_layer_id = None    # thematic 'why is there no answer here' layer
-        self.photo_id = None        # the one ground-truth photo layer, whichever year
+        self.photo_ids = {}         # year -> layer id; several can be loaded at once
         self.n_tiles = 0
         self._canceled = False
         self._tmp_root = None
@@ -219,6 +219,13 @@ class ChangeDock(QDockWidget):
             self.photo_btns[y] = b
         prow.addStretch(1)
         lay.addLayout(prow)
+        from .engine import basemap as _BM
+        credit = QLabel(f"{_BM.ATTRIBUTION}  ·  {_BM.LICENCE}")
+        credit.setWordWrap(True)
+        credit.setOpenExternalLinks(True)
+        credit.setStyleSheet("color: palette(mid); font-size: 9px;")
+        lay.addWidget(credit)
+        self._sync_photos()
 
         erow = QHBoxLayout()
         self.poly_btn = QPushButton("Polygonize")
@@ -281,8 +288,6 @@ class ChangeDock(QDockWidget):
         self.browse_btn.setEnabled(not running)
         for w in (self.slider, self.auto_btn, self.poly_btn, self.save_btn):
             w.setEnabled(has_result)
-        if getattr(self, "photo_btns", None):
-            self._sync_photos()
         if getattr(self, "classify", None) is not None:
             self.classify_group.setEnabled(has_result)
             self.classify.sync()
@@ -326,7 +331,6 @@ class ChangeDock(QDockWidget):
             self.canvas.unsetMapTool(self.tool)
         self.area_lbl.setText("Draw an area to begin.")
         self.status.setText("")
-        self._drop_photo()          # it was clipped to the area that just went away
         self._sync()
 
     def _on_area(self, rect):
@@ -340,7 +344,6 @@ class ChangeDock(QDockWidget):
         if self.tool is not None:
             self.canvas.unsetMapTool(self.tool)
         self._show_area_band(rect)          # replaces any previous outline
-        self._drop_photo()                  # clipped to the previous area, not this one
         self._describe_area()
         self._sync()
 
@@ -670,89 +673,50 @@ class ChangeDock(QDockWidget):
 
     # ---------------- ground truth photos ----------------
     def _sync_photos(self):
-        """Every year button is live once an area exists. A year EOX does not publish says so in
-        its tooltip rather than quietly showing a neighbouring year's imagery — the whole point
-        of the strip is checking what really happened, so the label has to be trustworthy."""
+        """A year EOX does not publish says so in its tooltip rather than quietly showing a
+        neighbouring year under the wrong label — the strip exists to check what really happened,
+        so the label has to be trustworthy. No area needed: these are streamed global tiles."""
         from .engine import basemap as BM
-        has_area = self.bbox is not None
         for year, btn in self.photo_btns.items():
             got = BM.nearest_year(year)
-            btn.setEnabled(has_area)
             btn.setToolTip(
-                (f"Sentinel-2 cloudless {year}, clipped to your area." if got == year else
-                 f"No {year} mosaic exists — this shows {got} instead.")
-                + ("" if has_area else "  (draw an area first)"))
+                f"Sentinel-2 cloudless {year}." if got == year else
+                f"No {year} mosaic exists — this button shows {got} instead.")
 
     def _toggle_photo(self, year):
-        btn = self.photo_btns[year]
-        if not btn.isChecked():
-            self._remove_photo()
-            self.status.setText("")
-            return
-        for y, other in self.photo_btns.items():     # one at a time: stacked photos just hide
-            if y != year:                            # each other, and swapping IS the comparison
-                other.setChecked(False)
-        if not self._show_photo(year):
-            btn.setChecked(False)
-
-    def _show_photo(self, year):
-        from qgis.PyQt.QtWidgets import QProgressDialog
+        """Independent, NOT exclusive. Comparing before and after means having both loaded and
+        flicking the top one's visibility in the layer panel — an exclusive strip makes exactly
+        that impossible."""
         from .engine import basemap as BM
 
-        if self.bbox is None:
-            return False
         got = BM.nearest_year(year)
-        path = os.path.join(self._cache_dir(), "photos", BM.photo_filename(self.bbox, got))
-        if not os.path.exists(path):
-            w, h, res = BM.size_for(self.bbox)
-            dlg = QProgressDialog(f"Fetching {got} imagery ({w}×{h} px at {res:.0f} m)…",
-                                  "Cancel", 0, 100, self)
-            dlg.setWindowTitle("Ground truth photo")
-            dlg.setMinimumDuration(0)
-            dlg.setValue(0)
-
-            def tick(frac, _msg, _data):
-                dlg.setValue(int(frac * 100))
-                QApplication.processEvents()
-                return 0 if dlg.wasCanceled() else 1      # GDAL aborts on 0
-
-            try:
-                BM.fetch(path, self.bbox, got, callback=tick)
-            except Exception as exc:
-                dlg.close()
-                self.status.setText(f"Could not fetch {got} imagery: {exc}")
-                return False
-            finally:
-                dlg.close()
-            if not os.path.exists(path):               # cancelled
-                self.status.setText("Photo fetch cancelled.")
-                return False
-
-        self._remove_photo()
-        layer = QgsRasterLayer(path, f"photo {got}", "gdal")
+        if not self.photo_btns[year].isChecked():
+            self._remove_photo(year)
+            return
+        layer = QgsRasterLayer(BM.xyz_uri(got), BM.layer_name(got), "wms")
         if not layer.isValid():
-            self.status.setText(f"Could not load the {got} photo.")
-            return False
+            self.photo_btns[year].setChecked(False)
+            self.status.setText(f"Could not load {got} imagery (network?).")
+            return
+        layer.setAttribution(BM.ATTRIBUTION)
         QgsProject.instance().addMapLayer(layer, False)
-        # Bottom of the tree, so the change map and its polygons stay on top of it — the photo is
-        # a backdrop to check them against, not a replacement for them.
+        # Bottom of the tree: the photo is a backdrop to check the change map against, never a
+        # replacement for it.
         QgsProject.instance().layerTreeRoot().insertLayer(-1, layer)
-        self.photo_id = layer.id()
-        self.status.setText(f"Showing {got} imagery."
-                            + ("" if got == year else f"  (no {year} mosaic; nearest is {got}.)"))
-        return True
+        self.photo_ids[year] = layer.id()
+        if got != year:
+            self.status.setText(f"No {year} mosaic — showing {got}.")
 
-    def _drop_photo(self):
-        """Remove the layer AND clear the buttons — used when the area changes underneath it."""
-        self._remove_photo()
-        for b in getattr(self, "photo_btns", {}).values():
-            b.setChecked(False)
-
-    def _remove_photo(self):
-        lid = getattr(self, "photo_id", None)
-        if lid:
-            QgsProject.instance().removeMapLayer(lid)
-            self.photo_id = None
+    def _remove_photo(self, year=None):
+        """One year, or all of them."""
+        years = list(self.photo_ids) if year is None else [year]
+        for y in years:
+            lid = self.photo_ids.pop(y, None)
+            if lid:
+                QgsProject.instance().removeMapLayer(lid)
+            btn = self.photo_btns.get(y)
+            if btn is not None:
+                btn.setChecked(False)
 
     # ---------------- export ----------------
     def _polygonize(self):
@@ -830,6 +794,7 @@ class ChangeDock(QDockWidget):
         if getattr(self, "classify", None) is not None:
             self.classify.cleanup()
         self._remove_layer()
+        self._remove_photo()          # all years
         self._clear_area_band()
         if self.tool is not None:
             self.tool.clear()

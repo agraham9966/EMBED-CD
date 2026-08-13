@@ -205,21 +205,24 @@ def test_the_same_physical_cell_has_the_same_name_at_every_detail():
     print("ok cell files are named by ground size, so Detail does not invalidate them")
 
 
-def test_basemap_url_keeps_gdals_own_placeholders():
-    """The tile URL contains GDAL's ${x}/${y}/${z}, which str.format() would try to substitute
-    as fields of its own — that was a real KeyError, not a hypothetical."""
+def test_basemap_uri_keeps_qgis_placeholders_and_wmts_row_order():
+    """Two silent failures live here. QGIS's own {z}/{y}/{x} must survive .format(), and the
+    path order is z/y/x because these are WMTS rows — the z/x/y most XYZ services use returns
+    the wrong part of the world rather than an error."""
     from embed_cd import basemap as BM
+    from urllib.parse import unquote
 
-    xml = BM._wms_xml(2019)
-    assert "${x}" in xml and "${y}" in xml and "${z}" in xml, "GDAL's placeholders must survive"
-    assert "s2cloudless-2019_3857" in xml, "the year has to reach the URL"
-    # YOrigin decides whether the world comes back upside down, and it fails silently.
-    assert "<YOrigin>top</YOrigin>" in xml, "these are WMTS rows, numbered from the north"
+    uri = BM.xyz_uri(2019)
+    assert uri.startswith("type=xyz&url=")
+    url = unquote(uri.split("url=")[1].split("&")[0])
+    assert "s2cloudless-2019_3857" in url, "the year has to reach the URL"
+    assert url.endswith("/{z}/{y}/{x}.jpg"), f"wrong placeholder order: {url[-20:]}"
+    assert "{year}" not in url, "the year placeholder must be substituted, not passed through"
 
 
 def test_basemap_snaps_to_a_year_eox_actually_has():
     """AlphaEarth starts in 2017; EOX has no 2017 mosaic. Snapping is fine, snapping SILENTLY
-    is not — the caller shows the returned year on the button."""
+    is not — the UI shows the returned year."""
     from embed_cd import basemap as BM
 
     assert BM.nearest_year(2019) == 2019
@@ -228,26 +231,16 @@ def test_basemap_snaps_to_a_year_eox_actually_has():
         assert BM.nearest_year(y) in BM.EOX_YEARS
 
 
-def test_basemap_size_is_capped_so_a_huge_area_cannot_pull_a_country():
-    """Tile count follows resolution, so capping pixels caps the download. A whole-island area
-    must come back coarse rather than enormous."""
+def test_basemap_carries_its_licence_terms():
+    """This imagery is CC BY-NC-SA for 2018+. The attribution and the non-commercial clause are
+    a redistribution condition, not decoration — if these strings go missing the UI silently
+    stops telling users something they need before putting it in a deliverable."""
     from embed_cd import basemap as BM
 
-    small = BM.size_for((-126.05, 50.28, -125.90, 50.37))
-    assert small[2] == 10.0, "a small area gets full 10 m detail, matching the embeddings"
-    w, h, res = BM.size_for((-128.5, 48.3, -125.0, 51.0))          # ~250 x 300 km
-    assert max(w, h) <= BM.MAX_PX, f"{w}x{h} exceeds the cap"
-    assert res > 10.0, "a huge area must coarsen instead of fetching millions of tiles"
-
-
-def test_basemap_cache_key_separates_years_and_areas():
-    from embed_cd import basemap as BM
-
-    a = (-126.05, 50.28, -125.90, 50.37)
-    b = (-126.05, 50.28, -125.90, 50.38)
-    assert BM.photo_filename(a, 2019) != BM.photo_filename(a, 2024), "years must differ"
-    assert BM.photo_filename(a, 2019) != BM.photo_filename(b, 2019), "areas must differ"
-    assert BM.photo_filename(a, 2019) == BM.photo_filename(a, 2019), "and be stable"
+    assert "s2maps.eu" in BM.ATTRIBUTION and "EOX" in BM.ATTRIBUTION
+    assert "Copernicus" in BM.ATTRIBUTION, "ESA require the modified-Copernicus wording"
+    assert "non-commercial" in BM.LICENCE.lower()
+    assert "2019" in BM.layer_name(2019) and "EOX" in BM.layer_name(2019)
 
 
 if __name__ == "__main__":
@@ -263,8 +256,7 @@ if __name__ == "__main__":
     test_factor_picks_an_overview_that_is_never_coarser_than_asked()
     test_a_coarse_tile_covers_proportionally_more_ground()
     test_the_same_physical_cell_has_the_same_name_at_every_detail()
-    test_basemap_url_keeps_gdals_own_placeholders()
+    test_basemap_uri_keeps_qgis_placeholders_and_wmts_row_order()
     test_basemap_snaps_to_a_year_eox_actually_has()
-    test_basemap_size_is_capped_so_a_huge_area_cannot_pull_a_country()
-    test_basemap_cache_key_separates_years_and_areas()
+    test_basemap_carries_its_licence_terms()
     print("all ok")
