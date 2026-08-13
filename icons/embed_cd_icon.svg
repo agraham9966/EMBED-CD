@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="eGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1E3344"/>
+      <stop offset="100%" stop-color="#172A39"/>
+    </linearGradient>
+    <linearGradient id="lineGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#1B7385"/>
+      <stop offset="55%" stop-color="#45AAB2"/>
+      <stop offset="100%" stop-color="#83B93E"/>
+    </linearGradient>
+    <linearGradient id="endGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#8FC84A"/>
+      <stop offset="100%" stop-color="#62A53C"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Main E -->
+  <path d="M690 230 H360 V794 H690"
+        fill="none"
+        stroke="url(#eGrad)"
+        stroke-width="118"
+        stroke-linecap="round"
+        stroke-linejoin="round"/>
+  <path d="M360 512 H650"
+        fill="none"
+        stroke="url(#eGrad)"
+        stroke-width="118"
+        stroke-linecap="round"
+        stroke-linejoin="round"/>
+
+  <!-- Embedding/vector signal -->
+  <line x1="425" y1="512" x2="720" y2="512"
+        stroke="url(#lineGrad)"
+        stroke-width="13"
+        stroke-linecap="round"/>
+  <circle cx="425" cy="512" r="15" fill="#22677A"/>
+  <circle cx="475" cy="512" r="15" fill="#2D8293"/>
+  <circle cx="525" cy="512" r="15" fill="#3B9CA4"/>
+  <circle cx="575" cy="512" r="17" fill="#4DB0AA"/>
+  <circle cx="650" cy="512" r="28" fill="url(#endGrad)"/>
+</svg>

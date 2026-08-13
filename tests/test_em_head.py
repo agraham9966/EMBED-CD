@@ -229,6 +229,89 @@ def test_matches_sklearn_when_available():
     print("ok matches sklearn's LogisticRegression on decisions, ~1e-3 on probabilities")
 
 
+def _same_change_two_baselines(n_per=20, seed=3, sep=3.0):
+    """One change TYPE reached from two different starting land covers, plus a distractor.
+
+    The real case: a demolished building and a fresh clearcut both end as bare ground. Under
+    [A, B] they share almost nothing, because half the vector is the baseline they came from.
+    Under [A, B-A] the shared part is the delta, which is the thing they actually have in
+    common.
+    """
+    rng = np.random.default_rng(seed)
+    forest, urban = rng.normal(0, 1, DEPTH), rng.normal(0, 1, DEPTH)
+    clearing = rng.normal(0, 1, DEPTH)
+    clearing /= np.linalg.norm(clearing)
+    clearing *= sep                                   # the SAME movement from either baseline
+
+    def block(a, delta, n):
+        return np.concatenate([np.tile(a, (n, 1)), np.tile(a + delta, (n, 1))], axis=1) \
+            + rng.normal(0, 0.30, (n, 2 * DEPTH))
+
+    from_forest = block(forest, clearing, n_per)
+    from_urban = block(urban, clearing, n_per)
+    other = block(forest, -clearing, n_per)           # opposite change: must NOT be swept in
+    return (from_forest.astype(np.float32), from_urban.astype(np.float32),
+            other.astype(np.float32))
+
+
+def test_baseline_plus_delta_handles_a_class_spanning_two_baselines():
+    """A class whose members reached the same end state from DIFFERENT starting land cover —
+    a demolished building and a fresh clearcut both become bare ground.
+
+    What delta actually buys, measured over 12 seeds: 0.954 -> 0.978 mean accuracy, better on
+    8 seeds and worse on 3. Real but modest.
+
+    What it does NOT buy, and this was measured after being asserted wrongly: it does not let a
+    class TRANSFER to a baseline it never saw. Both representations score 0% there, because
+    [A, B-A] still carries A as half the vector, so an unseen baseline is still an unseen
+    vector. Only dropping or downweighting A would change that, and Google's comparison says
+    baseline context is what makes these features good in the first place.
+    """
+    accs = {"raw": [], "delta": []}
+    for seed in range(12):
+        ff, fu, other = _same_change_two_baselines(seed=seed)
+        x = np.concatenate([ff[:5], fu[:5], other[:5]])
+        y = np.array(["cleared"] * 10 + ["opposite"] * 5, dtype=object)
+        xt = np.concatenate([ff[5:], fu[5:], other[5:]])
+        yt = np.array(["cleared"] * 30 + ["opposite"] * 15, dtype=object)
+        for mode in accs:
+            accs[mode].append((H.OvRHead(features=mode).fit(x, y).predict(xt)[0] == yt).mean())
+    raw, delta = np.mean(accs["raw"]), np.mean(accs["delta"])
+    assert delta >= raw - 0.01, f"delta {delta:.3f} materially worse than raw {raw:.3f}"
+    assert delta > 0.9, f"delta accuracy collapsed to {delta:.3f}"
+    print(f"ok class spanning two baselines: raw {raw:.3f} vs delta {delta:.3f} over 12 seeds")
+
+
+def test_a_single_class_cannot_yet_reject_the_opposite_change():
+    """A KNOWN weakness, recorded so it cannot regress further and so the fix has a baseline.
+
+    Label three cleared-forest objects and the single-class path also accepts 100% of the
+    REVERSE change from the same baseline — regrowth gets selected as clearing. With one class
+    there is nothing to discriminate against, so scoring is cosine to a prototype, and with A
+    shared between both groups that cosine is largely measuring "did this start as forest".
+    Unchanged by the raw/delta choice: both fail identically.
+    """
+    ff, fu, other = _same_change_two_baselines()
+    pool = np.concatenate([ff, fu, other])
+    for mode in ("raw", "delta"):
+        h = H.OvRHead(features=mode).fit(ff[:3], np.array(["cleared"] * 3, dtype=object),
+                                         pool=pool)
+        assert (h.predict(ff)[0] == "cleared").mean() > 0.9, f"{mode}: lost its own examples"
+        opp = (h.predict(other)[0] == "cleared").mean()
+        assert opp > 0.5, (f"{mode}: opposite-change acceptance is {opp:.0%} — if this has been "
+                           "FIXED, update this test rather than deleting it")
+    print("ok single-class opposite-change weakness still reproduces (documented, not fixed)")
+
+
+def test_features_default_is_baseline_plus_delta():
+    """Guards the default itself: switching it back to "raw" silently changes what every class
+    a user has ever saved will mean."""
+    assert H.OvRHead().features == "delta"
+    x, y, _ = _planted()
+    assert H.fit_from_classes({c: x[y == c] for c in set(y.tolist())}).features == "delta"
+    print("ok baseline+delta is the default representation")
+
+
 if __name__ == "__main__":
     test_recovers_planted_classes()
     test_out_of_distribution_returns_unknown()
@@ -242,4 +325,7 @@ if __name__ == "__main__":
     test_works_with_a_handful_of_labels()
     test_delta_features_are_available_and_change_nothing_structurally()
     test_matches_sklearn_when_available()
+    test_baseline_plus_delta_handles_a_class_spanning_two_baselines()
+    test_a_single_class_cannot_yet_reject_the_opposite_change()
+    test_features_default_is_baseline_plus_delta()
     print("all ok")
