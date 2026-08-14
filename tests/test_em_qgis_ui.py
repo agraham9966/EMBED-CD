@@ -788,6 +788,57 @@ def test_polygons_and_labelling_survive_closing_the_session():
     print(f"ok {n} polygons, classes and labels survived a session restart")
 
 
+def test_two_areas_over_the_same_years_cannot_share_a_run_folder():
+    """This one destroyed real data before it was caught.
+
+    Opening a saved run used to set `Save to:` to its parent, so the NEXT run inherited that
+    folder — and because the folder was named from the year pair alone, a different area
+    compared over the same years landed in the SAME directory. Its tiles interleaved with the
+    first area's, `CellIndex` picked up both, and its VRT overwrote the original. The evidence
+    was a Mt Bishop folder holding 61 EPSG:32611 tiles and one EPSG:32610 tile from Vancouver
+    Island.
+
+    Two rules, both checked here: opening never repoints where new work goes, and the run
+    folder names the area as well as the years.
+    """
+    from qgis.PyQt.QtWidgets import QMainWindow
+    from qgis.gui import QgsMapCanvas
+    from embed_cd_qgis.dock import ChangeDock
+
+    class _Iface:
+        def __init__(self, win, canvas):
+            self._w, self._c = win, canvas
+
+        def mainWindow(self):
+            return self._w
+
+        def mapCanvas(self):
+            return self._c
+
+    dock = ChangeDock(_Iface(QMainWindow(), QgsMapCanvas()))
+    bishop = (-118.60, 49.10, -118.40, 49.30)
+    victoria = (-123.50, 48.35, -123.30, 48.55)
+
+    dock.bbox = bishop
+    key_b = dock._area_key()
+    dock.bbox = victoria
+    key_v = dock._area_key()
+    assert key_b != key_v, "two different areas produced the same folder key"
+    dock.bbox = bishop
+    assert dock._area_key() == key_b, "the same bbox must resume, not start a new folder"
+
+    # Opening a saved run must leave `Save to:` exactly as the user left it.
+    dock.out_edit.setText("")
+    dock.out_dir = os.path.join(tempfile.mkdtemp(prefix="tc_key_"), "change_2019_2023_abc123")
+    os.makedirs(dock.out_dir)
+    import inspect
+    src = inspect.getsource(ChangeDock._open_existing)
+    assert "out_edit.setText" not in src, \
+        "_open_existing repoints Save to: again — that is what mixed two areas into one folder"
+    dock.cleanup()
+    print(f"ok run folders are keyed by area ({key_b} vs {key_v}); opening leaves Save to: alone")
+
+
 if __name__ == "__main__":
     test_a_rewritten_vrt_is_only_seen_at_a_new_path()
     test_a_users_correction_is_never_revised_by_the_model()
@@ -803,4 +854,5 @@ if __name__ == "__main__":
     test_a_saved_run_can_be_reopened_and_is_fully_live()
     test_a_folder_holding_several_runs_asks_which_one()
     test_polygons_and_labelling_survive_closing_the_session()
+    test_two_areas_over_the_same_years_cannot_share_a_run_folder()
     print("all ok")

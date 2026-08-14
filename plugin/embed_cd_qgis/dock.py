@@ -412,6 +412,13 @@ class ChangeDock(QDockWidget):
 
     _RUN_VRT = re.compile(r"^change_(\d{4})_(\d{4})\.vrt$")
 
+    def _area_key(self):
+        """Short digest of the drawn area, so a run folder names WHERE as well as WHEN.
+        4 decimal places is ~11 m, fine enough to separate two areas and exact enough that
+        re-running the same bbox resumes instead of starting over."""
+        import hashlib
+        return hashlib.sha1(("%.4f_%.4f_%.4f_%.4f" % tuple(self.bbox)).encode()).hexdigest()[:6]
+
     def _find_runs(self, folder):
         """Every saved run at `folder` or one level below, newest first.
 
@@ -492,7 +499,8 @@ class ChangeDock(QDockWidget):
             return
         run = self._choose_run(runs)
         if run is None:
-            return                       # several found and the dialog was dismissed
+            self.status.setText("Open cancelled — nothing was changed.")
+            return
         vrt_path, ya, yb = run["path"], run["year_a"], run["year_b"]
 
         ds = GD.open_ds(vrt_path)
@@ -509,9 +517,10 @@ class ChangeDock(QDockWidget):
         self._remove_layer()
         self.out_dir = os.path.dirname(vrt_path)
         self.vrt_path = vrt_path
-        # Point `Save to:` at the PARENT, since that is what _run appends change_<a>_<b> to —
-        # so re-running lands back in the same place instead of nesting a folder inside itself.
-        self.out_edit.setText(os.path.dirname(self.out_dir))
+        # Deliberately NOT touching `Save to:`. Setting it here silently redirected the next
+        # run into the folder just opened, and with a matching year pair that meant writing a
+        # second area's tiles on top of the first and overwriting its VRT. Opening is a read;
+        # where new work goes stays the user's choice.
         for combo, year in ((self.year_a, ya), (self.year_b, yb)):
             combo.blockSignals(True)
             combo.setCurrentText(str(year))
@@ -591,11 +600,17 @@ class ChangeDock(QDockWidget):
                 return
 
         chosen = self.out_edit.text().strip()
+        # The AREA is part of the folder name, not just the years. Keyed on years alone, two
+        # different areas compared over the same period land in one folder: tiles interleave,
+        # `CellIndex` picks up both, and the second run's VRT overwrites the first. That is not
+        # hypothetical — it happened, mixing a Vancouver Island run into a Mt Bishop one.
+        # Identical bbox still gives an identical key, so resuming a cancelled job still works.
+        run = f"change_{ya}_{yb}_{self._area_key()}"
         if chosen:
-            self.out_dir = os.path.join(chosen, f"change_{ya}_{yb}")
+            self.out_dir = os.path.join(chosen, run)
         else:
             self._tmp_root = self._tmp_root or tempfile.mkdtemp(prefix="embed_cd_")
-            self.out_dir = os.path.join(self._tmp_root, f"change_{ya}_{yb}")
+            self.out_dir = os.path.join(self._tmp_root, run)
         os.makedirs(self.out_dir, exist_ok=True)
         cancel_flag = os.path.join(self.out_dir, ".cancel")
         if os.path.exists(cancel_flag):
