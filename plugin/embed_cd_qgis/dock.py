@@ -412,16 +412,18 @@ class ChangeDock(QDockWidget):
 
     _RUN_VRT = re.compile(r"^change_(\d{4})_(\d{4})\.vrt$")
 
-    def _find_run(self, folder):
-        """(vrt path, year_a, year_b) for a saved run at `folder`, or one level below it.
+    def _find_runs(self, folder):
+        """Every saved run at `folder` or one level below, newest first.
 
         Forgiving about which folder gets picked, because `Save to:` writes a `change_<a>_<b>`
-        subfolder and it is a coin flip whether someone points at that or at its parent.
+        subfolder and it is a coin flip whether someone points at that or at its parent — and a
+        parent quite reasonably holds SEVERAL runs, e.g. the same area compared across different
+        year pairs.
 
         The name must match EXACTLY: a finished run leaves both `change_2019_2025.vrt` and a
         superseded revision `change_2019_2025.v4.vrt`, and the revision holds fewer tiles.
         """
-        cands = []
+        out = []
         for d in [folder] + [os.path.join(folder, n) for n in sorted(os.listdir(folder))
                              if os.path.isdir(os.path.join(folder, n))]:
             try:
@@ -432,11 +434,40 @@ class ChangeDock(QDockWidget):
                 m = self._RUN_VRT.match(n)
                 if m:
                     p = os.path.join(d, n)
-                    cands.append((os.path.getmtime(p), p, int(m.group(1)), int(m.group(2))))
-        if not cands:
+                    out.append({"path": p, "year_a": int(m.group(1)), "year_b": int(m.group(2)),
+                                "mtime": os.path.getmtime(p),
+                                "cells": len([f for f in names if f.startswith("cells_")])})
+        return sorted(out, key=lambda r: -r["mtime"])
+
+    def _choose_run(self, runs):
+        """One run opens straight away; several have to be asked about.
+
+        Silently taking the newest is the wrong default here — a folder holding 2019-2023 and
+        2019-2024 gives no clue which one you got, and both are equally valid answers to
+        'open the results in this folder'.
+        """
+        from qgis.PyQt.QtWidgets import QInputDialog
+        from .engine import gdalio as GD
+
+        if len(runs) == 1:
+            return runs[0]
+        labels = []
+        for r in runs:
+            size = ""
+            ds = GD.open_ds(r["path"])
+            if ds is not None:
+                size = f"{ds.RasterXSize}×{ds.RasterYSize} px"
+                ds = None
+            labels.append(
+                f"{r['year_a']} → {r['year_b']}   {size}"
+                + (f"   {r['cells']} embedding tiles" if r["cells"] else "   no embeddings")
+                + f"   ({os.path.basename(os.path.dirname(r['path']))})")
+        pick, ok = QInputDialog.getItem(self, "Open which change map?",
+                                        f"{len(runs)} saved runs in that folder:",
+                                        labels, 0, False)
+        if not ok:
             return None
-        _mt, path, ya, yb = max(cands)          # newest, if a folder holds several year pairs
-        return path, ya, yb
+        return runs[labels.index(pick)]
 
     def _open_existing(self):
         """Reconnect the dock to a run saved earlier.
@@ -453,13 +484,16 @@ class ChangeDock(QDockWidget):
         folder = QFileDialog.getExistingDirectory(self, "Folder of a saved change map")
         if not folder:
             return
-        found = self._find_run(folder)
-        if not found:
+        runs = self._find_runs(folder)
+        if not runs:
             self.status.setText(
                 "No saved change map in that folder. Pick the folder a previous run wrote to — "
                 "it contains change_<from>_<to>.vrt.")
             return
-        vrt_path, ya, yb = found
+        run = self._choose_run(runs)
+        if run is None:
+            return                       # several found and the dialog was dismissed
+        vrt_path, ya, yb = run["path"], run["year_a"], run["year_b"]
 
         ds = GD.open_ds(vrt_path)
         if ds is None:

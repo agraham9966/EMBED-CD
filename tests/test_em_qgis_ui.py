@@ -611,9 +611,10 @@ def test_a_saved_run_can_be_reopened_and_is_fully_live():
     dock = ChangeDock(_Iface(QMainWindow(), QgsMapCanvas()))
     assert not dock.poly_btn.isEnabled(), "nothing should be live before opening"
 
-    found = dock._find_run(root)                 # given the PARENT, as a user plausibly would
-    assert found is not None, "did not find the run one level down"
-    path, ya, yb = found
+    runs = dock._find_runs(root)                 # given the PARENT, as a user plausibly would
+    assert len(runs) == 1, f"expected one run, found {len(runs)}"
+    assert runs[0]["cells"] == 1, "should have spotted the cell store"
+    path, ya, yb = runs[0]["path"], runs[0]["year_a"], runs[0]["year_b"]
     assert os.path.basename(path) == "change_2019_2024.vrt", \
         f"picked {os.path.basename(path)} — the .v1 decoy holds only half the tiles"
     assert (ya, yb) == (2019, 2024)
@@ -644,6 +645,69 @@ def test_a_saved_run_can_be_reopened_and_is_fully_live():
     print(f"ok reopened a saved run: {len(polys)} polygons, all controls live")
 
 
+def test_a_folder_holding_several_runs_asks_which_one():
+    """The real shape of a working folder: the same area compared across different year pairs,
+    saved side by side. Silently taking the newest is wrong — both are equally valid answers to
+    "open the results in this folder", and the user gets no clue which one they got.
+    """
+    import numpy as np
+    from qgis.PyQt.QtWidgets import QMainWindow, QInputDialog
+    from qgis.gui import QgsMapCanvas
+    from unittest import mock
+    from embed_cd_qgis.dock import ChangeDock
+    from embed_cd import grid as G, score as S, vrt as V, gdalio as GD
+
+    class _Iface:
+        def __init__(self, win, canvas):
+            self._w, self._c = win, canvas
+
+        def mainWindow(self):
+            return self._w
+
+        def mapCanvas(self):
+            return self._c
+
+    root = tempfile.mkdtemp(prefix="tc_multi_")
+    g = G.Grid("EPSG:3857", -13800000.0, 6600000.0, 100.0, 20, 20)
+    for yb in (2023, 2024):
+        run = os.path.join(root, f"change_2019_{yb}")
+        os.makedirs(run)
+        p = os.path.join(run, "t.tif")
+        GD.write(p, np.stack([np.full((20, 20), 0.4, np.float32),
+                              np.full((20, 20), float(S.COV_OK), np.float32)]),
+                 g.crs, G.transform_of(g, 0, 0), nodata=S.NODATA)
+        V.write_vrt(os.path.join(run, f"change_2019_{yb}.vrt"), g,
+                    [{"path": p, "row0": 0, "col0": 0, "width": 20, "height": 20}])
+
+    dock = ChangeDock(_Iface(QMainWindow(), QgsMapCanvas()))
+    runs = dock._find_runs(root)
+    assert len(runs) == 2, f"found {len(runs)} runs, expected both year pairs"
+    assert {r["year_b"] for r in runs} == {2023, 2024}
+
+    # One run must NOT prompt; several must.
+    asked = {"n": 0}
+
+    def fake_item(_parent, _title, _label, items, *a, **k):
+        asked["n"] += 1
+        return next(i for i in items if "2019 → 2024" in i), True
+
+    with mock.patch.object(QInputDialog, "getItem", staticmethod(fake_item)):
+        chosen = dock._choose_run(runs)
+        assert asked["n"] == 1, "two runs should have prompted exactly once"
+        assert chosen["year_b"] == 2024, "did not honour the choice"
+        asked["n"] = 0
+        single = dock._choose_run(runs[:1])
+        assert asked["n"] == 0, "a single run must open without asking"
+        assert single is runs[0]
+
+    # Dismissing must abort rather than silently opening something.
+    with mock.patch.object(QInputDialog, "getItem",
+                           staticmethod(lambda *a, **k: ("", False))):
+        assert dock._choose_run(runs) is None, "cancel must not fall through to a default"
+    dock.cleanup()
+    print("ok several saved runs in one folder prompt, and the choice is honoured")
+
+
 if __name__ == "__main__":
     test_a_rewritten_vrt_is_only_seen_at_a_new_path()
     test_a_users_correction_is_never_revised_by_the_model()
@@ -657,4 +721,5 @@ if __name__ == "__main__":
     test_best_guess_option_reduces_unknowns()
     test_the_photo_strip_offers_every_year_and_stacks_them()
     test_a_saved_run_can_be_reopened_and_is_fully_live()
+    test_a_folder_holding_several_runs_asks_which_one()
     print("all ok")
