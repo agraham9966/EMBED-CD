@@ -140,6 +140,8 @@ class ChangeDock(QDockWidget):
         self.detail.setCurrentText("10 m (full)")
         self.detail.currentTextChanged.connect(
             lambda _t: self._describe_area() if self.bbox else None)
+        for _c in (self.year_a, self.year_b):
+            _c.currentTextChanged.connect(lambda _t: self._describe_dest())
         self.detail.setToolTip(
             "Output pixel size — and, above 10 m, how much gets downloaded. A coarser setting "
             "reads the data's own built-in reduced-resolution copies, so a large area takes "
@@ -170,6 +172,17 @@ class ChangeDock(QDockWidget):
         self.open_btn.clicked.connect(self._open_existing)
         orow.addWidget(self.open_btn)
         lay.addLayout(orow)
+
+        # Where results land is easy to lose track of — a path set for one area is still set
+        # when you draw the next one, and nothing on screen said so. This line always says
+        # where the NEXT run will write, and carries the switch to the other mode, so neither
+        # choice needs to be inferred from an empty text box.
+        self.dest_lbl = QLabel("")
+        self.dest_lbl.setWordWrap(True)
+        self.dest_lbl.setStyleSheet("color: palette(mid); font-size: 10px;")
+        self.dest_lbl.linkActivated.connect(self._dest_link)
+        lay.addWidget(self.dest_lbl)
+        self.out_edit.textChanged.connect(lambda _t: self._describe_dest())
 
         rrow = QHBoxLayout()
         self.run_btn = QPushButton("Make change map")
@@ -295,6 +308,11 @@ class ChangeDock(QDockWidget):
             not running and (has_area or self.area_band is not None))
         self.browse_btn.setEnabled(not running)
         self.open_btn.setEnabled(not running)
+        self._sync_photos()
+        # The destination depends on the folder, the AREA and the years, so it has to be
+        # recomputed here rather than only when the path box is edited — drawing a new area
+        # changes where the next run lands, which is exactly the case that caused trouble.
+        self._describe_dest()
         for w in (self.slider, self.auto_btn, self.poly_btn, self.save_btn):
             w.setEnabled(has_result)
         if getattr(self, "classify", None) is not None:
@@ -405,6 +423,27 @@ class ChangeDock(QDockWidget):
         self.area_lbl.setText(msg)
 
     # ---------------- run ----------------
+    def _dest_link(self, href):
+        if href == "temp":
+            self.out_edit.clear()
+        else:
+            self._browse()
+
+    def _describe_dest(self):
+        """Always visible, always current: where the NEXT run writes."""
+        chosen = self.out_edit.text().strip()
+        if chosen:
+            run = ""
+            if self.bbox is not None:
+                ya, yb = self.year_a.currentText(), self.year_b.currentText()
+                run = os.sep + f"change_{ya}_{yb}_{self._area_key()}"
+            self.dest_lbl.setText(
+                f"Results → {chosen}{run}  ·  <a href='temp'>use a temporary folder instead</a>")
+        else:
+            self.dest_lbl.setText(
+                "Results → a temporary folder, discarded when QGIS closes  ·  "
+                "<a href='pick'>keep them in a folder</a>")
+
     def _browse(self):
         d = QFileDialog.getExistingDirectory(self, "Folder for the change map")
         if d:
@@ -460,15 +499,25 @@ class ChangeDock(QDockWidget):
             return runs[0]
         labels = []
         for r in runs:
-            size = ""
+            size, where = "", ""
             ds = GD.open_ds(r["path"])
             if ds is not None:
                 size = f"{ds.RasterXSize}×{ds.RasterYSize} px"
+                gt = ds.GetGeoTransform()
+                cx = gt[0] + gt[1] * ds.RasterXSize / 2
+                cy = gt[3] + gt[5] * ds.RasterYSize / 2
+                try:
+                    # Runs of the same years differ only by an area digest, which tells a human
+                    # nothing. Where it is on the planet tells them everything.
+                    lo, la, _e, _n = GD.transform_bounds(GD.crs_string(ds), "EPSG:4326",
+                                                         cx, cy, cx, cy)
+                    where = f"  near {abs(la):.2f}°{'N' if la >= 0 else 'S'} "                             f"{abs(lo):.2f}°{'E' if lo >= 0 else 'W'}"
+                except Exception:
+                    where = ""
                 ds = None
             labels.append(
-                f"{r['year_a']} → {r['year_b']}   {size}"
-                + (f"   {r['cells']} embedding tiles" if r["cells"] else "   no embeddings")
-                + f"   ({os.path.basename(os.path.dirname(r['path']))})")
+                f"{r['year_a']} → {r['year_b']}{where}   {size}"
+                + (f"   {r['cells']} embedding tiles" if r["cells"] else "   no embeddings"))
         pick, ok = QInputDialog.getItem(self, "Open which change map?",
                                         f"{len(runs)} saved runs in that folder:",
                                         labels, 0, False)

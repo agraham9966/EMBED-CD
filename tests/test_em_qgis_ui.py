@@ -839,6 +839,55 @@ def test_two_areas_over_the_same_years_cannot_share_a_run_folder():
     print(f"ok run folders are keyed by area ({key_b} vs {key_v}); opening leaves Save to: alone")
 
 
+def test_the_dock_always_says_where_results_will_go():
+    """A path set for one area stays set when the next is drawn, and nothing on screen said so —
+    which is how a Vancouver Island run ended up inside a Mt Bishop folder. The destination line
+    has to be right in every state, and must track the AREA, not just the path box."""
+    import re
+    from qgis.PyQt.QtWidgets import QMainWindow
+    from qgis.gui import QgsMapCanvas
+    from embed_cd_qgis.dock import ChangeDock
+
+    class _Iface:
+        def __init__(self, win, canvas):
+            self._w, self._c = win, canvas
+
+        def mainWindow(self):
+            return self._w
+
+        def mapCanvas(self):
+            return self._c
+
+    def plain(t):
+        return re.sub("<[^>]+>", "", t)
+
+    dock = ChangeDock(_Iface(QMainWindow(), QgsMapCanvas()))
+    assert "temporary" in plain(dock.dest_lbl.text()), \
+        f"a fresh dock must say results are temporary, got {dock.dest_lbl.text()!r}"
+
+    parent = tempfile.mkdtemp(prefix="tc_dest_")
+    dock.bbox = (-118.60, 49.10, -118.40, 49.30)
+    dock.out_edit.setText(parent)
+    first = plain(dock.dest_lbl.text())
+    assert parent in first and "change_" in first, first
+
+    # The case that caused real damage: same folder, different area.
+    dock.bbox = (-123.50, 48.35, -123.30, 48.55)
+    dock._sync()
+    second = plain(dock.dest_lbl.text())
+    assert second != first, \
+        "drawing a new area did not change the shown destination — the whole point of this line"
+    assert parent in second, second
+
+    # And the offered escape hatch actually works, so nobody has to guess that an empty box
+    # means "temporary".
+    dock._dest_link("temp")
+    assert "temporary" in plain(dock.dest_lbl.text())
+    assert dock.out_edit.text() == ""
+    dock.cleanup()
+    print("ok the destination line is correct in every state and tracks the area")
+
+
 if __name__ == "__main__":
     test_a_rewritten_vrt_is_only_seen_at_a_new_path()
     test_a_users_correction_is_never_revised_by_the_model()
@@ -855,4 +904,5 @@ if __name__ == "__main__":
     test_a_folder_holding_several_runs_asks_which_one()
     test_polygons_and_labelling_survive_closing_the_session()
     test_two_areas_over_the_same_years_cannot_share_a_run_folder()
+    test_the_dock_always_says_where_results_will_go()
     print("all ok")
