@@ -888,18 +888,22 @@ def test_the_dock_always_says_where_results_will_go():
     print("ok the destination line is correct in every state and tracks the area")
 
 
-def test_each_area_gets_its_own_complete_layer_group():
-    """Starting a new area used to remove the change raster but leave the polygons, so the
-    previous area was half-erased: a stray polygon layer with nothing it belonged to.
+def test_a_named_area_keeps_its_name_and_never_shares_a_group():
+    """Two things a user hits within a minute of each other.
 
-    Now each area owns a named group, and moving to a different one DETACHES rather than
-    removes — the old group stays complete and the tree says which layers belong together.
-    Re-running the SAME area still replaces its layers instead of stacking duplicates.
+    Naming an area "alex test" and reopening it showed the coordinates instead — the name lived
+    only in the widget, and nothing on disk carried it (years come from the VRT filename, the
+    extent from the raster, the name from nowhere).
+
+    And drawing a second area while forgetting to retype the name put both in ONE group,
+    interleaving them. Group identity has to come from the AREA, not the name: two areas
+    trivially share a name, which is precisely the case that needs disambiguating.
     """
     from qgis.PyQt.QtWidgets import QMainWindow
     from qgis.gui import QgsMapCanvas
     from qgis.core import QgsProject, QgsVectorLayer
     from embed_cd_qgis.dock import ChangeDock
+    from embed_cd import store as ST
 
     class _Iface:
         def __init__(self, win, canvas):
@@ -914,44 +918,46 @@ def test_each_area_gets_its_own_complete_layer_group():
     QgsProject.instance().clear()
     dock = ChangeDock(_Iface(QMainWindow(), QgsMapCanvas()))
     dock.bbox = (-126.05, 50.28, -125.90, 50.37)
+    dock._sync()
+    assert "50.3" in dock.name_edit.placeholderText(), \
+        f"unnamed areas should offer their location: {dock.name_edit.placeholderText()!r}"
 
-    # unnamed areas are named for where they are, or two runs look identical in the tree
-    auto = dock._group_name()
-    assert "50.3" in auto and "125.9" in auto, f"auto name is not locational: {auto}"
-    dock.name_edit.setText("Mt Bishop")
-    assert dock._group_name().startswith("Mt Bishop"), dock._group_name()
+    # the name has to reach the disk, or reopening cannot recover it
+    dock.out_dir = tempfile.mkdtemp(prefix="tc_name_")
+    dock.name_edit.setText("alex test")
+    dock._save_meta()
+    assert ST.load_meta(dock.out_dir).get("name") == "alex test", ST.load_meta(dock.out_dir)
 
-    lyr = QgsVectorLayer("Polygon?crs=EPSG:3857", "pretend change map", "memory")
-    dock._add_to_group(lyr)
+    # two DIFFERENT areas, same name -> separate groups
+    dock._release_layers(dock._group_name())
+    map_a = dock._add_to_group(QgsVectorLayer("Polygon?crs=EPSG:3857", "map A", "memory"))
+    map_a_id = map_a.id()
+    dock.layer_id = map_a_id
+    first = dock._current_group
+    dock.bbox = (-118.60, 49.10, -118.40, 49.30)       # different place, name untouched
+    dock._release_layers(dock._group_name())
+    dock._add_to_group(QgsVectorLayer("Polygon?crs=EPSG:3857", "map B", "memory"))
+    second = dock._current_group
+    assert first != second, f"both areas landed in one group: {first!r}"
+    assert second.endswith("(2)"), f"expected a disambiguating suffix, got {second!r}"
+
     root = QgsProject.instance().layerTreeRoot()
-    g = root.findGroup(dock._group_name())
-    assert g is not None, f"no group created; tree has {[c.name() for c in root.children()]}"
-    assert [c.name() for c in g.children()] == ["pretend change map"]
-    dock.layer_id = lyr.id()
-    dock._current_group = dock._group_name()
+    assert [c.name() for c in root.findGroup(first).children()] == ["map A"], "area 1 polluted"
+    assert [c.name() for c in root.findGroup(second).children()] == ["map B"], "area 2 polluted"
+    # Switching areas DETACHES: the first area's group keeps its layer, and the dock stops
+    # tracking it. Previously the raster was removed while the polygons were not, leaving the
+    # old area as an orphan polygon layer belonging to nothing.
+    assert QgsProject.instance().mapLayer(map_a_id) is not None,         "the previous area's layer was removed instead of detached"
 
-    # move to a DIFFERENT area: the old group must survive intact
-    dock.name_edit.setText("Victoria")
+    # and re-running the SAME area reuses its group rather than making a third
+    before = len([c for c in root.children() if hasattr(c, "children")])
     dock._release_layers(dock._group_name())
-    old = root.findGroup("Mt Bishop  2019→2024")
-    assert old is not None and len(old.children()) == 1, \
-        "the previous area's group was gutted when a new area started"
-    assert dock.layer_id is None, "the new area must not still be tracking the old layers"
-
-    # re-running the SAME area replaces rather than stacks
-    dock.name_edit.setText("Victoria")
-    dock.layer_id = None
-    lyr2 = QgsVectorLayer("Polygon?crs=EPSG:3857", "victoria map", "memory")
-    dock._add_to_group(lyr2)
-    lyr2_id = lyr2.id()          # grab it first: removal deletes the C++ object behind lyr2
-    dock.layer_id = lyr2_id
-    dock._current_group = dock._group_name()
-    dock._release_layers(dock._group_name())
-    assert QgsProject.instance().mapLayer(lyr2_id) is None, \
-        "re-running the same area should replace its layers, not leave duplicates"
+    assert dock._current_group == second, "a re-run of the same area moved to a new group"
+    assert len([c for c in root.children() if hasattr(c, "children")]) == before, \
+        "a re-run created another group instead of reusing this area's"
     dock.cleanup()
     QgsProject.instance().clear()
-    print("ok each area owns a complete group; switching detaches, re-running replaces")
+    print("ok names persist, and same-named areas get separate groups")
 
 
 if __name__ == "__main__":
@@ -971,5 +977,5 @@ if __name__ == "__main__":
     test_polygons_and_labelling_survive_closing_the_session()
     test_two_areas_over_the_same_years_cannot_share_a_run_folder()
     test_the_dock_always_says_where_results_will_go()
-    test_each_area_gets_its_own_complete_layer_group()
+    test_a_named_area_keeps_its_name_and_never_shares_a_group()
     print("all ok")

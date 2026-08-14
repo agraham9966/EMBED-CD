@@ -90,7 +90,9 @@ class ChangeDock(QDockWidget):
         self.layer_id = None
         self.cov_layer_id = None    # thematic 'why is there no answer here' layer
         self.photo_ids = {}         # year -> layer id; several can be loaded at once
-        self._current_group = None  # layer-tree group the tracked layers live in
+        self._current_group = None  # RESOLVED tree name (may carry a '(2)' suffix)
+        self._current_base = None   # the name before disambiguation
+        self._current_area_key = None  # WHICH AREA the tracked layers belong to
         self.n_tiles = 0
         self._canceled = False
         self._tmp_root = None
@@ -132,6 +134,7 @@ class ChangeDock(QDockWidget):
             "can sit in the project at once without becoming a pile of 'change 2019→2024' "
             "entries. Leave it empty and the area's location is used instead.")
         self.name_edit.textChanged.connect(lambda _t: self._sync_name_placeholder())
+        self.name_edit.editingFinished.connect(self._save_meta)
         nrow.addWidget(self.name_edit, 1)
         lay.addLayout(nrow)
 
@@ -321,6 +324,7 @@ class ChangeDock(QDockWidget):
         self.browse_btn.setEnabled(not running)
         self.open_btn.setEnabled(not running)
         self._sync_photos()
+        self._sync_name_placeholder()
         # The destination depends on the folder, the AREA and the years, so it has to be
         # recomputed here rather than only when the path box is edited — drawing a new area
         # changes where the next run lands, which is exactly the case that caused trouble.
@@ -502,6 +506,33 @@ class ChangeDock(QDockWidget):
         return (f"{name or self._auto_name()}  "
                 f"{self.year_a.currentText()}→{self.year_b.currentText()}")
 
+    def _save_meta(self):
+        """The name lives in the run folder, because nothing else on disk carries it: years come
+        from the VRT filename and the extent from the raster, but a name is only in the user's
+        head until it is written down."""
+        if not self.out_dir or not os.path.isdir(self.out_dir):
+            return
+        try:
+            from .engine import store as ST
+            ST.save_meta(self.out_dir, name=self.name_edit.text().strip())
+        except Exception:
+            pass
+
+    def _resolve_group(self, base):
+        """A tree name for a NEW area that is not already taken.
+
+        Draw a second area and forget to change the Name and both would land in one group,
+        silently interleaving two areas' layers — the exact thing groups exist to prevent. So
+        the second becomes "name (2)".
+        """
+        root = QgsProject.instance().layerTreeRoot()
+        if root.findGroup(base) is None:
+            return base
+        n = 2
+        while root.findGroup(f"{base} ({n})") is not None:
+            n += 1
+        return f"{base} ({n})"
+
     def _group(self):
         """The layer-tree group for this run, created at the top if it does not exist.
 
@@ -510,8 +541,10 @@ class ChangeDock(QDockWidget):
         names, and it is not obvious which belongs to what.
         """
         root = QgsProject.instance().layerTreeRoot()
-        name = self._group_name()
-        return root.findGroup(name) or root.insertGroup(0, name)
+        if not self._current_group:
+            self._current_group = self._resolve_group(self._group_name())
+        return (root.findGroup(self._current_group)
+                or root.insertGroup(0, self._current_group))
 
     def _add_to_group(self, layer, bottom=False):
         QgsProject.instance().addMapLayer(layer, False)
@@ -635,9 +668,13 @@ class ChangeDock(QDockWidget):
 
         self.out_dir = os.path.dirname(vrt_path)
         self.vrt_path = vrt_path
+        from .engine import store as ST
         self.name_edit.blockSignals(True)
-        self.name_edit.clear()          # fall back to the location-derived name for this area
+        # A saved name is the whole point of having typed one; only fall back to coordinates
+        # when the run really has none.
+        self.name_edit.setText(ST.load_meta(self.out_dir).get("name", "") or "")
         self.name_edit.blockSignals(False)
+        self._sync_name_placeholder()
         # Deliberately NOT touching `Save to:`. Setting it here silently redirected the next
         # run into the folder just opened, and with a matching year pair that meant writing a
         # second area's tiles on top of the first and overwriting its VRT. Opening is a read;
@@ -740,6 +777,7 @@ class ChangeDock(QDockWidget):
             self._tmp_root = self._tmp_root or tempfile.mkdtemp(prefix="embed_cd_")
             self.out_dir = os.path.join(self._tmp_root, run)
         os.makedirs(self.out_dir, exist_ok=True)
+        self._save_meta()
         cancel_flag = os.path.join(self.out_dir, ".cancel")
         if os.path.exists(cancel_flag):
             os.remove(cancel_flag)
@@ -1083,15 +1121,27 @@ class ChangeDock(QDockWidget):
         polygons were not, so a new area silently half-erased the old one — a complete group
         left behind is the honest version of "you now have two areas open".
         """
-        if self._current_group is not None and self._current_group != new_group:
-            self.layer_id = self.cov_layer_id = None      # detach, do not remove
+        # Compare the AREA, not the name. Two different areas left with the same name produce
+        # the same group name, so name-matching read them as one run and merged their layers —
+        # which is exactly the case someone hits by drawing a second area and not retyping.
+        key = self._area_key() if self.bbox is not None else None
+        same_area = self._current_area_key is not None and key == self._current_area_key
+        if same_area:
+            self._remove_layer()                          # re-run: replace this area's layers
             if getattr(self, "classify", None) is not None:
                 self.classify.detach()
+            if not self._current_group or new_group != self._current_base:
+                self._current_group = self._resolve_group(new_group)   # renamed in place
         else:
-            self._remove_layer()
+            if self._current_area_key is not None:
+                self.layer_id = self.cov_layer_id = None  # another area: detach, do not remove
+            else:
+                self._remove_layer()
             if getattr(self, "classify", None) is not None:
                 self.classify.detach()
-        self._current_group = new_group
+            self._current_group = self._resolve_group(new_group)
+        self._current_base = new_group
+        self._current_area_key = key
 
     def _remove_layer(self):
         for attr in ("layer_id", "cov_layer_id"):

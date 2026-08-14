@@ -152,3 +152,35 @@ def load_labels(path):
     labels = {int(k): v for k, v in payload.get("labels", {}).items()}
     names = payload.get("names") or sorted(class_vectors)
     return class_vectors, payload.get("colors", {}), labels, payload.get("threshold"), names
+
+
+def meta_path(out_dir):
+    return os.path.join(out_dir, "run.json")
+
+
+def save_meta(out_dir, **fields):
+    """Whatever the folder cannot work out about itself. Years come from the VRT filename and
+    the extent from the raster, but the NAME a user gave an area exists nowhere on disk — so
+    reopening a run called "alex test" showed it as its coordinates instead."""
+    path = meta_path(out_dir)
+    data = {}
+    if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            data = {}
+    data.update({k: v for k, v in fields.items() if v is not None})
+    tmp = path + ".part"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+    os.replace(tmp, path)
+    return path
+
+
+def load_meta(out_dir):
+    try:
+        with open(meta_path(out_dir), encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
