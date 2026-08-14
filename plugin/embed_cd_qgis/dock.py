@@ -10,6 +10,7 @@ reopening the layer.
 """
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -161,6 +162,13 @@ class ChangeDock(QDockWidget):
         self.browse_btn.setMaximumWidth(30)
         self.browse_btn.clicked.connect(self._browse)
         orow.addWidget(self.browse_btn)
+        self.open_btn = QPushButton("Open…")
+        self.open_btn.setToolTip(
+            "Reopen a change map you saved earlier. Pick the folder a previous run wrote to and "
+            "everything comes back live: the threshold slider, polygons, and the classifier with "
+            "its embeddings — not just the picture.")
+        self.open_btn.clicked.connect(self._open_existing)
+        orow.addWidget(self.open_btn)
         lay.addLayout(orow)
 
         rrow = QHBoxLayout()
@@ -286,6 +294,7 @@ class ChangeDock(QDockWidget):
         self.clear_area_btn.setEnabled(
             not running and (has_area or self.area_band is not None))
         self.browse_btn.setEnabled(not running)
+        self.open_btn.setEnabled(not running)
         for w in (self.slider, self.auto_btn, self.poly_btn, self.save_btn):
             w.setEnabled(has_result)
         if getattr(self, "classify", None) is not None:
@@ -400,6 +409,107 @@ class ChangeDock(QDockWidget):
         d = QFileDialog.getExistingDirectory(self, "Folder for the change map")
         if d:
             self.out_edit.setText(d)
+
+    _RUN_VRT = re.compile(r"^change_(\d{4})_(\d{4})\.vrt$")
+
+    def _find_run(self, folder):
+        """(vrt path, year_a, year_b) for a saved run at `folder`, or one level below it.
+
+        Forgiving about which folder gets picked, because `Save to:` writes a `change_<a>_<b>`
+        subfolder and it is a coin flip whether someone points at that or at its parent.
+
+        The name must match EXACTLY: a finished run leaves both `change_2019_2025.vrt` and a
+        superseded revision `change_2019_2025.v4.vrt`, and the revision holds fewer tiles.
+        """
+        cands = []
+        for d in [folder] + [os.path.join(folder, n) for n in sorted(os.listdir(folder))
+                             if os.path.isdir(os.path.join(folder, n))]:
+            try:
+                names = os.listdir(d)
+            except OSError:
+                continue
+            for n in names:
+                m = self._RUN_VRT.match(n)
+                if m:
+                    p = os.path.join(d, n)
+                    cands.append((os.path.getmtime(p), p, int(m.group(1)), int(m.group(2))))
+        if not cands:
+            return None
+        _mt, path, ya, yb = max(cands)          # newest, if a folder holds several year pairs
+        return path, ya, yb
+
+    def _open_existing(self):
+        """Reconnect the dock to a run saved earlier.
+
+        Everything downstream — threshold, Auto, Polygonize, Save, and the whole classifier —
+        gates on `vrt_path` / `out_dir` / `layer_id`, and those were only ever set as a side
+        effect of a job running in THIS session. So a saved result used to be openable as a
+        picture and nothing more, even though the tiles, the VRT and the cell stores with the
+        embeddings were all still sitting there intact.
+        """
+        from qgis.core import QgsRectangle
+        from .engine import gdalio as GD
+
+        folder = QFileDialog.getExistingDirectory(self, "Folder of a saved change map")
+        if not folder:
+            return
+        found = self._find_run(folder)
+        if not found:
+            self.status.setText(
+                "No saved change map in that folder. Pick the folder a previous run wrote to — "
+                "it contains change_<from>_<to>.vrt.")
+            return
+        vrt_path, ya, yb = found
+
+        ds = GD.open_ds(vrt_path)
+        if ds is None:
+            self.status.setText(f"Could not open {os.path.basename(vrt_path)}.")
+            return
+        gt = ds.GetGeoTransform()
+        w, h = ds.RasterXSize, ds.RasterYSize
+        src_crs = GD.crs_string(ds)
+        xs = (gt[0], gt[0] + gt[1] * w)
+        ys = (gt[3], gt[3] + gt[5] * h)
+        ds = None
+
+        self._remove_layer()
+        self.out_dir = os.path.dirname(vrt_path)
+        self.vrt_path = vrt_path
+        # Point `Save to:` at the PARENT, since that is what _run appends change_<a>_<b> to —
+        # so re-running lands back in the same place instead of nesting a folder inside itself.
+        self.out_edit.setText(os.path.dirname(self.out_dir))
+        for combo, year in ((self.year_a, ya), (self.year_b, yb)):
+            combo.blockSignals(True)
+            combo.setCurrentText(str(year))
+            combo.blockSignals(False)
+        # The raster is the authority on its own pixel size; the tile filenames encode it too but
+        # this cannot drift out of step with the file.
+        res = abs(gt[1])
+        for label, value in _DETAIL.items():
+            if abs(value - res) < 1e-6:
+                self.detail.blockSignals(True)
+                self.detail.setCurrentText(label)
+                self.detail.blockSignals(False)
+
+        lo, la, hi, ha = GD.transform_bounds(src_crs, "EPSG:4326",
+                                             min(xs), min(ys), max(xs), max(ys))
+        self.bbox = (lo, la, hi, ha)
+        try:
+            tr = QgsCoordinateTransform(QgsCoordinateReferenceSystem("EPSG:4326"),
+                                        QgsProject.instance().crs(), QgsProject.instance())
+            self.rect = tr.transformBoundingBox(QgsRectangle(lo, la, hi, ha))
+            self._show_area_band(self.rect)
+        except Exception:
+            self.rect = None            # the outline is a nicety; never block the reopen for it
+
+        self._refresh_layer()
+        self._describe_area()
+        n_cells = len([f for f in os.listdir(self.out_dir) if f.startswith("cells_")])
+        self.status.setText(
+            f"Opened {ya}→{yb} from {os.path.basename(self.out_dir)} — {w}×{h} px"
+            + (f", {n_cells} embedding tiles (classifier ready)." if n_cells else
+               ". No embedding tiles here, so the classifier cannot run; re-run to capture them."))
+        self._sync()
 
     def _python_exe(self):
         for c in (os.path.join(sys.exec_prefix, "python.exe"),

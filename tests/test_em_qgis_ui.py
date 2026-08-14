@@ -9,11 +9,13 @@ Run:  "C:\\Program Files\\QGIS 4.0.1\\bin\\python-qgis.bat" tests/test_em_qgis_u
 """
 import os
 import sys
+import tempfile
 
 try:
     from qgis.core import (QgsApplication, QgsVectorLayer, QgsFeature, QgsGeometry, QgsField,
                            QgsProject, QgsMapSettings, QgsMapRendererParallelJob)
     from qgis.PyQt.QtCore import QSize
+    from qgis.PyQt.QtWidgets import QFileDialog
 except ImportError:
     print("skipped: needs QGIS's own Python (python-qgis.bat)")
     sys.exit(0)
@@ -560,6 +562,88 @@ def test_the_photo_strip_offers_every_year_and_stacks_them():
     print(f"ok photo strip covers all {len(years)} years, independently toggleable")
 
 
+def test_a_saved_run_can_be_reopened_and_is_fully_live():
+    """A saved result used to be openable as a PICTURE and nothing else.
+
+    Threshold, Auto, Polygonize, Save and the whole classifier all gate on `vrt_path` /
+    `out_dir` / `layer_id`, and those were only ever set as a side effect of a job running in
+    the same session — parsed out of the worker's stdout. So the tiles, the VRT and the cell
+    stores could all be sitting on disk, intact, with no way to reach them.
+
+    Builds a folder shaped exactly like a real run, including the superseded `.v1.vrt` a
+    finished job leaves behind, because matching that by accident loads a partial mosaic.
+    """
+    import numpy as np
+    from qgis.PyQt.QtWidgets import QMainWindow
+    from qgis.gui import QgsMapCanvas
+    from embed_cd_qgis.dock import ChangeDock
+    from embed_cd import grid as G, score as S, vrt as V, cells as CE, gdalio as GD
+
+    class _Iface:
+        def __init__(self, win, canvas):
+            self._w, self._c = win, canvas
+
+        def mainWindow(self):
+            return self._w
+
+        def mapCanvas(self):
+            return self._c
+
+    root = tempfile.mkdtemp(prefix="tc_reopen_")
+    run = os.path.join(root, "change_2019_2024")
+    os.makedirs(run)
+    g = G.Grid("EPSG:3857", -13800000.0, 6600000.0, 100.0, 40, 30)
+    tiles = []
+    for i, (r0, c0) in enumerate([(0, 0), (0, 20)]):
+        p = os.path.join(run, f"tile_2019-2024_EPSG3857-100m_t{i}.tif")
+        score = np.full((30, 20), 0.3 + 0.2 * i, dtype=np.float32)
+        cov = np.full((30, 20), float(S.COV_OK), dtype=np.float32)
+        GD.write(p, np.stack([score, cov]), g.crs, G.transform_of(g, r0, c0), nodata=S.NODATA)
+        tiles.append({"path": p, "row0": r0, "col0": c0, "width": 20, "height": 30})
+    V.write_vrt(os.path.join(run, "change_2019_2024.v1.vrt"), g, tiles[:1])   # the decoy
+    V.write_vrt(os.path.join(run, "change_2019_2024.vrt"), g, tiles)
+    tr = GD.Transform.from_origin(g.x0, g.y0, 160.0, 160.0)
+    CE.write_cells(os.path.join(run, "cells_2019-2024_160m_EPSG32610_500000_5399360.tif"),
+                   np.zeros((4, 4, 8), np.float32), np.zeros((4, 4, 8), np.float32),
+                   np.ones((4, 4), np.int32), np.full((4, 4), 0.4, np.float32),
+                   np.full((4, 4), 0.6, np.float32), "EPSG:32610", tr, 16)
+
+    dock = ChangeDock(_Iface(QMainWindow(), QgsMapCanvas()))
+    assert not dock.poly_btn.isEnabled(), "nothing should be live before opening"
+
+    found = dock._find_run(root)                 # given the PARENT, as a user plausibly would
+    assert found is not None, "did not find the run one level down"
+    path, ya, yb = found
+    assert os.path.basename(path) == "change_2019_2024.vrt", \
+        f"picked {os.path.basename(path)} — the .v1 decoy holds only half the tiles"
+    assert (ya, yb) == (2019, 2024)
+
+    # Drive the real reopen, minus the file dialog.
+    from unittest import mock
+    with mock.patch.object(QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: root)):
+        dock._open_existing()
+
+    assert dock.vrt_path == path, "vrt_path not reconnected"
+    assert dock.out_dir == run, "out_dir not reconnected"
+    assert dock.layer_id is not None, "no layer added"
+    assert dock.year_a.currentText() == "2019" and dock.year_b.currentText() == "2024", \
+        "years not recovered from the filename"
+    assert dock.detail.currentText() == "100 m", \
+        f"Detail not recovered from the raster's own pixel size: {dock.detail.currentText()}"
+    assert dock.bbox is not None and dock.bbox[0] < dock.bbox[2], "bbox not derived"
+    for w, name in ((dock.slider, "threshold"), (dock.auto_btn, "Auto"),
+                    (dock.poly_btn, "Polygonize"), (dock.save_btn, "Save")):
+        assert w.isEnabled(), f"{name} still dead after reopening"
+
+    # The point of all this: the downstream features must actually WORK, not merely light up.
+    dock._auto()
+    polys, _crs = __import__("embed_cd.objects", fromlist=["objects"]).polygonize(
+        dock.vrt_path, 0.2, min_area_ha=0.01)
+    assert polys, "polygonize found nothing in a reopened run"
+    dock.cleanup()
+    print(f"ok reopened a saved run: {len(polys)} polygons, all controls live")
+
+
 if __name__ == "__main__":
     test_a_rewritten_vrt_is_only_seen_at_a_new_path()
     test_a_users_correction_is_never_revised_by_the_model()
@@ -572,4 +656,5 @@ if __name__ == "__main__":
     test_class_examples_survive_a_re_polygonize()
     test_best_guess_option_reduces_unknowns()
     test_the_photo_strip_offers_every_year_and_stacks_them()
+    test_a_saved_run_can_be_reopened_and_is_fully_live()
     print("all ok")
