@@ -76,6 +76,8 @@ class ClassifyPanel(QWidget):
         self.layer = None
         self.vectors = None            # [N, D] aligned to feature id
         self.polys = []
+        self._crs = None           # CRS the current polygons were cut in
+        self._cut_threshold = None  # the cutoff these polygons were made at
         self.labels = {}               # row -> class name, for the CURRENT polygon set
         # Examples banked from earlier polygon sets. A class is the user's vocabulary and the
         # expensive part of their work, so it must outlive a re-polygonize or a new area; only
@@ -276,7 +278,10 @@ class ClassifyPanel(QWidget):
 
         self._bank_labels()          # keep the examples, drop the row numbers
         self.polys, self.vectors = polys, np.asarray(vecs, dtype="float32")
+        self._crs = str(crs)
+        self._cut_threshold = self.host._threshold()
         self._build_layer(str(crs))
+        self._save_objects()         # cutting these took minutes; never make it happen twice
         dlg.setValue(100)
         dlg.close()
         self.count_lbl.setText(
@@ -499,6 +504,7 @@ class ClassifyPanel(QWidget):
         self._style()
         self._refresh_list()
         self._show_selected()
+        self._save_labels()          # paused labelling never reaches _refit
         self._report(self.pred)
 
     # ---------------- click to label ----------------
@@ -692,6 +698,106 @@ class ClassifyPanel(QWidget):
                     out.setdefault(name, []).append(self.vectors[row])
         return {k: v for k, v in out.items() if v}
 
+    def restore(self):
+        """Reload a run's polygons and labelling progress from its folder. Returns a message,
+        or None if there was nothing saved.
+
+        Called after the dock reconnects to a saved run. Predictions are NOT read back — they
+        are refit from the restored classes, which reproduces them exactly and keeps the
+        GeoPackage immutable.
+        """
+        paths = self._store_paths()
+        if not paths:
+            return None
+        gpkg, jsn = paths
+        from .engine import store as ST
+        msg = []
+        if os.path.exists(gpkg):
+            try:
+                polys, vecs, crs = ST.load_objects(gpkg)
+            except Exception as exc:
+                return f"Could not read saved polygons: {exc}"
+            if polys:
+                self.polys, self.vectors, self._crs = polys, vecs, crs
+                self.labels = {}
+                self._build_layer(str(crs))
+                msg.append(f"{len(polys)} polygons")
+        if os.path.exists(jsn):
+            try:
+                cv, colors, labels, thr, names = ST.load_labels(jsn)
+            except Exception as exc:
+                return f"Could not read saved labels: {exc}"
+            self.class_vectors = {k: list(v) for k, v in cv.items()}
+            self.colors.update(colors or {})
+            for name in names:
+                if name not in self.classes:
+                    self.classes.append(name)
+            # Labels are keyed to the polygons in the GeoPackage, which are LOADED, not re-cut —
+            # so they always line up and there is nothing to guard against. (An earlier version
+            # compared the saved cut against the live slider, which a freshly opened dock always
+            # fails, so labels were silently never restored.)
+            self.labels = dict(labels) if self.polys else {}
+            self._cut_threshold = thr
+            if thr is not None:
+                # Put the slider back where these polygons were cut, so the symbology and the
+                # objects on screen agree.
+                self.host.slider.setValue(int(round(thr * 100)))
+            n_ex = sum(len(v) for v in self.class_vectors.values()) + len(self.labels)
+            msg.append(f"{len(self.classes)} classes / {n_ex} examples")
+        if not msg:
+            return None
+        self._refresh_list()
+        self.sync()
+        self._refit(force=True)
+        return "Restored " + ", ".join(msg) + "."
+
+    def _store_paths(self):
+        """(objects gpkg, labels json) for the CURRENT run, or None in temp mode.
+
+        Only a run with a real output folder persists. Temp runs deliberately do not: the folder
+        is deleted on unload, so writing there would just be a slower way to lose it.
+        """
+        out = getattr(self.host, "out_dir", None)
+        if not out or not os.path.isdir(out):
+            return None
+        # Temp mode is defined by living under the session temp root, not by whether a text box
+        # looks empty. The folder is deleted on unload, so writing there is a slower way to
+        # lose the work.
+        tmp_root = getattr(self.host, "_tmp_root", None)
+        if tmp_root and os.path.abspath(out).startswith(os.path.abspath(tmp_root)):
+            return None
+        ya, yb = int(self.host.year_a.currentText()), int(self.host.year_b.currentText())
+        from .engine import store as ST
+        return ST.objects_path(out, ya, yb), ST.labels_path(out, ya, yb)
+
+    def _save_objects(self):
+        """Written ONCE per cut. Never rewritten — labels live in the JSON precisely so an
+        800-row GeoPackage is not rebuilt on every click."""
+        paths = self._store_paths()
+        if not paths or self.vectors is None or not self.polys:
+            return
+        from .engine import store as ST
+        try:
+            ST.save_objects(paths[0], self.polys, self.vectors, self._crs)
+        except Exception as exc:
+            self.status.setText(f"Polygons not saved: {exc}")
+
+    def _save_labels(self):
+        """A few KB, so this can run on every label without anyone noticing."""
+        paths = self._store_paths()
+        if not paths:
+            return
+        from .engine import store as ST
+        try:
+            # The CUT threshold, not whatever the slider says now. Moving the slider without
+            # re-polygonizing changes the symbology, not the objects, and recording the live
+            # value would make a reopened run claim a cut it was never made at.
+            thr = self._cut_threshold
+            ST.save_labels(paths[1], self.class_vectors, self.colors, self.labels,
+                           self.host._threshold() if thr is None else thr, names=self.classes)
+        except Exception:
+            pass                     # never let a failed autosave interrupt labelling
+
     def _bank_labels(self):
         """Move the current set's labels into the banked examples, before the rows they point
         at cease to exist."""
@@ -720,6 +826,7 @@ class ClassifyPanel(QWidget):
             self.head = None
             self._clear_predictions()
             self._refresh_list()
+            self._save_labels()
             self.status.setText("Add a class, then click polygons on the map to label them.")
             return
         try:
@@ -747,6 +854,9 @@ class ClassifyPanel(QWidget):
         self._refresh_list()
         self._show_selected()
         self._report(pred)
+        # Every path that changes a label or a class ends here, so this one call covers all of
+        # them — clicking the map, assigning a selection, renaming, deleting, loading a preset.
+        self._save_labels()
 
     def _report(self, pred):
         counts = {}

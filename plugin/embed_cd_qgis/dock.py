@@ -539,10 +539,18 @@ class ChangeDock(QDockWidget):
         self._refresh_layer()
         self._describe_area()
         n_cells = len([f for f in os.listdir(self.out_dir) if f.startswith("cells_")])
+        note = (f", {n_cells} embedding tiles (classifier ready)." if n_cells else
+                ". No embedding tiles here, so the classifier cannot run; re-run to capture them.")
+        self._sync()          # the panel needs to be enabled before it can rebuild its layer
+        restored = None
+        if getattr(self, "classify", None) is not None:
+            try:
+                restored = self.classify.restore()
+            except Exception as exc:
+                restored = f"Could not restore polygons/labels: {exc}"
         self.status.setText(
-            f"Opened {ya}→{yb} from {os.path.basename(self.out_dir)} — {w}×{h} px"
-            + (f", {n_cells} embedding tiles (classifier ready)." if n_cells else
-               ". No embedding tiles here, so the classifier cannot run; re-run to capture them."))
+            f"Opened {ya}→{yb} from {os.path.basename(self.out_dir)} — {w}×{h} px" + note
+            + (f"  {restored}" if restored else ""))
         self._sync()
 
     def _python_exe(self):

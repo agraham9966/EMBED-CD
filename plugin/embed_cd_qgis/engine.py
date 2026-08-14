@@ -16,7 +16,7 @@ there is no vendored copy; `__init__.py` puts the repo root on sys.path for that
 """
 try:
     from .embed_cd import (                        # noqa: F401  (zip install)
-        basemap, cells, gdalio, grid, head, job, objects, score, source, vrt)
+        basemap, cells, gdalio, grid, head, job, objects, score, source, store, vrt)
 except ImportError:                                          # dev mode: engine at the repo root
     from embed_cd import (                          # noqa: F401
-        basemap, cells, gdalio, grid, head, job, objects, score, source, vrt)
+        basemap, cells, gdalio, grid, head, job, objects, score, source, store, vrt)

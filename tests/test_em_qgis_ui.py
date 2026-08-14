@@ -708,6 +708,86 @@ def test_a_folder_holding_several_runs_asks_which_one():
     print("ok several saved runs in one folder prompt, and the choice is honoured")
 
 
+def test_polygons_and_labelling_survive_closing_the_session():
+    """Cut polygons, label some, throw the whole panel away, reopen the folder.
+
+    Polygons over a large area cost minutes and the labelling on top of them is the user's own
+    work, so losing either to a closed window is the expensive failure. Predictions are NOT
+    stored — they are refit from the restored classes — so this also checks that refitting
+    genuinely reproduces them rather than merely repopulating something.
+    """
+    import numpy as np
+    from qgis.PyQt.QtWidgets import QMainWindow
+    from qgis.gui import QgsMapCanvas
+    from unittest import mock
+    from embed_cd_qgis.dock import ChangeDock
+    from embed_cd import store as ST
+
+    class _Iface:
+        def __init__(self, win, canvas):
+            self._w, self._c = win, canvas
+
+        def mainWindow(self):
+            return self._w
+
+        def mapCanvas(self):
+            return self._c
+
+    d = tempfile.mkdtemp(prefix="tc_persist_")
+    run = os.path.join(d, "change_2019_2024")
+    os.makedirs(run)
+    _tiny_job(run)                       # change raster + matching cell store
+    os.replace(os.path.join(run, "change.vrt"), os.path.join(run, "change_2019_2024.vrt"))
+
+    dock = ChangeDock(_Iface(QMainWindow(), QgsMapCanvas()))
+    with mock.patch.object(QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: d)):
+        dock._open_existing()
+    panel = dock.classify
+    dock.slider.setValue(20)
+    panel.make_polygons()
+    n = len(panel.polys)
+    assert n >= 2, f"expected the two planted objects, got {n}"
+    assert os.path.exists(ST.objects_path(run, 2019, 2024)), "polygons were not written"
+
+    panel.classes.append("cutblock")          # add_class() prompts; this is the same end state
+    panel.colors["cutblock"] = "#d85a30"
+    panel.labels[0] = "cutblock"
+    panel._refit()
+    before_pred = list(panel.pred)
+    before_vecs = panel.vectors.copy()
+    assert os.path.exists(ST.labels_path(run, 2019, 2024)), "labels were not written"
+
+    # Throw everything away, exactly as closing QGIS would.
+    dock.cleanup()
+    dock2 = ChangeDock(_Iface(QMainWindow(), QgsMapCanvas()))
+    with mock.patch.object(QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: d)):
+        dock2._open_existing()
+    p2 = dock2.classify
+
+    assert len(p2.polys) == n, f"got {len(p2.polys)} polygons back, saved {n}"
+    assert np.allclose(p2.vectors, before_vecs, atol=1e-6), "embeddings came back changed"
+    assert "cutblock" in p2.classes, f"classes lost: {p2.classes}"
+    assert p2.labels.get(0) == "cutblock", f"per-polygon label lost: {p2.labels}"
+    assert list(p2.pred) == before_pred, "predictions did not refit to the same answer"
+    assert p2.layer is not None and p2.layer.featureCount() == n, "layer not rebuilt"
+
+    # The slider must come back at the cut the polygons were made at, whatever it was left on.
+    # An earlier version compared the SAVED cut against the LIVE slider and restored labels only
+    # when they matched — which a freshly opened dock never does, so labels were silently lost
+    # every time. Polygons are LOADED, not re-cut, so there is nothing to guard against.
+    dock3 = ChangeDock(_Iface(QMainWindow(), QgsMapCanvas()))
+    dock3.slider.setValue(80)                    # nowhere near the cut
+    with mock.patch.object(QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: d)):
+        dock3._open_existing()
+    assert abs(dock3._threshold() - 0.20) < 1e-9, \
+        f"slider not restored to the cut: {dock3._threshold()}"
+    assert dock3.classify.labels.get(0) == "cutblock", \
+        f"labels lost when the dock opened on a different slider value: {dock3.classify.labels}"
+    dock2.cleanup()
+    dock3.cleanup()
+    print(f"ok {n} polygons, classes and labels survived a session restart")
+
+
 if __name__ == "__main__":
     test_a_rewritten_vrt_is_only_seen_at_a_new_path()
     test_a_users_correction_is_never_revised_by_the_model()
@@ -722,4 +802,5 @@ if __name__ == "__main__":
     test_the_photo_strip_offers_every_year_and_stacks_them()
     test_a_saved_run_can_be_reopened_and_is_fully_live()
     test_a_folder_holding_several_runs_asks_which_one()
+    test_polygons_and_labelling_survive_closing_the_session()
     print("all ok")
