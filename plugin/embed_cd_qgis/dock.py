@@ -90,6 +90,7 @@ class ChangeDock(QDockWidget):
         self.layer_id = None
         self.cov_layer_id = None    # thematic 'why is there no answer here' layer
         self.photo_ids = {}         # year -> layer id; several can be loaded at once
+        self._current_group = None  # layer-tree group the tracked layers live in
         self.n_tiles = 0
         self._canceled = False
         self._tmp_root = None
@@ -122,6 +123,17 @@ class ChangeDock(QDockWidget):
         self.area_lbl = QLabel("Draw an area to begin.")
         self.area_lbl.setWordWrap(True)
         lay.addWidget(self.area_lbl)
+
+        nrow = QHBoxLayout()
+        nrow.addWidget(QLabel("Name:"))
+        self.name_edit = QLineEdit()
+        self.name_edit.setToolTip(
+            "What to call this area. Its layers go in a group of this name, so several areas "
+            "can sit in the project at once without becoming a pile of 'change 2019→2024' "
+            "entries. Leave it empty and the area's location is used instead.")
+        self.name_edit.textChanged.connect(lambda _t: self._sync_name_placeholder())
+        nrow.addWidget(self.name_edit, 1)
+        lay.addLayout(nrow)
 
         yrow = QHBoxLayout()
         yrow.addWidget(QLabel("From:"))
@@ -444,12 +456,68 @@ class ChangeDock(QDockWidget):
                 "Results → a temporary folder, discarded when QGIS closes  ·  "
                 "<a href='pick'>keep them in a folder</a>")
 
+    _SETTING_DIR = "embed_cd/last_dir"
+
+    def _last_dir(self):
+        """QGIS opens file dialogs in its own bin directory otherwise, which is never where
+        anyone's data is."""
+        try:
+            from qgis.core import QgsSettings
+            return QgsSettings().value(self._SETTING_DIR, "") or ""
+        except Exception:
+            return ""
+
+    def _remember_dir(self, path):
+        try:
+            from qgis.core import QgsSettings
+            QgsSettings().setValue(self._SETTING_DIR, path)
+        except Exception:
+            pass
+
     def _browse(self):
-        d = QFileDialog.getExistingDirectory(self, "Folder for the change map")
+        d = QFileDialog.getExistingDirectory(self, "Folder for the change map", self._last_dir())
         if d:
             self.out_edit.setText(d)
+            self._remember_dir(d)
 
     _RUN_VRT = re.compile(r"^change_(\d{4})_(\d{4})\.vrt$")
+
+    def _auto_name(self):
+        """A name for an area nobody named: where it is. Two runs of the same years are
+        otherwise indistinguishable in the layer tree, which is the problem groups exist to
+        solve."""
+        if self.bbox is None:
+            return "area"
+        lo, la, hi, ha = self.bbox
+        cy, cx = (la + ha) / 2.0, (lo + hi) / 2.0
+        return (f"{abs(cy):.2f}{'N' if cy >= 0 else 'S'} "
+                f"{abs(cx):.2f}{'E' if cx >= 0 else 'W'}")
+
+    def _sync_name_placeholder(self):
+        if getattr(self, "name_edit", None) is not None:
+            self.name_edit.setPlaceholderText(self._auto_name())
+
+    def _group_name(self):
+        name = self.name_edit.text().strip() if getattr(self, "name_edit", None) else ""
+        return (f"{name or self._auto_name()}  "
+                f"{self.year_a.currentText()}→{self.year_b.currentText()}")
+
+    def _group(self):
+        """The layer-tree group for this run, created at the top if it does not exist.
+
+        Everything an area produces — change map, coverage, polygons — belongs together. Without
+        this, two areas in one project are an undifferentiated stack of near-identical layer
+        names, and it is not obvious which belongs to what.
+        """
+        root = QgsProject.instance().layerTreeRoot()
+        name = self._group_name()
+        return root.findGroup(name) or root.insertGroup(0, name)
+
+    def _add_to_group(self, layer, bottom=False):
+        QgsProject.instance().addMapLayer(layer, False)
+        g = self._group()
+        g.insertLayer(-1 if bottom else 0, layer)
+        return layer
 
     def _area_key(self):
         """Short digest of the drawn area, so a run folder names WHERE as well as WHEN.
@@ -537,9 +605,11 @@ class ChangeDock(QDockWidget):
         from qgis.core import QgsRectangle
         from .engine import gdalio as GD
 
-        folder = QFileDialog.getExistingDirectory(self, "Folder of a saved change map")
+        folder = QFileDialog.getExistingDirectory(self, "Folder of a saved change map",
+                                                  self._last_dir())
         if not folder:
             return
+        self._remember_dir(folder)
         runs = self._find_runs(folder)
         if not runs:
             self.status.setText(
@@ -563,9 +633,11 @@ class ChangeDock(QDockWidget):
         ys = (gt[3], gt[3] + gt[5] * h)
         ds = None
 
-        self._remove_layer()
         self.out_dir = os.path.dirname(vrt_path)
         self.vrt_path = vrt_path
+        self.name_edit.blockSignals(True)
+        self.name_edit.clear()          # fall back to the location-derived name for this area
+        self.name_edit.blockSignals(False)
         # Deliberately NOT touching `Save to:`. Setting it here silently redirected the next
         # run into the folder just opened, and with a matching year pair that meant writing a
         # second area's tiles on top of the first and overwriting its VRT. Opening is a read;
@@ -586,11 +658,18 @@ class ChangeDock(QDockWidget):
         lo, la, hi, ha = GD.transform_bounds(src_crs, "EPSG:4326",
                                              min(xs), min(ys), max(xs), max(ys))
         self.bbox = (lo, la, hi, ha)
+        self._release_layers(self._group_name())   # now that years and area are both known
         try:
             tr = QgsCoordinateTransform(QgsCoordinateReferenceSystem("EPSG:4326"),
                                         QgsProject.instance().crs(), QgsProject.instance())
             self.rect = tr.transformBoundingBox(QgsRectangle(lo, la, hi, ha))
             self._show_area_band(self.rect)
+            # Go and look at it. Reopening a run and being left wherever the canvas happened to
+            # be is the same as not having opened it.
+            r = QgsRectangle(self.rect)
+            r.scale(1.05)
+            self.canvas.setExtent(r)
+            self.canvas.refresh()
         except Exception:
             self.rect = None            # the outline is a nicety; never block the reopen for it
 
@@ -676,7 +755,7 @@ class ChangeDock(QDockWidget):
             "cell_m": _CELL_M,
         }
         root = self._engine_root()
-        self._remove_layer()
+        self._release_layers(self._group_name())
         self.vrt_path = None
         self._canceled = False
         self.proc = QProcess(self)
@@ -776,7 +855,7 @@ class ChangeDock(QDockWidget):
             cov = QgsRasterLayer(self.vrt_path, f"data coverage {a}→{b}")
             if cov.isValid():
                 self._style_coverage(cov, a, b)
-                QgsProject.instance().addMapLayer(cov)   # added first -> ends up underneath
+                self._add_to_group(cov, bottom=True)     # underneath the change map
                 self.cov_layer_id = cov.id()
         elif cov.source() != self.vrt_path:
             # Re-point, don't reload. reloadData() and setDataSource() to the SAME path both
@@ -793,7 +872,7 @@ class ChangeDock(QDockWidget):
             if not layer.isValid():
                 return
             self._style(layer)
-            QgsProject.instance().addMapLayer(layer)
+            self._add_to_group(layer)
             self.layer_id = layer.id()
             self._clear_area_band()      # the raster now shows the extent; outline is clutter
             self._sync()
@@ -995,6 +1074,24 @@ class ChangeDock(QDockWidget):
     def _cache_dir(self):
         from qgis.core import QgsApplication
         return os.path.join(QgsApplication.qgisSettingsDirPath(), "cache", "embed_cd")
+
+    def _release_layers(self, new_group):
+        """Replace this area's layers, or leave another area's alone.
+
+        Re-running the SAME area should replace its layers; starting a different one should
+        not touch what is already there. Previously the raster was removed either way while the
+        polygons were not, so a new area silently half-erased the old one — a complete group
+        left behind is the honest version of "you now have two areas open".
+        """
+        if self._current_group is not None and self._current_group != new_group:
+            self.layer_id = self.cov_layer_id = None      # detach, do not remove
+            if getattr(self, "classify", None) is not None:
+                self.classify.detach()
+        else:
+            self._remove_layer()
+            if getattr(self, "classify", None) is not None:
+                self.classify.detach()
+        self._current_group = new_group
 
     def _remove_layer(self):
         for attr in ("layer_id", "cov_layer_id"):

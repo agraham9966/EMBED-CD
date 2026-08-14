@@ -316,7 +316,13 @@ class ClassifyPanel(QWidget):
             feats.append(f)
         pr.addFeatures(feats)
         layer.updateExtents()
-        QgsProject.instance().addMapLayer(layer)
+        # Into the host's group, so an area's polygons sit with the change map they came from
+        # rather than loose at the top of the tree.
+        add = getattr(getattr(self, "host", None), "_add_to_group", None)
+        if add is not None:
+            add(layer)
+        else:
+            QgsProject.instance().addMapLayer(layer)
         self.layer = layer
         # Built once. Resolving a feature's row by reading its attribute on every access meant
         # walking the layer several times per click, which is most of why labelling felt slow.
@@ -357,6 +363,16 @@ class ClassifyPanel(QWidget):
         self._fid_row = {}
         self.pred = None
         self.scores = None
+
+    def detach(self):
+        """Stop tracking the polygon layer WITHOUT removing it — it belongs to the previous
+        area's group and that group should stay complete. Labels are banked first, so the
+        training survives even though which polygon was which does not."""
+        self._bank_labels()
+        self._forget_layer()
+        self.head = None
+        self._refresh_list()
+        self.sync()
 
     def _remove_layer(self):
         """Drop the map layer only. Deliberately NOT _forget_layer: this runs at the top of

@@ -888,6 +888,72 @@ def test_the_dock_always_says_where_results_will_go():
     print("ok the destination line is correct in every state and tracks the area")
 
 
+def test_each_area_gets_its_own_complete_layer_group():
+    """Starting a new area used to remove the change raster but leave the polygons, so the
+    previous area was half-erased: a stray polygon layer with nothing it belonged to.
+
+    Now each area owns a named group, and moving to a different one DETACHES rather than
+    removes — the old group stays complete and the tree says which layers belong together.
+    Re-running the SAME area still replaces its layers instead of stacking duplicates.
+    """
+    from qgis.PyQt.QtWidgets import QMainWindow
+    from qgis.gui import QgsMapCanvas
+    from qgis.core import QgsProject, QgsVectorLayer
+    from embed_cd_qgis.dock import ChangeDock
+
+    class _Iface:
+        def __init__(self, win, canvas):
+            self._w, self._c = win, canvas
+
+        def mainWindow(self):
+            return self._w
+
+        def mapCanvas(self):
+            return self._c
+
+    QgsProject.instance().clear()
+    dock = ChangeDock(_Iface(QMainWindow(), QgsMapCanvas()))
+    dock.bbox = (-126.05, 50.28, -125.90, 50.37)
+
+    # unnamed areas are named for where they are, or two runs look identical in the tree
+    auto = dock._group_name()
+    assert "50.3" in auto and "125.9" in auto, f"auto name is not locational: {auto}"
+    dock.name_edit.setText("Mt Bishop")
+    assert dock._group_name().startswith("Mt Bishop"), dock._group_name()
+
+    lyr = QgsVectorLayer("Polygon?crs=EPSG:3857", "pretend change map", "memory")
+    dock._add_to_group(lyr)
+    root = QgsProject.instance().layerTreeRoot()
+    g = root.findGroup(dock._group_name())
+    assert g is not None, f"no group created; tree has {[c.name() for c in root.children()]}"
+    assert [c.name() for c in g.children()] == ["pretend change map"]
+    dock.layer_id = lyr.id()
+    dock._current_group = dock._group_name()
+
+    # move to a DIFFERENT area: the old group must survive intact
+    dock.name_edit.setText("Victoria")
+    dock._release_layers(dock._group_name())
+    old = root.findGroup("Mt Bishop  2019→2024")
+    assert old is not None and len(old.children()) == 1, \
+        "the previous area's group was gutted when a new area started"
+    assert dock.layer_id is None, "the new area must not still be tracking the old layers"
+
+    # re-running the SAME area replaces rather than stacks
+    dock.name_edit.setText("Victoria")
+    dock.layer_id = None
+    lyr2 = QgsVectorLayer("Polygon?crs=EPSG:3857", "victoria map", "memory")
+    dock._add_to_group(lyr2)
+    lyr2_id = lyr2.id()          # grab it first: removal deletes the C++ object behind lyr2
+    dock.layer_id = lyr2_id
+    dock._current_group = dock._group_name()
+    dock._release_layers(dock._group_name())
+    assert QgsProject.instance().mapLayer(lyr2_id) is None, \
+        "re-running the same area should replace its layers, not leave duplicates"
+    dock.cleanup()
+    QgsProject.instance().clear()
+    print("ok each area owns a complete group; switching detaches, re-running replaces")
+
+
 if __name__ == "__main__":
     test_a_rewritten_vrt_is_only_seen_at_a_new_path()
     test_a_users_correction_is_never_revised_by_the_model()
@@ -905,4 +971,5 @@ if __name__ == "__main__":
     test_polygons_and_labelling_survive_closing_the_session()
     test_two_areas_over_the_same_years_cannot_share_a_run_folder()
     test_the_dock_always_says_where_results_will_go()
+    test_each_area_gets_its_own_complete_layer_group()
     print("all ok")
