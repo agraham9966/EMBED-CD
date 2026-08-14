@@ -230,5 +230,8 @@ notes_ideas_alex.txt
 .cache/
 *.aux.xml
 
-# tests are local-only: fixtures, real run outputs, QGIS projects
-tests/
+# tests: keep the suite, ignore everything else in there. That folder doubles as a scratch
+# space for real run outputs, GeoPackages and QGIS projects, none of which belong in the repo —
+# and the change_*.vrt files reference .tif tiles that are ignored, so committed they are broken.
+tests/*
+!tests/test_*.py
