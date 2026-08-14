@@ -229,3 +229,6 @@ notes_ideas_alex.txt
 *.tiff
 .cache/
 *.aux.xml
+
+# tests are local-only: fixtures, real run outputs, QGIS projects
+tests/
