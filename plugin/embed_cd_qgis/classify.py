@@ -108,7 +108,7 @@ class ClassifyPanel(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
 
         row = QHBoxLayout()
-        self.make_btn = QPushButton("Make polygons")
+        self.make_btn = QPushButton("Find objects")
         self.make_btn.setToolTip("Cut the change map at the current cutoff and give every "
                                  "object the embedding of what it covers.")
         self.make_btn.clicked.connect(self.make_polygons)
@@ -283,8 +283,15 @@ class ClassifyPanel(QWidget):
                   self.prev_btn, self.next_btn, self.cycle_mode, self.discard_btn):
             w.setEnabled(has_polys)
         self._sync_review()
+        # A restored run already HAS objects, so telling the user to run one is stale advice —
+        # the label has to reflect what is loaded, not only what this session did.
         if not ready:
             self.count_lbl.setText("Run a change map first.")
+        elif has_polys and self.polys:
+            n_lab = len(self.labels) + sum(len(v) for v in self.class_vectors.values())
+            self.count_lbl.setText(f"{len(self.polys)} objects · {n_lab} labelled")
+        elif ready:
+            self.count_lbl.setText("Press 'Find objects' to cut the changed area into objects.")
 
     # ---------------- polygons ----------------
     def make_polygons(self):
@@ -719,7 +726,7 @@ class ClassifyPanel(QWidget):
             self.status.setText("Pick a class first (or add one).")
             return
         if not self._layer_ok():
-            self.status.setText("The polygon layer is gone — press 'Make polygons' again.")
+            self.status.setText("The polygon layer is gone — press 'Find objects' again.")
             return
         rows = [self._row_of(f) for f in self.layer.selectedFeatures()]
         rows = [r for r in rows if r is not None]
@@ -796,7 +803,7 @@ class ClassifyPanel(QWidget):
         than relying on it being the active layer — the active layer is a QGIS concept the user
         should not have to think about here."""
         if not self._layer_ok():
-            self.status.setText("The polygon layer is gone — press 'Make polygons' again.")
+            self.status.setText("The polygon layer is gone — press 'Find objects' again.")
             return
         name = self.current_class()
         if name is None and not clear:

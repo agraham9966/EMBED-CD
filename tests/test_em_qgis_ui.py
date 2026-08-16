@@ -1068,6 +1068,66 @@ def test_undo_and_stepping_through_objects():
     print("ok undo batches, reverts, survives nothing it should not; stepping pans")
 
 
+def test_steps_fold_once_and_keep_their_answer_in_the_title():
+    """The panel is now three numbered steps that fold as they are finished with.
+
+    Two rules worth guarding. A step folds ONCE — refolding on every refresh would fight anyone
+    who reopened it to change something, which is the complaint auto-collapse usually earns. And
+    a folded step still says what it holds, via its title; folding that hid both the controls
+    AND the record of them would be strictly worse than a tall panel.
+    """
+    from qgis.PyQt.QtWidgets import QMainWindow
+    from qgis.gui import QgsMapCanvas
+    from embed_cd_qgis.dock import ChangeDock
+
+    class _Iface:
+        def __init__(self, win, canvas):
+            self._w, self._c = win, canvas
+
+        def mainWindow(self):
+            return self._w
+
+        def mapCanvas(self):
+            return self._c
+
+    dock = ChangeDock(_Iface(QMainWindow(), QgsMapCanvas()))
+    if not hasattr(dock.step1, "setCollapsed"):
+        print("skipped: QgsCollapsibleGroupBox unavailable in this build")
+        dock.cleanup()
+        return
+
+    assert not dock.step1.isCollapsed(), "step 1 is the live step before anything is run"
+    dock.bbox = (-126.05, 50.28, -125.90, 50.37)
+    dock.name_edit.setText("Mt Bishop")
+    dock._sync()
+    assert "Mt Bishop" in dock.step1.title(), \
+        f"the title should carry the area once one exists: {dock.step1.title()!r}"
+
+    # a result arrives -> step 1 folds
+    dock.layer_id = "pretend-layer-id"
+    dock._sync()
+    assert dock.step1.isCollapsed(), "step 1 did not fold once a result existed"
+    assert "2019" in dock.step1.title() and "Mt Bishop" in dock.step1.title(), \
+        f"a folded step must still say what it holds: {dock.step1.title()!r}"
+
+    # the user reopens it; further refreshes must leave it alone
+    dock.step1.setCollapsed(False)
+    for _ in range(3):
+        dock._sync()
+    assert not dock.step1.isCollapsed(), \
+        "step 1 refolded itself after the user reopened it — fold once, then never again"
+
+    # drawing a NEW area makes step 1 live again, so it may fold once more later
+    dock._folded_once.discard("step1")
+    dock._sync()
+    assert dock.step1.isCollapsed(), "a new area should let step 1 fold again when finished"
+
+    assert "cutoff" in dock.step2.title(), \
+        f"step 2's title should carry the cutoff: {dock.step2.title()!r}"
+    dock.cleanup()
+    print("ok steps fold once, reopen stays open, titles carry the summary")
+
+
 if __name__ == "__main__":
     test_a_rewritten_vrt_is_only_seen_at_a_new_path()
     test_a_users_correction_is_never_revised_by_the_model()
@@ -1087,4 +1147,5 @@ if __name__ == "__main__":
     test_the_dock_always_says_where_results_will_go()
     test_a_named_area_keeps_its_name_and_never_shares_a_group()
     test_undo_and_stepping_through_objects()
+    test_steps_fold_once_and_keep_their_answer_in_the_title()
     print("all ok")

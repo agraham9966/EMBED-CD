@@ -96,6 +96,10 @@ class ChangeDock(QDockWidget):
         self.n_tiles = 0
         self._canceled = False
         self._tmp_root = None
+        # Each step folds itself ONCE, the first time it is finished with. Re-folding on every
+        # refresh would fight anyone who reopened it to change something, which is worse than a
+        # tall panel — the complaint auto-collapse usually earns.
+        self._folded_once = set()
 
         self._thr_timer = QTimer(self)
         self._thr_timer.setSingleShot(True)
@@ -155,6 +159,8 @@ class ChangeDock(QDockWidget):
         node = QgsProject.instance().layerTreeRoot().findLayer(lid)
         if node is not None:
             node.setItemVisibilityChecked(bool(visible))
+        if not visible:
+            self._fold_once("step2", self.step2)
 
     def _toggle_float(self):
         self.setFloating(not self.isFloating())
@@ -163,6 +169,14 @@ class ChangeDock(QDockWidget):
     def _build_ui(self):
         outer = QWidget()
         lay = QVBoxLayout(outer)
+
+        # Three numbered steps in native collapsible boxes. QGIS ships QgsCollapsibleGroupBox
+        # and every QGIS panel uses it, so the folding reads as the application's own idiom
+        # rather than something this plugin invented — and it needs no styling to look right in
+        # any theme, which is the whole reason for choosing it over a hand-drawn header.
+        self.step1 = _GroupBox("1 · Area, years and output")
+        lay.addWidget(self.step1)
+        s1 = QVBoxLayout(self.step1)
 
         drow = QHBoxLayout()
         self.draw_btn = QPushButton("Draw area on map")
@@ -174,11 +188,11 @@ class ChangeDock(QDockWidget):
         self.clear_area_btn.setToolTip("Remove the area outline from the map.")
         self.clear_area_btn.clicked.connect(self._clear_area)
         drow.addWidget(self.clear_area_btn)
-        lay.addLayout(drow)
+        s1.addLayout(drow)
 
         self.area_lbl = QLabel("Draw an area to begin.")
         self.area_lbl.setWordWrap(True)
-        lay.addWidget(self.area_lbl)
+        s1.addWidget(self.area_lbl)
 
         nrow = QHBoxLayout()
         nrow.addWidget(QLabel("Name:"))
@@ -190,7 +204,7 @@ class ChangeDock(QDockWidget):
         self.name_edit.textChanged.connect(lambda _t: self._sync_name_placeholder())
         self.name_edit.editingFinished.connect(self._save_meta)
         nrow.addWidget(self.name_edit, 1)
-        lay.addLayout(nrow)
+        s1.addLayout(nrow)
 
         yrow = QHBoxLayout()
         yrow.addWidget(QLabel("From:"))
@@ -220,7 +234,7 @@ class ChangeDock(QDockWidget):
             "conservative near the cutoff. On a small area, use 10 m — a coarse setting there "
             "costs the same download and gives you a handful of pixels.")
         yrow.addWidget(self.detail)
-        lay.addLayout(yrow)
+        s1.addLayout(yrow)
 
         orow = QHBoxLayout()
         orow.addWidget(QLabel("Save to:"))
@@ -240,7 +254,7 @@ class ChangeDock(QDockWidget):
             "its embeddings — not just the picture.")
         self.open_btn.clicked.connect(self._open_existing)
         orow.addWidget(self.open_btn)
-        lay.addLayout(orow)
+        s1.addLayout(orow)
 
         # Where results land is easy to lose track of — a path set for one area is still set
         # when you draw the next one, and nothing on screen said so. This line always says
@@ -250,11 +264,13 @@ class ChangeDock(QDockWidget):
         self.dest_lbl.setWordWrap(True)
         self.dest_lbl.setStyleSheet("color: palette(mid); font-size: 10px;")
         self.dest_lbl.linkActivated.connect(self._dest_link)
-        lay.addWidget(self.dest_lbl)
+        s1.addWidget(self.dest_lbl)
         self.out_edit.textChanged.connect(lambda _t: self._describe_dest())
 
+        # Outside the fold: whatever else is collapsed, the action for this state stays put.
         rrow = QHBoxLayout()
         self.run_btn = QPushButton("Make change map")
+        self.run_btn.setStyleSheet("font-weight: 600;")     # emphasis without a colour to clash
         self.run_btn.clicked.connect(self._run)
         rrow.addWidget(self.run_btn)
         self.cancel_btn = QPushButton("Cancel")
@@ -271,6 +287,10 @@ class ChangeDock(QDockWidget):
         self.status.setWordWrap(True)
         lay.addWidget(self.status)
 
+        self.step2 = _GroupBox("2 · Change map")
+        lay.addWidget(self.step2)
+        s2 = QVBoxLayout(self.step2)
+
         trow = QHBoxLayout()
         trow.addWidget(QLabel("Changed if ≥"))
         self.slider = QSlider(_scoped(Qt, "Orientation", "Horizontal"))
@@ -284,7 +304,7 @@ class ChangeDock(QDockWidget):
         self.auto_btn.setToolTip("Cutoff chosen automatically for this scene (Otsu).")
         self.auto_btn.clicked.connect(self._auto)
         trow.addWidget(self.auto_btn)
-        lay.addLayout(trow)
+        s2.addLayout(trow)
 
         # Ground truth: every year there are embeddings for, as a strip of small toggles. Binding
         # this to the two chosen years would have been the obvious thing and the wrong one —
@@ -308,29 +328,39 @@ class ChangeDock(QDockWidget):
             prow.addWidget(b)
             self.photo_btns[y] = b
         prow.addStretch(1)
-        lay.addLayout(prow)
+        s2.addLayout(prow)
         from .engine import basemap as _BM
         credit = QLabel(f"{_BM.ATTRIBUTION}  ·  {_BM.LICENCE}")
         credit.setWordWrap(True)
         credit.setOpenExternalLinks(True)
         credit.setStyleSheet("color: palette(mid); font-size: 9px;")
-        lay.addWidget(credit)
+        s2.addWidget(credit)
         self._sync_photos()
 
+        # Both are exports, both are rare, and "Polygonize" sat one row from the classifier's
+        # "Make polygons" doing something different under a near-identical name. Tucked away
+        # together, and the classifier's version renamed, that collision disappears.
+        self.export_group = _GroupBox("Export")
+        eg = QVBoxLayout(self.export_group)
         erow = QHBoxLayout()
-        self.poly_btn = QPushButton("Polygonize")
-        self.poly_btn.setToolTip("Turn the changed pixels into editable polygons.")
+        self.poly_btn = QPushButton("Plain polygons")
+        self.poly_btn.setToolTip("Outlines of the changed area, with no embeddings attached — "
+                                 "for when you only want the shapes. The classifier's "
+                                 "'Find objects' is the one that can be labelled.")
         self.poly_btn.clicked.connect(self._polygonize)
         erow.addWidget(self.poly_btn)
         self.save_btn = QPushButton("Save as GeoTIFF…")
         self.save_btn.setToolTip("Merge the tiles into a single file.")
         self.save_btn.clicked.connect(self._save_geotiff)
         erow.addWidget(self.save_btn)
-        lay.addLayout(erow)
+        eg.addLayout(erow)
+        s2.addWidget(self.export_group)
+        if hasattr(self.export_group, "setCollapsed"):
+            self.export_group.setCollapsed(True)
 
         # Stays collapsed and disabled until a change map exists. Someone who only wants a
         # change map should never have to look at any of this.
-        self.classify_group = _GroupBox("4 · Classify change")
+        self.classify_group = _GroupBox("3 · Objects and classes")
         cl = QVBoxLayout(self.classify_group)
         from .classify import ClassifyPanel
         self.classify = ClassifyPanel(self, self.iface)
@@ -365,10 +395,37 @@ class ChangeDock(QDockWidget):
         scroll.setWidget(outer)
         self.setWidget(scroll)
 
+    def _fold_once(self, key, box, collapsed=True):
+        if key in self._folded_once or not hasattr(box, "setCollapsed"):
+            return
+        self._folded_once.add(key)
+        box.setCollapsed(collapsed)
+
+    def _step_summary(self):
+        """Titles carry the answer once a step is folded, so a collapsed box still tells you
+        what it is holding — without that, folding hides the settings AND the record of them."""
+        if getattr(self, "step1", None) is None:
+            return
+        if self.bbox is None:
+            self.step1.setTitle("1 · Area, years and output")
+        else:
+            name = self.name_edit.text().strip() or self._auto_name()
+            self.step1.setTitle(
+                f"1 · {name} — {self.year_a.currentText()}→{self.year_b.currentText()}, "
+                f"{self.detail.currentText()}")
+        self.step2.setTitle("2 · Change map" if self.layer_id is None else
+                            f"2 · Change map — cutoff {self._threshold():.2f}")
+
     def _sync(self):
         running = self.proc is not None
         has_area = self.bbox is not None
         has_result = self.layer_id is not None
+        self._step_summary()
+        # NOT disabling step 2 wholesale: the photo strip lives there and is streamed global
+        # imagery, useful for looking at an area before any run exists. The widgets that really
+        # need a result — threshold, Auto, the exports — are gated individually below.
+        if has_result:
+            self._fold_once("step1", self.step1)
         self.run_btn.setEnabled(has_area and not running)
         self.run_btn.setToolTip("" if has_area else "Draw an area first.")
         self.cancel_btn.setVisible(running)
@@ -441,6 +498,9 @@ class ChangeDock(QDockWidget):
         if self.tool is not None:
             self.canvas.unsetMapTool(self.tool)
         self._show_area_band(rect)          # replaces any previous outline
+        self._folded_once.discard("step1")  # drawing a new area makes step 1 live again
+        if hasattr(self.step1, "setCollapsed"):
+            self.step1.setCollapsed(False)
         self._describe_area()
         self._sync()
 
