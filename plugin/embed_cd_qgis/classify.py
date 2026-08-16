@@ -108,7 +108,7 @@ class ClassifyPanel(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
 
         row = QHBoxLayout()
-        self.make_btn = QPushButton("Find objects")
+        self.make_btn = QPushButton("Generate Embedded Vector Set")
         self.make_btn.setToolTip("Cut the change map at the current cutoff and give every "
                                  "object the embedding of what it covers.")
         self.make_btn.clicked.connect(self.make_polygons)
@@ -291,7 +291,8 @@ class ClassifyPanel(QWidget):
             n_lab = len(self.labels) + sum(len(v) for v in self.class_vectors.values())
             self.count_lbl.setText(f"{len(self.polys)} objects · {n_lab} labelled")
         elif ready:
-            self.count_lbl.setText("Press 'Find objects' to cut the changed area into objects.")
+            self.count_lbl.setText("Press 'Generate Embedded Vector Set' to cut the changed area into objects, "
+                "each carrying its own embedding.")
 
     # ---------------- polygons ----------------
     def make_polygons(self):
@@ -749,7 +750,7 @@ class ClassifyPanel(QWidget):
             self.status.setText("Pick a class first (or add one).")
             return
         if not self._layer_ok():
-            self.status.setText("The polygon layer is gone — press 'Find objects' again.")
+            self.status.setText("The polygon layer is gone — press 'Generate Embedded Vector Set' again.")
             return
         rows = [self._row_of(f) for f in self.layer.selectedFeatures()]
         rows = [r for r in rows if r is not None]
@@ -826,7 +827,7 @@ class ClassifyPanel(QWidget):
         than relying on it being the active layer — the active layer is a QGIS concept the user
         should not have to think about here."""
         if not self._layer_ok():
-            self.status.setText("The polygon layer is gone — press 'Find objects' again.")
+            self.status.setText("The polygon layer is gone — press 'Generate Embedded Vector Set' again.")
             return
         name = self.current_class()
         if name is None and not clear:

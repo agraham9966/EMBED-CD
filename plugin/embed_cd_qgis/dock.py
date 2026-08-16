@@ -48,6 +48,34 @@ _SEC_PER_TILE = 4.5
 _SEC_PER_COARSE_TILE = 11.0
 
 
+def _trim(pm):
+    """Crop a pixmap to its non-transparent artwork.
+
+    The logo carries a lot of empty margin — the marks occupy about two thirds of its height and
+    half its width — so scaling the whole file to a title-bar height leaves the artwork tiny.
+    The bounding box is found on a small copy (a few thousand pixels) and mapped back, which
+    keeps this generic if the logo is ever replaced, and costs nothing at startup.
+    """
+    try:
+        small = pm.scaled(96, 96, _scoped(Qt, "AspectRatioMode", "KeepAspectRatio"),
+                          _scoped(Qt, "TransformationMode", "FastTransformation"))
+        img = small.toImage()
+        xs, ys = [], []
+        for y in range(img.height()):
+            for x in range(img.width()):
+                if (img.pixel(x, y) >> 24) & 0xFF > 8:      # alpha
+                    xs.append(x)
+                    ys.append(y)
+        if not xs:
+            return pm
+        fx, fy = pm.width() / img.width(), pm.height() / img.height()
+        x0, x1 = int(min(xs) * fx), int((max(xs) + 1) * fx)
+        y0, y1 = int(min(ys) * fy), int((max(ys) + 1) * fy)
+        return pm.copy(x0, y0, max(1, x1 - x0), max(1, y1 - y0))
+    except Exception:
+        return pm
+
+
 def _scoped(owner, category, name):
     """Enum that works on both PyQt5 (QGIS 3) and PyQt6 (QGIS 4)."""
     try:
@@ -134,13 +162,16 @@ class ChangeDock(QDockWidget):
             return
         bar = QWidget()
         row = QHBoxLayout(bar)
-        row.setContentsMargins(6, 2, 2, 2)
-        row.setSpacing(4)
+        row.setContentsMargins(6, 3, 2, 3)
+        row.setSpacing(6)
         logo = QLabel()
-        logo.setPixmap(pm.scaledToHeight(
-            18, _scoped(Qt, "TransformationMode", "SmoothTransformation")))
+        logo.setPixmap(_trim(pm).scaledToHeight(
+            26, _scoped(Qt, "TransformationMode", "SmoothTransformation")))
         logo.setToolTip("EMBED-CD")
         row.addWidget(logo)
+        wordmark = QLabel("EMBED-CD")
+        wordmark.setStyleSheet("font-weight: 700; letter-spacing: 1px;")
+        row.addWidget(wordmark)
         row.addStretch(1)
         for std, slot, tip in (("SP_TitleBarNormalButton", self._toggle_float, "Dock / undock"),
                                ("SP_TitleBarCloseButton", self.close, "Close")):
