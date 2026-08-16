@@ -24,6 +24,7 @@ import json
 import numpy as np
 
 UNKNOWN = "unknown"
+DEFAULT_Q = 0.05      # the strictness slider's resting position
 
 
 def _fit_logistic(x, y, C=1.0, max_iter=500):
@@ -71,20 +72,23 @@ def _stratified_folds(y, k, seed=0):
 class OvRHead:
     """Per-class binary detectors on standardized vectors, with abstention.
 
-    `abstain_quantile` q: a class fires only above the q-quantile of its own out-of-fold positive
-    scores, so ~(1-q) of true members are still accepted and genuinely unfamiliar objects (no
-    detector fires) come back as `unknown`.
+    `abstain_quantile` q is the "strictness" control, and it sets each class's confidence bar
+    two ways, whichever is higher: the q-quantile of that class's own out-of-fold scores, and a
+    floor that rises with q. The second is what gives it traction — on real data the quantile
+    alone never cleared `min_confidence`, so with more than one class the control did nothing at
+    all (measured: 27 unknowns at q=0 and 27 at q=0.40, thresholds pinned at 0.5 throughout).
+
+    `decision="argmax"` disables abstention entirely: every object gets its best class.
     """
 
     def __init__(self, abstain_quantile=0.05, calibrate_folds=5, min_confidence=0.5,
-                 C=1.0, decision="threshold", argmax_floor=0.5, features="delta",
+                 C=1.0, decision="threshold", features="delta",
                  ood_scale=1.6, min_for_gate=5):
         self.q = abstain_quantile
         self.calibrate_folds = calibrate_folds
         self.min_confidence = min_confidence
         self.C = C
-        self.decision = decision                  # "threshold" (strong OOD) or "argmax"
-        self.argmax_floor = argmax_floor
+        self.decision = decision                  # "threshold" (can abstain) or "argmax" (cannot)
         # "delta" = [A, B-A]; "raw" = [A, B] exactly as the cell store holds it.
         #
         # Baseline+delta is the default because a class is usually a KIND OF CHANGE, and naming
@@ -150,6 +154,20 @@ class OvRHead:
             self.std_ = x.std(axis=0)
             self.std_[self.std_ < 1e-12] = 1.0
         return (x - self.mean_) / self.std_
+
+    def _strict_floor(self):
+        """Strictness as a confidence bar: `min_confidence` at the slider's DEFAULT, rising to
+        ~0.89 at its top.
+
+        Anchored at the default rather than at zero, because measuring from zero made the
+        default itself stricter than before and cost real accuracy — a guarded case of two
+        examples per class fell from 77% correct to 65%. A control gains traction by moving
+        away from where it rests, not by shifting the resting point.
+
+        Never reaches 1.0: a bar nothing can clear is a broken control, not a strict one.
+        """
+        over = max(0.0, self.q - DEFAULT_Q)
+        return self.min_confidence + (1.0 - self.min_confidence) * min(over / 0.45, 0.8)
 
     # ---------- fitting ----------
     def _oof_positive_scores(self, xs, yc, seed):
@@ -256,7 +274,16 @@ class OvRHead:
                 continue
             pos = self._oof_positive_scores(xs, yc, seed)
             self.oof_pos[c] = pos
-            self.thr[c] = max(float(np.quantile(pos, self.q)), self.min_confidence)
+            # Two things set the bar, and the higher wins:
+            #   the out-of-fold quantile — where this class's own held-out members actually score
+            #   a floor that RISES with strictness — so the control always has traction
+            # Without the second the slider was inert with more than one class: measured on 817
+            # real polygons, thresholds sat pinned at min_confidence across the whole range and
+            # the unknown count did not move at all (27 -> 27 from q=0 to q=0.40). The quantile
+            # alone cannot clear the floor, because logistic scores on a handful of examples are
+            # not high enough for a low quantile to bind.
+            self.thr[c] = max(float(np.quantile(pos, self.q)),
+                              self.min_confidence, self._strict_floor())
             self.dets[c] = ("linear",) + _fit_logistic(xs, yc, self.C)
         return self
 
@@ -302,13 +329,12 @@ class OvRHead:
         s = self.scores(x)
         near = self._near(x)
         if self.decision == "argmax":
-            ok = s >= self.argmax_floor
-            if near is not None:
-                ok &= near
-            masked = np.where(ok, s, -1.0)
-            out = [self.classes[int(k)] if masked[int(k), j] >= 0 else UNKNOWN
-                   for j, k in enumerate(masked.argmax(0))]
-            return np.array(out, dtype=object), s
+            # Best guess means BEST GUESS: the highest-scoring class, always. It used to also
+            # require clearing a 0.5 floor AND passing the distance gate, so a control offering
+            # "prefer a best guess over unknown" still returned unknown — which is not a
+            # subtlety, it is the label being untrue. Anyone who wants abstention has the other
+            # mode; this one exists precisely to force a decision.
+            return (np.array([self.classes[int(k)] for k in s.argmax(0)], dtype=object), s)
         fires = s >= np.array([self.thr[c] for c in self.classes])[:, None]
         if near is not None:
             fires &= near

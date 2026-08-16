@@ -170,10 +170,12 @@ class ClassifyPanel(QWidget):
 
         self.guess_box = QCheckBox("Prefer a best guess over 'unknown'")
         self.guess_box.setToolTip(
-            "Off: a class must clear its own confidence bar, so anything unfamiliar stays "
-            "unknown. On: take the best-scoring class whenever it is over 50%. Far fewer "
-            "unknowns, but it will also put genuinely new things into whichever class they "
-            "happen to resemble most.")
+            "Off: a class must clear its own confidence bar and look familiar, so anything "
+            "that does neither stays unknown." + chr(10) * 2 +
+            "On: every object gets its best-scoring class and nothing is ever unknown. Useful "
+            "for a first pass or a map with no gaps — but it will also file genuinely new "
+            "things under whichever class they resemble most, so the classes stop meaning "
+            "what they say.")
         self.guess_box.stateChanged.connect(lambda _s: self._refit())
         lay.addWidget(self.guess_box)
 
@@ -182,8 +184,13 @@ class ClassifyPanel(QWidget):
         self.q_slider = QSlider(_scoped(Qt, "Orientation", "Horizontal"))
         self.q_slider.setRange(0, 40)
         self.q_slider.setValue(5)
-        self.q_slider.setToolTip("Higher demands a closer match, so more objects come back as "
-                                 "unknown rather than being given a class they only half fit.")
+        self.q_slider.setToolTip(
+            "How sure a class has to be before it claims an object. Higher leaves more "
+            "objects unknown rather than giving them a class they only half fit." + chr(10) * 2 +
+            "With ONE class it moves the cut in a similarity ranking. With several it raises "
+            "every class's confidence bar, roughly 0.5 at the left to 0.9 at the right." +
+            chr(10) * 2 +
+            "No effect while 'Prefer a best guess' is on — that mode never abstains.")
         self.q_slider.sliderReleased.connect(self._refit)
         qrow.addWidget(self.q_slider)
         self.q_lbl = QLabel("0.05")

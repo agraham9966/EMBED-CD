@@ -312,6 +312,68 @@ def test_features_default_is_baseline_plus_delta():
     print("ok baseline+delta is the default representation")
 
 
+def test_best_guess_never_abstains():
+    """The control says "prefer a best guess over unknown", so it must not return unknown.
+
+    It used to also require clearing a 0.5 floor AND passing the distance gate, so the mode
+    whose entire purpose is forcing a decision still declined to make one. That is not a
+    subtlety, it is the label being untrue.
+    """
+    x, y, _ = _planted()
+    head = H.OvRHead(decision="argmax").fit(x, y)
+    alien = np.random.default_rng(7).normal(20, 1, (40, 2 * DEPTH)).astype(np.float32)
+    for name, data in (("its own training data", x), ("objects nothing like it", alien)):
+        pred, _ = head.predict(data)
+        assert not (pred == H.UNKNOWN).any(), \
+            f"best-guess returned unknown for {name}: {(pred == H.UNKNOWN).sum()} of {len(data)}"
+    assert set(head.predict(alien)[0]) <= set(head.classes)
+    print("ok best guess always commits, even on objects it has never seen anything like")
+
+
+def test_strictness_moves_the_bar_with_more_than_one_class():
+    """The slider was inert whenever a second class existed.
+
+    Each class's bar was `max(out-of-fold quantile, 0.5)`, and on real data the quantile never
+    cleared 0.5 — so thresholds sat pinned there across the entire slider range and the unknown
+    count did not move (measured on 817 polygons: 27 at q=0, 27 at q=0.40). A control that does
+    nothing is worse than no control, because it invites the conclusion that the model is
+    unresponsive.
+    """
+    # Train on half and judge the OTHER half. In-sample, logistic regression drives its own
+    # positives to ~0.999, so no reachable bar bites and the slider looks inert for the wrong
+    # reason — the same trap the out-of-fold calibration exists to avoid.
+    x, y, _ = _planted(n_per=16, sep=1.2)          # deliberately overlapping, so a bar can bite
+    train = np.zeros(len(y), bool)
+    train[::2] = True
+    unknowns, bars = [], []
+    for q in (0.05, 0.15, 0.25, 0.35, 0.40):
+        head = H.OvRHead(abstain_quantile=q).fit(x[train], y[train])
+        pred, _ = head.predict(x[~train])
+        unknowns.append(int((pred == H.UNKNOWN).sum()))
+        bars.append(round(min(head.thr.values()), 3))
+
+    assert bars == sorted(bars) and bars[-1] > bars[0] + 0.2, \
+        f"the confidence bar barely moved across the slider: {bars}"
+    assert unknowns == sorted(unknowns), f"strictness should never REDUCE unknowns: {unknowns}"
+    assert unknowns[-1] > unknowns[0], \
+        f"the strictest setting abstained no more than the loosest: {unknowns}"
+    print(f"ok strictness has traction with several classes: bars {bars}, unknowns {unknowns}")
+
+
+def test_strictness_still_works_with_a_single_class():
+    """The one mode where it always did work — it must not have been broken by giving the
+    multi-class path a floor."""
+    x, y, _ = _planted()
+    one = {"cutblock": x[y == "cutblock"][:3]}
+    counts = []
+    for q in (0.0, 0.2, 0.4):
+        head = H.fit_from_classes(one, pool=x, abstain_quantile=q)
+        counts.append(int((head.predict(x)[0] == H.UNKNOWN).sum()))
+    assert counts == sorted(counts) and counts[-1] > counts[0], \
+        f"single-class strictness stopped responding: {counts}"
+    print(f"ok single-class strictness still responds: unknowns {counts}")
+
+
 if __name__ == "__main__":
     test_recovers_planted_classes()
     test_out_of_distribution_returns_unknown()
@@ -328,4 +390,7 @@ if __name__ == "__main__":
     test_baseline_plus_delta_handles_a_class_spanning_two_baselines()
     test_a_single_class_cannot_yet_reject_the_opposite_change()
     test_features_default_is_baseline_plus_delta()
+    test_best_guess_never_abstains()
+    test_strictness_moves_the_bar_with_more_than_one_class()
+    test_strictness_still_works_with_a_single_class()
     print("all ok")
