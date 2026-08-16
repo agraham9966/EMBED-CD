@@ -1041,6 +1041,26 @@ def test_undo_and_stepping_through_objects():
     p.undo_label()
     assert len(p.labels) == n, "discard was not undoable"
 
+    # The class combo reads the selection and writes to it — and STEPPING must not count as
+    # writing, or panning past an object would relabel it as whatever it already was, filling
+    # the undo stack with phantom edits and marking every object you looked at as user-labelled.
+    p.cycle_mode.setCurrentText("All objects")
+    p._cycle_at = -1
+    p.step(1)
+    depth = len(p._undo)
+    p.step(1)
+    p.step(-1)
+    assert len(p._undo) == depth, "stepping through objects recorded phantom label edits"
+
+    row = p._selected_row()
+    assert row is not None, "stepping should leave exactly one object selected"
+    was = p.labels.get(row)          # may already carry a label from earlier in this test
+    p.cls_combo.setCurrentIndex(p.cls_combo.findData("b"))
+    assert p.labels.get(row) == "b", f"setting the combo did not relabel: {p.labels}"
+    assert len(p._undo) == depth + 1, "a combo edit must be undoable"
+    p.undo_label()
+    assert p.labels.get(row) == was,         f"undo of a combo edit gave {p.labels.get(row)!r}, expected {was!r}"
+
     # a re-cut invalidates the stack: those rows are about to mean something else
     p.make_polygons()
     assert p._undo == [], "the undo stack survived a re-polygonize"

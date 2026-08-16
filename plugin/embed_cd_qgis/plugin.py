@@ -1,10 +1,27 @@
 """Toolbar/menu entry that toggles the EMBED-CD dock."""
+import os
+
 from qgis.PyQt.QtWidgets import QAction
+from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtCore import Qt
 
 from .dock import ChangeDock
 
 _MENU = "EMBED-CD"
+
+
+def icon_path():
+    """The logo, whether running from the repo or from an installed zip.
+
+    make_release copies icons/ into the plugin folder, so the installed layout has it one level
+    up from this file's package; in dev the plugin folder is a sibling of the repo's icons/.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    for cand in (os.path.join(here, "icons", "embed-cd-logo.png"),
+                 os.path.join(here, "..", "..", "icons", "embed-cd-logo.png")):
+        if os.path.isfile(cand):
+            return os.path.abspath(cand)
+    return None
 
 
 def _scoped(owner, category, name):
@@ -21,7 +38,9 @@ class EmbedCdPlugin:
         self.action = None
 
     def initGui(self):
-        self.action = QAction(_MENU, self.iface.mainWindow())
+        path = icon_path()
+        self.action = (QAction(QIcon(path), _MENU, self.iface.mainWindow()) if path
+                       else QAction(_MENU, self.iface.mainWindow()))
         self.action.triggered.connect(self.toggle)
         self.iface.addToolBarIcon(self.action)
         self.iface.addPluginToRasterMenu(_MENU, self.action)

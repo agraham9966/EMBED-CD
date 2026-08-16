@@ -86,6 +86,7 @@ class ClassifyPanel(QWidget):
         # rows to put them back into, so there is nothing coherent to undo TO.
         self._undo = []
         self._cycle = []               # ordered rows for the < > arrows
+        self._filling_combo = False    # writing TO the class combo, not reading a user edit
         self._cycle_at = -1
         # Examples banked from earlier polygon sets. A class is the user's vocabulary and the
         # expensive part of their work, so it must outlive a re-polygonize or a new area; only
@@ -160,27 +161,42 @@ class ClassifyPanel(QWidget):
 
         # Review row: undo, step through objects, drop a label. One row, because this is what
         # you use once the map is nearly right and you are working through what is left.
+        # Arrows either side of the CURRENT object's class: stepping and setting are the same
+        # gesture when you are working through a list, so they belong on one line.
         rrow = QHBoxLayout()
         rrow.setSpacing(3)
-        self.undo_btn = QPushButton("↶")
-        self.undo_btn.setFixedWidth(30)
+        self.prev_btn = QPushButton("◀")
+        self.prev_btn.setFixedWidth(30)
+        self.next_btn = QPushButton("▶")
+        self.next_btn.setFixedWidth(30)
+        for b, d in ((self.prev_btn, -1), (self.next_btn, 1)):
+            b.setToolTip("Step to the previous/next object. The map pans to it and keeps your "
+                         "zoom; the breakdown below shows what the classifier makes of it.")
+            b.clicked.connect(lambda _c, dd=d: self.step(dd))
+        rrow.addWidget(self.prev_btn)
+        self.cls_combo = QComboBox()
+        self.cls_combo.setToolTip(
+            "The selected object's class. Changing it relabels that object — the same as "
+            "clicking it on the map, without leaving the keyboard.")
+        self.cls_combo.currentIndexChanged.connect(self._class_combo_changed)
+        rrow.addWidget(self.cls_combo, 1)
+        rrow.addWidget(self.next_btn)
+        lay.addLayout(rrow)
+
+        r2 = QHBoxLayout()
+        r2.setSpacing(3)
+        self.undo_btn = QPushButton("↶ Undo")
         self.undo_btn.setToolTip(
             "Undo the last labelling action. A bulk assign comes back as one step, not thirty."
             + chr(10) * 2 +
             "An unlabelled object returns to the classifier's own answer rather than going "
             "blank, so the colour may not change.")
         self.undo_btn.clicked.connect(self.undo_label)
-        rrow.addWidget(self.undo_btn)
-        self.prev_btn = QPushButton("◀")
-        self.prev_btn.setFixedWidth(30)
-        self.next_btn = QPushButton("▶")
-        self.next_btn.setFixedWidth(30)
-        for b, d in ((self.prev_btn, -1), (self.next_btn, 1)):
-            b.setToolTip("Step through objects, selecting each one. The map pans to it and "
-                         "keeps your zoom, and the breakdown below shows what the classifier "
-                         "makes of it.")
-            b.clicked.connect(lambda _c, dd=d: self.step(dd))
-            rrow.addWidget(b)
+        r2.addWidget(self.undo_btn)
+        self.discard_btn = QPushButton("Discard")
+        self.discard_btn.setToolTip("Remove the selected object's label.")
+        self.discard_btn.clicked.connect(self.discard_label)
+        r2.addWidget(self.discard_btn)
         self.cycle_mode = QComboBox()
         self.cycle_mode.addItems(["Least certain first", "Only unknown", "Only labelled",
                                   "All objects"])
@@ -191,12 +207,8 @@ class ClassifyPanel(QWidget):
             "Only unknown: work through the gaps." + chr(10) +
             "Only labelled: check what you have already assigned.")
         self.cycle_mode.currentTextChanged.connect(lambda _t: setattr(self, "_cycle_at", -1))
-        rrow.addWidget(self.cycle_mode, 1)
-        self.discard_btn = QPushButton("Discard label")
-        self.discard_btn.setToolTip("Remove the selected polygon's label.")
-        self.discard_btn.clicked.connect(self.discard_label)
-        rrow.addWidget(self.discard_btn)
-        lay.addLayout(rrow)
+        r2.addWidget(self.cycle_mode, 1)
+        lay.addLayout(r2)
 
         # Selecting a polygon — with the label tool or QGIS's own select tool — shows what the
         # classifier thinks of it. Empty the rest of the time, so it costs no space until it has
@@ -339,6 +351,10 @@ class ClassifyPanel(QWidget):
         self._cut_threshold = self.host._threshold()
         self._build_layer(str(crs))
         self._save_objects()         # cutting these took minutes; never make it happen twice
+        # The polygons are now the answer; the raster underneath just competes with the outlines.
+        hide = getattr(self.host, "show_change_raster", None)
+        if hide is not None:
+            hide(False)
         dlg.setValue(100)
         dlg.close()
         self.count_lbl.setText(
@@ -636,9 +652,65 @@ class ClassifyPanel(QWidget):
         self._apply_manual(rows) if self.paused else self._refit()
         self.status.setText(f"Removed {len(rows)} label{'s' if len(rows) != 1 else ''}.")
 
+    def _selected_row(self):
+        if not self._layer_ok():
+            return None
+        sel = self.layer.selectedFeatures()
+        return self._row_of(sel[0]) if len(sel) == 1 else None
+
+    def _class_combo_changed(self, _i):
+        """Setting the combo relabels the selected object.
+
+        Guarded by `_filling_combo` because the combo is also written TO whenever the selection
+        moves; without that, panning onto an object would immediately relabel it as whatever it
+        already was — harmless-looking, but it would fill the undo stack with phantom edits and
+        make every stepped-past object count as user-labelled.
+        """
+        if self._filling_combo:
+            return
+        row = self._selected_row()
+        if row is None:
+            return
+        name = self.cls_combo.currentData()
+        if name == self.labels.get(row):
+            return
+        self._push_undo([row])
+        if name is None:
+            self.labels.pop(row, None)
+        else:
+            self.labels[row] = name
+        self._apply_manual([row]) if self.paused else self._refit()
+
+    def _sync_class_combo(self):
+        """Show the selected object's class: its label if it has one, otherwise the model's
+        answer, marked as a guess so the two are never confused."""
+        if getattr(self, "cls_combo", None) is None:
+            return
+        row = self._selected_row()
+        self._filling_combo = True
+        try:
+            self.cls_combo.clear()
+            self.cls_combo.addItem("— no label —", None)
+            for name in self.classes:
+                self.cls_combo.addItem(name, name)
+            self.cls_combo.setEnabled(row is not None)
+            if row is None:
+                self.cls_combo.setItemText(0, "— no object selected —")
+                return
+            mine = self.labels.get(row)
+            if mine is None and self.pred is not None and 0 <= row < len(self.pred):
+                guess = str(self.pred[row])
+                self.cls_combo.setItemText(
+                    0, f"— unlabelled ({guess or 'unknown'} predicted) —")
+            i = self.cls_combo.findData(mine)
+            self.cls_combo.setCurrentIndex(max(0, i))
+        finally:
+            self._filling_combo = False
+
     def _sync_review(self):
         if getattr(self, "undo_btn", None) is not None:
             self.undo_btn.setEnabled(bool(self._undo))
+        self._sync_class_combo()
 
     # ---------------- labelling and fitting ----------------
     def assign_selected(self):
@@ -785,6 +857,7 @@ class ClassifyPanel(QWidget):
 
     def _on_selection(self, *_a):
         self._show_selected()
+        self._sync_class_combo()
 
     def _show_selected(self):
         """Show the per-class scores for the selected polygon.
@@ -1054,6 +1127,7 @@ class ClassifyPanel(QWidget):
         self._refresh_list()
         self._show_selected()
         self._report(pred)
+        self._sync_review()
         # Every path that changes a label or a class ends here, so this one call covers all of
         # them — clicking the map, assigning a selection, renaming, deleting, loading a preset.
         self._save_labels()

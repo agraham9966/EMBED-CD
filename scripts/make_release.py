@@ -47,6 +47,11 @@ def build(key):
     ignore = shutil.ignore_patterns("__pycache__", "*.pyc")
     shutil.copytree(plugin_dir, stage_plugin, ignore=ignore)
     shutil.copytree(engine_dir, stage_plugin / engine_name, ignore=ignore)
+    # icons/ lives at the repo root but has to travel INSIDE the plugin, or an installed copy
+    # has no icon to load and silently falls back to text.
+    icons = ROOT / "icons"
+    if icons.is_dir():
+        shutil.copytree(icons, stage_plugin / "icons", ignore=ignore)
 
     RELEASES_DIR.mkdir(exist_ok=True)
     zip_path = RELEASES_DIR / f"{plugin_name}-{version}.zip"

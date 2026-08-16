@@ -103,7 +103,61 @@ class ChangeDock(QDockWidget):
         self._thr_timer.timeout.connect(self._apply_threshold)
 
         self._build_ui()
+        self._build_title_bar()
         self._sync()
+
+    def _build_title_bar(self):
+        """Show the logo instead of the words EMBED-CD.
+
+        A custom title-bar widget REPLACES the whole default bar, buttons included, so float and
+        close have to be put back by hand — losing them to gain a logo would be a bad trade.
+        """
+        from qgis.PyQt.QtGui import QPixmap
+        from qgis.PyQt.QtWidgets import QToolButton, QStyle
+
+        from .plugin import icon_path
+
+        path = icon_path()
+        if not path:
+            return                       # no logo installed: keep the ordinary text title
+        pm = QPixmap(path)
+        if pm.isNull():
+            return
+        bar = QWidget()
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(6, 2, 2, 2)
+        row.setSpacing(4)
+        logo = QLabel()
+        logo.setPixmap(pm.scaledToHeight(
+            18, _scoped(Qt, "TransformationMode", "SmoothTransformation")))
+        logo.setToolTip("EMBED-CD")
+        row.addWidget(logo)
+        row.addStretch(1)
+        for std, slot, tip in (("SP_TitleBarNormalButton", self._toggle_float, "Dock / undock"),
+                               ("SP_TitleBarCloseButton", self.close, "Close")):
+            b = QToolButton()
+            b.setAutoRaise(True)
+            b.setIcon(self.style().standardIcon(_scoped(QStyle, "StandardPixmap", std)))
+            b.setToolTip(tip)
+            b.clicked.connect(slot)
+            row.addWidget(b)
+        self.setTitleBarWidget(bar)
+
+    def show_change_raster(self, visible):
+        """Tick or untick the change map in the layer tree.
+
+        Once polygons exist they ARE the answer, and a continuous raster underneath them mostly
+        fights the outlines for attention. Untick rather than remove, so it is one click back.
+        """
+        lid = self.layer_id
+        if not lid:
+            return
+        node = QgsProject.instance().layerTreeRoot().findLayer(lid)
+        if node is not None:
+            node.setItemVisibilityChecked(bool(visible))
+
+    def _toggle_float(self):
+        self.setFloating(not self.isFloating())
 
     # ---------------- UI ----------------
     def _build_ui(self):
