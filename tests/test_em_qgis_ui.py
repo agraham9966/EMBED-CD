@@ -960,6 +960,94 @@ def test_a_named_area_keeps_its_name_and_never_shares_a_group():
     print("ok names persist, and same-named areas get separate groups")
 
 
+def test_undo_and_stepping_through_objects():
+    """Undo and the review arrows, driven the way the buttons drive them.
+
+    The parts worth guarding: a bulk assign undoes as ONE step (thirty presses would be
+    useless), undo restores the PREVIOUS label rather than just clearing, the stack is dropped
+    on a re-cut (its rows stop existing, so restoring them would mislabel whatever now sits at
+    those indices), and stepping pans without changing your zoom.
+    """
+    import numpy as np
+    from qgis.PyQt.QtWidgets import QMainWindow
+    from qgis.gui import QgsMapCanvas
+    from embed_cd_qgis.dock import ChangeDock
+
+    class _Iface:
+        def __init__(self, win, canvas):
+            self._w, self._c = win, canvas
+
+        def mainWindow(self):
+            return self._w
+
+        def mapCanvas(self):
+            return self._c
+
+    d = tempfile.mkdtemp(prefix="tc_undo_")
+    _tiny_job(d)
+    dock = ChangeDock(_Iface(QMainWindow(), QgsMapCanvas()))
+    dock.out_dir, dock.vrt_path = d, os.path.join(d, "change.vrt")
+    dock.slider.setValue(20)
+    p = dock.classify
+    p.make_polygons()
+    assert len(p.polys) >= 2, f"need at least two objects to step between, got {len(p.polys)}"
+    p.classes[:] = ["a", "b"]
+    p.colors.update({"a": "#d85a30", "b": "#1d9e75"})
+    p._refresh_list()
+    p.list.setCurrentRow(0)
+
+    # a bulk assign is ONE undo step
+    rows = list(range(len(p.polys)))
+    p._push_undo(rows)
+    for r in rows:
+        p.labels[r] = "a"
+    p._refit()
+    assert len(p._undo) == 1, f"a batch became {len(p._undo)} undo steps"
+    p.undo_label()
+    assert p.labels == {}, f"one undo did not take the whole batch back: {p.labels}"
+
+    # undo restores the previous label, it does not merely clear
+    p._push_undo([0]); p.labels[0] = "a"
+    p._push_undo([0]); p.labels[0] = "b"
+    p.undo_label()
+    assert p.labels.get(0) == "a", f"undo cleared instead of reverting: {p.labels}"
+    p.undo_label()
+    assert 0 not in p.labels, f"second undo should leave it unlabelled: {p.labels}"
+
+    # stepping selects and pans, WITHOUT changing scale
+    p.labels[0] = "a"
+    p._refit()
+    p.cycle_mode.setCurrentText("Only labelled")
+    p._cycle_at = -1
+    before = dock.canvas.extent().width()
+    p.step(1)
+    assert abs(dock.canvas.extent().width() - before) < 1e-6, \
+        "stepping changed the zoom; it is meant to pan and keep scale"
+    assert len(p.layer.selectedFeatures()) == 1, "stepping did not select the object"
+
+    # every filter returns something sane
+    for mode in ("Least certain first", "Only unknown", "Only labelled", "All objects"):
+        p.cycle_mode.setCurrentText(mode)
+        got = p._cycle_rows()
+        assert all(0 <= r < len(p.polys) for r in got), f"{mode} produced out-of-range rows"
+    p.cycle_mode.setCurrentText("Only labelled")
+    assert p._cycle_rows() == sorted(p.labels), "labelled filter disagrees with the labels"
+
+    # discard removes the selected polygon's label and is itself undoable
+    p._goto_row(0)
+    n = len(p.labels)
+    p.discard_label()
+    assert len(p.labels) == n - 1, "discard did not remove the label"
+    p.undo_label()
+    assert len(p.labels) == n, "discard was not undoable"
+
+    # a re-cut invalidates the stack: those rows are about to mean something else
+    p.make_polygons()
+    assert p._undo == [], "the undo stack survived a re-polygonize"
+    dock.cleanup()
+    print("ok undo batches, reverts, survives nothing it should not; stepping pans")
+
+
 if __name__ == "__main__":
     test_a_rewritten_vrt_is_only_seen_at_a_new_path()
     test_a_users_correction_is_never_revised_by_the_model()
@@ -978,4 +1066,5 @@ if __name__ == "__main__":
     test_two_areas_over_the_same_years_cannot_share_a_run_folder()
     test_the_dock_always_says_where_results_will_go()
     test_a_named_area_keeps_its_name_and_never_shares_a_group()
+    test_undo_and_stepping_through_objects()
     print("all ok")

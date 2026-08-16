@@ -16,7 +16,7 @@ from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QListWidget, QListWidgetItem,
     QDoubleSpinBox, QInputDialog, QFileDialog, QMessageBox, QSlider, QCheckBox,
-    QProgressDialog, QApplication,
+    QProgressDialog, QApplication, QComboBox,
 )
 from qgis.core import (
     QgsProject, QgsVectorLayer, QgsFeature, QgsGeometry, QgsField,
@@ -79,6 +79,14 @@ class ClassifyPanel(QWidget):
         self._crs = None           # CRS the current polygons were cut in
         self._cut_threshold = None  # the cutoff these polygons were made at
         self.labels = {}               # row -> class name, for the CURRENT polygon set
+        # Undo is a stack of BATCHES, not single labels: "assign the selected polygons" can set
+        # thirty at once and unwinding those one press at a time would be useless. Each entry is
+        # [(row, label_before_or_None), ...]. Scoped to the current polygon set and dropped when
+        # it changes — after a re-cut the labels have become free-floating class vectors with no
+        # rows to put them back into, so there is nothing coherent to undo TO.
+        self._undo = []
+        self._cycle = []               # ordered rows for the < > arrows
+        self._cycle_at = -1
         # Examples banked from earlier polygon sets. A class is the user's vocabulary and the
         # expensive part of their work, so it must outlive a re-polygonize or a new area; only
         # the row->name map is tied to the current set and gets cleared.
@@ -150,6 +158,46 @@ class ClassifyPanel(QWidget):
         self.assign_btn.clicked.connect(self.assign_selected)
         lay.addWidget(self.assign_btn)
 
+        # Review row: undo, step through objects, drop a label. One row, because this is what
+        # you use once the map is nearly right and you are working through what is left.
+        rrow = QHBoxLayout()
+        rrow.setSpacing(3)
+        self.undo_btn = QPushButton("↶")
+        self.undo_btn.setFixedWidth(30)
+        self.undo_btn.setToolTip(
+            "Undo the last labelling action. A bulk assign comes back as one step, not thirty."
+            + chr(10) * 2 +
+            "An unlabelled object returns to the classifier's own answer rather than going "
+            "blank, so the colour may not change.")
+        self.undo_btn.clicked.connect(self.undo_label)
+        rrow.addWidget(self.undo_btn)
+        self.prev_btn = QPushButton("◀")
+        self.prev_btn.setFixedWidth(30)
+        self.next_btn = QPushButton("▶")
+        self.next_btn.setFixedWidth(30)
+        for b, d in ((self.prev_btn, -1), (self.next_btn, 1)):
+            b.setToolTip("Step through objects, selecting each one. The map pans to it and "
+                         "keeps your zoom, and the breakdown below shows what the classifier "
+                         "makes of it.")
+            b.clicked.connect(lambda _c, dd=d: self.step(dd))
+            rrow.addWidget(b)
+        self.cycle_mode = QComboBox()
+        self.cycle_mode.addItems(["Least certain first", "Only unknown", "Only labelled",
+                                  "All objects"])
+        self.cycle_mode.setToolTip(
+            "What the arrows step through." + chr(10) * 2 +
+            "Least certain first: abstentions, then the ones it nearly called differently — "
+            "where a label teaches the model most." + chr(10) +
+            "Only unknown: work through the gaps." + chr(10) +
+            "Only labelled: check what you have already assigned.")
+        self.cycle_mode.currentTextChanged.connect(lambda _t: setattr(self, "_cycle_at", -1))
+        rrow.addWidget(self.cycle_mode, 1)
+        self.discard_btn = QPushButton("Discard label")
+        self.discard_btn.setToolTip("Remove the selected polygon's label.")
+        self.discard_btn.clicked.connect(self.discard_label)
+        rrow.addWidget(self.discard_btn)
+        lay.addLayout(rrow)
+
         # Selecting a polygon — with the label tool or QGIS's own select tool — shows what the
         # classifier thinks of it. Empty the rest of the time, so it costs no space until it has
         # something to say. This replaces a "fit" button (fitting is automatic) and a
@@ -219,8 +267,10 @@ class ClassifyPanel(QWidget):
         has_polys = self._layer_ok()
         self.make_btn.setEnabled(ready)
         for w in (self.list, self.assign_btn, self.save_btn,
-                  self.q_slider, self.label_btn, self.guess_box, self.pause_box):
+                  self.q_slider, self.label_btn, self.guess_box, self.pause_box,
+                  self.prev_btn, self.next_btn, self.cycle_mode, self.discard_btn):
             w.setEnabled(has_polys)
+        self._sync_review()
         if not ready:
             self.count_lbl.setText("Run a change map first.")
 
@@ -470,6 +520,126 @@ class ClassifyPanel(QWidget):
                 out[v] = out.get(v, 0) + 1
         return out
 
+    # ---------------- undo / review ----------------
+    def _push_undo(self, rows):
+        """Snapshot these rows' labels BEFORE they change."""
+        self._undo.append([(r, self.labels.get(r)) for r in rows])
+        del self._undo[:-100]           # a session's worth; the stack is not the point
+        self._sync_review()
+
+    def undo_label(self):
+        if not self._undo:
+            self.status.setText("Nothing to undo.")
+            return
+        batch = self._undo.pop()
+        for row, before in batch:
+            if before is None:
+                self.labels.pop(row, None)
+            else:
+                self.labels[row] = before
+        rows = [r for r, _ in batch]
+        self._apply_manual(rows) if self.paused else self._refit()
+        # Undo restores the LABEL, and a polygon with no label falls back to the model's
+        # prediction rather than going blank — labels override predictions, they do not replace
+        # them. So the colour may not change, which is correct but worth saying.
+        self.status.setText(f"Undid {len(batch)} label{'s' if len(batch) != 1 else ''}. "
+                            "Unlabelled objects go back to the classifier's own answer.")
+        if rows:
+            self._goto_row(rows[0])
+
+    def _cycle_rows(self):
+        """The ordered rows the arrows walk, per the filter."""
+        mode = self.cycle_mode.currentText() if getattr(self, "cycle_mode", None) else "All"
+        n = 0 if self.vectors is None else len(self.vectors)
+        if mode.startswith("Least certain"):
+            if self.head is None or self.scores is None or self.pred is None:
+                return list(range(n))
+            # review_order has been implemented and tested since the port and wired to nothing:
+            # abstentions first, then the smallest margin between best and second-best — the
+            # objects where one label teaches the model the most.
+            from .engine import head as H
+            return [int(i) for i in H.review_order(self.pred, self.scores)]
+        if mode.startswith("Only unknown"):
+            if self.pred is None:
+                return list(range(n))
+            return [i for i in range(n)
+                    if str(self.pred[i]) in (UNKNOWN, "") and i not in self.labels]
+        if mode.startswith("Only labelled"):
+            return sorted(self.labels)
+        return list(range(n))
+
+    def step(self, delta):
+        rows = self._cycle_rows()
+        if not rows:
+            self.status.setText("Nothing to step through with this filter.")
+            return
+        if self._cycle_at < 0 or self._cycle_at >= len(rows):
+            self._cycle_at = 0 if delta > 0 else len(rows) - 1
+        else:
+            self._cycle_at = (self._cycle_at + delta) % len(rows)
+        self._goto_row(rows[self._cycle_at])
+        self.status.setText(f"{self._cycle_at + 1} of {len(rows)}  "
+                            f"({self.cycle_mode.currentText().lower()})")
+
+    def _goto_row(self, row):
+        """Select the polygon and PAN to it, keeping the current scale.
+
+        Deliberately not zoom-to-feature: stepping through hundreds of objects while the scale
+        jumps to fit each one is disorienting, and the surrounding context is most of what tells
+        you whether a label is right. Only zooms out if the object does not fit as things are.
+        """
+        if not self._layer_ok():
+            return
+        fid = next((f for f, r in self._fid_row.items() if r == row), None)
+        if fid is None:
+            return
+        self.layer.selectByIds([fid])
+        feats = self.layer.selectedFeatures()
+        if not feats:
+            return
+        box = feats[0].geometry().boundingBox()
+        canvas = self.iface.mapCanvas()
+        try:
+            from qgis.core import QgsCoordinateTransform, QgsProject
+            tr = QgsCoordinateTransform(self.layer.crs(), canvas.mapSettings().destinationCrs(),
+                                        QgsProject.instance())
+            box = tr.transformBoundingBox(box)
+        except Exception:
+            pass
+        cur = canvas.extent()
+        if box.width() > cur.width() or box.height() > cur.height():
+            box.scale(1.4)
+            canvas.setExtent(box)
+        else:
+            keep = QgsRectangle(cur)
+            keep.setXMinimum(box.center().x() - cur.width() / 2)
+            keep.setXMaximum(box.center().x() + cur.width() / 2)
+            keep.setYMinimum(box.center().y() - cur.height() / 2)
+            keep.setYMaximum(box.center().y() + cur.height() / 2)
+            canvas.setExtent(keep)
+        canvas.refresh()
+
+    def discard_label(self):
+        """Remove the selected polygon's label. Right-click on the map does this too, but while
+        arrow-stepping you are not necessarily clicking the map."""
+        if not self._layer_ok():
+            return
+        rows = [r for r in (self._row_of(f) for f in self.layer.selectedFeatures())
+                if r is not None]
+        rows = [r for r in rows if r in self.labels]
+        if not rows:
+            self.status.setText("No labelled polygon selected.")
+            return
+        self._push_undo(rows)
+        for r in rows:
+            self.labels.pop(r, None)
+        self._apply_manual(rows) if self.paused else self._refit()
+        self.status.setText(f"Removed {len(rows)} label{'s' if len(rows) != 1 else ''}.")
+
+    def _sync_review(self):
+        if getattr(self, "undo_btn", None) is not None:
+            self.undo_btn.setEnabled(bool(self._undo))
+
     # ---------------- labelling and fitting ----------------
     def assign_selected(self):
         name = self.current_class()
@@ -484,6 +654,7 @@ class ClassifyPanel(QWidget):
         if not rows:
             self.status.setText("Select one or more polygons on the map first.")
             return
+        self._push_undo(rows)           # one batch: undo must take all thirty back together
         for row in rows:
             self.labels[row] = name
         before = self.status.text()
@@ -575,6 +746,7 @@ class ClassifyPanel(QWidget):
         row = self._row_of(hit)
         if row is None:
             return
+        self._push_undo([row])
         if clear:
             self.labels.pop(row, None)
             note = "label removed"
@@ -830,6 +1002,11 @@ class ClassifyPanel(QWidget):
             if 0 <= row < len(self.vectors):
                 self.class_vectors.setdefault(name, []).append(self.vectors[row])
         self.labels = {}
+        # The rows these referred to are about to stop existing, so the stack cannot restore
+        # anything meaningful. Dropping it is the honest option; keeping it would offer an undo
+        # that silently mislabels whatever now sits at those indices.
+        self._undo = []
+        self._cycle_at = -1
 
     def _refit(self, force=False):
         """Refit and reclassify. Cheap enough (a few hundred vectors) to run on every label.
