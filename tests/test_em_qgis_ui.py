@@ -1183,9 +1183,19 @@ def test_switching_between_areas_restores_each_one():
     a_objs, a_labels = len(p.polys), dict(p.labels)
     assert a_objs and a_labels, "the fixture must actually produce labelled objects"
 
+    # Naming an area you have DRAWN but not yet run must not rename the one you left. out_dir
+    # still points at the previous run at that moment, so matching on it alone renamed the wrong
+    # entry and both areas then showed the same name.
+    dock.bbox = (-123.50, 48.35, -123.30, 48.55)
+    dock.name_edit.setText("Area B")
+    dock._save_meta()
+    assert dock.runs[0]["name"] != "Area B",         f"typing a name for the next area renamed the previous one: {dock.runs[0]['name']!r}"
+
     make("Area B", (-123.50, 48.35, -123.30, 48.55))
     p.make_polygons()
     assert dock.run_combo.count() == 2, f"both runs should be listed: {dock.run_combo.count()}"
+    labels = [dock.run_combo.itemText(i) for i in range(dock.run_combo.count())]
+    assert len(set(labels)) == 2, f"two areas showing the same label: {labels}"
 
     i = next(i for i in range(dock.run_combo.count())
              if "Area A" in dock.run_combo.itemText(i))

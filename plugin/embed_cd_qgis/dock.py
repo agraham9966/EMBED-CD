@@ -442,6 +442,7 @@ class ChangeDock(QDockWidget):
         if not self.vrt_path or not self.out_dir:
             return
         entry = {"group": self._current_group, "name": self.name_edit.text().strip(),
+                 "key": self._area_key() if self.bbox is not None else None,
                  "auto": self._auto_name(), "out_dir": self.out_dir, "vrt": self.vrt_path,
                  "ya": self.year_a.currentText(), "yb": self.year_b.currentText(),
                  "detail": self.detail.currentText(), "bbox": self.bbox,
@@ -750,17 +751,27 @@ class ChangeDock(QDockWidget):
     def _save_meta(self):
         """The name lives in the run folder, because nothing else on disk carries it: years come
         from the VRT filename and the extent from the raster, but a name is only in the user's
-        head until it is written down."""
+        head until it is written down.
+
+        It is only applied to a run covering the area CURRENTLY drawn. Draw a new area, type a
+        name for it, and `out_dir` still points at the run you just left — so matching on that
+        alone renamed the previous area instead, and both then showed the same name in the Area
+        list. Typing a name before running belongs to the run about to be made.
+        """
         if not self.out_dir or not os.path.isdir(self.out_dir):
             return
+        name = self.name_edit.text().strip()
+        key = self._area_key() if self.bbox is not None else None
+        current = next((r for r in self.runs if r["out_dir"] == self.out_dir), None)
+        if current is not None and current.get("key") not in (None, key):
+            return                      # the drawn area has moved on; this name is for the next run
         try:
             from .engine import store as ST
-            ST.save_meta(self.out_dir, name=self.name_edit.text().strip())
+            ST.save_meta(self.out_dir, name=name)
         except Exception:
             pass
-        for r in self.runs:
-            if r["out_dir"] == self.out_dir:
-                r["name"] = self.name_edit.text().strip()
+        if current is not None:
+            current["name"] = name
         self._refresh_run_combo()
 
     def _resolve_group(self, base):
