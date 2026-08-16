@@ -406,11 +406,34 @@ class ClassifyPanel(QWidget):
         self.layer = layer
         # Built once. Resolving a feature's row by reading its attribute on every access meant
         # walking the layer several times per click, which is most of why labelling felt slow.
+        self._style_selection(layer)
         idx_col = layer.fields().indexOf("idx")
         self._fid_row = {f.id(): int(f.attributes()[idx_col]) for f in layer.getFeatures()}
         # any selection — ours, or QGIS's own select tool — drives the breakdown readout
         layer.selectionChanged.connect(self._on_selection)
         self._style()
+
+    def _style_selection(self, layer):
+        """Selected objects get a yellow OUTLINE, not QGIS's default solid yellow fill.
+
+        Stepping through objects selects each one, and a solid fill hides the very thing you are
+        being asked to judge — the change underneath. An outline says "this one" without
+        covering it. Older QGIS has no selection-symbol API, in which case the default stands;
+        nothing here is worth an exception.
+        """
+        try:
+            from qgis.core import QgsFillSymbol, QgsSelectionProperties
+            sym = QgsFillSymbol.createSimple({
+                "color": "255,255,255,0",          # no fill: never hide the object
+                "outline_color": "255,215,0,255",
+                "outline_width": "0.8",
+            })
+            props = layer.selectionProperties()
+            props.setSelectionRenderingMode(
+                _scoped(QgsSelectionProperties, "SelectionRenderingMode", "CustomSymbol"))
+            props.setSelectionSymbol(sym)
+        except Exception:
+            pass
 
     def _layer_ok(self):
         """Is the polygon layer still alive?
@@ -1035,12 +1058,10 @@ class ClassifyPanel(QWidget):
         out = getattr(self.host, "out_dir", None)
         if not out or not os.path.isdir(out):
             return None
-        # Temp mode is defined by living under the session temp root, not by whether a text box
-        # looks empty. The folder is deleted on unload, so writing there is a slower way to
-        # lose the work.
-        tmp_root = getattr(self.host, "_tmp_root", None)
-        if tmp_root and os.path.abspath(out).startswith(os.path.abspath(tmp_root)):
-            return None
+        # Temp runs save too, and deliberately. The folder is deleted on unload so nothing
+        # survives the session — but WITHIN a session it is what lets you switch to another
+        # area and come back to find your objects and labels still there. Without it, moving
+        # between two temp runs silently destroys the one you left.
         ya, yb = int(self.host.year_a.currentText()), int(self.host.year_b.currentText())
         from .engine import store as ST
         return ST.objects_path(out, ya, yb), ST.labels_path(out, ya, yb)

@@ -137,6 +137,7 @@ def test_polygon_rows_are_read_from_idx_not_the_feature_id():
     class Panel(_Stub):
         _build_layer = ClassifyPanel._build_layer
         _remove_layer = ClassifyPanel._remove_layer
+        _style_selection = ClassifyPanel._style_selection
         _row_of = ClassifyPanel._row_of
         _fid_row = {}
 
@@ -1128,6 +1129,87 @@ def test_steps_fold_once_and_keep_their_answer_in_the_title():
     print("ok steps fold once, reopen stays open, titles carry the summary")
 
 
+def test_switching_between_areas_restores_each_one():
+    """Several areas in one session, and the dock must be honest about which one it acts on.
+
+    Before this, `Find objects`, the threshold, Export and the classifier all read whichever run
+    was made or opened LAST, while every area's layers sat in the tree looking equally live —
+    and a temp run's folder is a mkdtemp path nobody can navigate back to, so there was no way
+    back at all.
+    """
+    from qgis.PyQt.QtWidgets import QMainWindow
+    from qgis.gui import QgsMapCanvas
+    from qgis.core import QgsProject
+    from embed_cd_qgis.dock import ChangeDock
+
+    class _Iface:
+        def __init__(self, win, canvas):
+            self._w, self._c = win, canvas
+
+        def mainWindow(self):
+            return self._w
+
+        def mapCanvas(self):
+            return self._c
+
+    QgsProject.instance().clear()
+    dock = ChangeDock(_Iface(QMainWindow(), QgsMapCanvas()))
+    dock._tmp_root = tempfile.mkdtemp(prefix="tc_switch_")
+
+    def make(name, bbox):
+        run = os.path.join(dock._tmp_root, name.replace(" ", ""))
+        os.makedirs(run, exist_ok=True)
+        _tiny_job(run)
+        dock.bbox = bbox
+        dock.name_edit.setText(name)
+        dock._release_layers(dock._group_name())
+        dock.out_dir = run
+        dock.vrt_path = os.path.join(run, "change.vrt")
+        dock.layer_id = None
+        dock._refresh_layer()
+        dock._register_run()
+        dock._sync()
+
+    make("Area A", (-126.05, 50.28, -125.90, 50.37))
+    dock.slider.setValue(20)
+    p = dock.classify
+    p.make_polygons()
+    p.classes[:] = ["cutblock"]
+    p.colors["cutblock"] = "#d85a30"
+    p._refresh_list()
+    p.list.setCurrentRow(0)
+    p.labels[0] = "cutblock"
+    p._refit()
+    a_objs, a_labels = len(p.polys), dict(p.labels)
+    assert a_objs and a_labels, "the fixture must actually produce labelled objects"
+
+    make("Area B", (-123.50, 48.35, -123.30, 48.55))
+    p.make_polygons()
+    assert dock.run_combo.count() == 2, f"both runs should be listed: {dock.run_combo.count()}"
+
+    i = next(i for i in range(dock.run_combo.count())
+             if "Area A" in dock.run_combo.itemText(i))
+    dock.run_combo.setCurrentIndex(i)
+
+    assert dock.name_edit.text() == "Area A", f"name did not follow: {dock.name_edit.text()!r}"
+    assert len(p.polys) == a_objs, f"objects not restored: {len(p.polys)} vs {a_objs}"
+    assert p.labels == a_labels, f"labels not restored: {p.labels} vs {a_labels}"
+
+    # Returning to an area must REUSE its group. `findGroup(...) or insertGroup(...)` reads
+    # naturally and is wrong: an empty QgsLayerTreeGroup is falsy, so once the group had been
+    # emptied to be rebuilt, the `or` fell through and built a second group beside it.
+    root = QgsProject.instance().layerTreeRoot()
+    groups = [n.name() for n in root.children() if hasattr(n, "children")]
+    assert len(groups) == len(set(groups)) == 2, f"duplicate or missing groups: {groups}"
+    for g in root.children():
+        if hasattr(g, "children"):
+            assert len(g.children()) == 3, \
+                f"{g.name()} holds {[c.name() for c in g.children()]}, expected 3 layers"
+    dock.cleanup()
+    QgsProject.instance().clear()
+    print(f"ok switched back to Area A: {a_objs} objects and {len(a_labels)} labels restored")
+
+
 if __name__ == "__main__":
     test_a_rewritten_vrt_is_only_seen_at_a_new_path()
     test_a_users_correction_is_never_revised_by_the_model()
@@ -1148,4 +1230,5 @@ if __name__ == "__main__":
     test_a_named_area_keeps_its_name_and_never_shares_a_group()
     test_undo_and_stepping_through_objects()
     test_steps_fold_once_and_keep_their_answer_in_the_title()
+    test_switching_between_areas_restores_each_one()
     print("all ok")

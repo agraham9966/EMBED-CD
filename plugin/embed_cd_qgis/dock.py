@@ -95,11 +95,16 @@ class ChangeDock(QDockWidget):
         self._current_area_key = None  # WHICH AREA the tracked layers belong to
         self.n_tiles = 0
         self._canceled = False
+        self._switching = False
         self._tmp_root = None
         # Each step folds itself ONCE, the first time it is finished with. Re-folding on every
         # refresh would fight anyone who reopened it to change something, which is worse than a
         # tall panel — the complaint auto-collapse usually earns.
         self._folded_once = set()
+        # Every run made or opened this session. Without this the dock silently points at
+        # whichever was last, while every area's layers sit in the tree looking equally live —
+        # and a temp run's folder is a mkdtemp path nobody can navigate back to.
+        self.runs = []
 
         self._thr_timer = QTimer(self)
         self._thr_timer.setSingleShot(True)
@@ -174,6 +179,24 @@ class ChangeDock(QDockWidget):
         # and every QGIS panel uses it, so the folding reads as the application's own idiom
         # rather than something this plugin invented — and it needs no styling to look right in
         # any theme, which is the whole reason for choosing it over a hand-drawn header.
+        arow = QHBoxLayout()
+        self.area_lbl_sel = QLabel("Area:")
+        arow.addWidget(self.area_lbl_sel)
+        self.run_combo = QComboBox()
+        self.run_combo.setToolTip(
+            "Which run everything below applies to. Areas you make or open this session collect "
+            "here, and switching brings back that area's threshold, objects and labels."
+            + chr(10) * 2 +
+            "Your classes travel with you; the labels on individual objects stay with their own "
+            "area.")
+        self.run_combo.currentIndexChanged.connect(self._switch_run)
+        arow.addWidget(self.run_combo, 1)
+        self.run_row = QWidget()
+        self.run_row.setLayout(arow)
+        arow.setContentsMargins(0, 0, 0, 0)
+        self.run_row.setVisible(False)
+        lay.addWidget(self.run_row)
+
         self.step1 = _GroupBox("1 · Area, years and output")
         lay.addWidget(self.step1)
         s1 = QVBoxLayout(self.step1)
@@ -394,6 +417,110 @@ class ChangeDock(QDockWidget):
         scroll.setWidgetResizable(True)
         scroll.setWidget(outer)
         self.setWidget(scroll)
+
+    def _empty_group(self, name):
+        """Remove the layers inside a group without removing the group itself.
+
+        Returning to an area rebuilds its raster, coverage and polygons from disk. Leaving the
+        previous copies in place would stack a second identical set every time you switched
+        back — measured, six layers in a group that should hold three.
+        """
+        if not name:
+            return
+        root = QgsProject.instance().layerTreeRoot()
+        g = root.findGroup(name)
+        if g is None:
+            return
+        for lid in [c.layerId() for c in g.children() if hasattr(c, "layerId")]:
+            try:
+                QgsProject.instance().removeMapLayer(lid)
+            except Exception:
+                pass
+
+    def _register_run(self):
+        """Remember the run the dock is currently pointing at, keyed by its layer group."""
+        if not self.vrt_path or not self.out_dir:
+            return
+        entry = {"group": self._current_group, "name": self.name_edit.text().strip(),
+                 "auto": self._auto_name(), "out_dir": self.out_dir, "vrt": self.vrt_path,
+                 "ya": self.year_a.currentText(), "yb": self.year_b.currentText(),
+                 "detail": self.detail.currentText(), "bbox": self.bbox,
+                 "temp": bool(self._tmp_root and os.path.abspath(self.out_dir).startswith(
+                     os.path.abspath(self._tmp_root)))}
+        for i, r in enumerate(self.runs):
+            if r["out_dir"] == entry["out_dir"]:
+                self.runs[i] = entry
+                break
+        else:
+            self.runs.append(entry)
+        self._refresh_run_combo()
+
+    def _refresh_run_combo(self):
+        if getattr(self, "run_combo", None) is None:
+            return
+        self._switching = True
+        try:
+            self.run_combo.clear()
+            for r in self.runs:
+                label = (f"{r['name'] or r['auto']} · {r['ya']}→{r['yb']} · {r['detail']}"
+                         + ("  (temporary)" if r["temp"] else ""))
+                self.run_combo.addItem(label, r["out_dir"])
+            cur = self.run_combo.findData(self.out_dir)
+            if cur >= 0:
+                self.run_combo.setCurrentIndex(cur)
+        finally:
+            self._switching = False
+        self.run_row.setVisible(len(self.runs) > 1)
+
+    def _switch_run(self, _i):
+        """Point the whole dock at another run: raster, threshold, objects, labels.
+
+        Switching is a read, like opening — it must not disturb the layers of the area being
+        left, which is why it detaches rather than removes. The classifier's banked classes come
+        WITH you (they are your training, and applying them to another area is the point);
+        per-polygon labels stay with the run they belong to and are reloaded from its folder.
+        """
+        if getattr(self, "_switching", False) or self.proc is not None:
+            return
+        out_dir = self.run_combo.currentData()
+        entry = next((r for r in self.runs if r["out_dir"] == out_dir), None)
+        if entry is None or entry["out_dir"] == self.out_dir:
+            return
+        self._switching = True
+        try:
+            for w, v in ((self.year_a, entry["ya"]), (self.year_b, entry["yb"]),
+                         (self.detail, entry["detail"])):
+                w.blockSignals(True)
+                w.setCurrentText(v)
+                w.blockSignals(False)
+            self.name_edit.blockSignals(True)
+            self.name_edit.setText(entry["name"])
+            self.name_edit.blockSignals(False)
+            self.bbox = entry["bbox"]
+            self.out_dir, self.vrt_path = entry["out_dir"], entry["vrt"]
+            # Detach by hand rather than via _release_layers: that RESOLVES a group name, and
+            # the target group already exists, so it would invent "Area A (2)" and stack a
+            # second copy of every layer in it. Here the group is known — we are returning to it.
+            self.layer_id = self.cov_layer_id = None
+            if getattr(self, "classify", None) is not None:
+                self.classify.detach()
+            self._current_group = entry["group"] or self._group_name()
+            self._current_base = self._group_name()
+            self._current_area_key = self._area_key()
+            self._empty_group(self._current_group)   # its layers are about to be rebuilt
+            self._refresh_layer()
+            self._describe_area()
+        finally:
+            self._switching = False
+        restored = None
+        if getattr(self, "classify", None) is not None:
+            try:
+                restored = self.classify.restore()
+            except Exception as exc:
+                restored = f"Could not restore: {exc}"
+        self.status.setText(f"Now working on {entry['name'] or entry['auto']}."
+                            + (f"  {restored}" if restored else ""))
+        self._sync()
 
     def _fold_once(self, key, box, collapsed=True):
         if key in self._folded_once or not hasattr(box, "setCollapsed"):
@@ -631,6 +758,10 @@ class ChangeDock(QDockWidget):
             ST.save_meta(self.out_dir, name=self.name_edit.text().strip())
         except Exception:
             pass
+        for r in self.runs:
+            if r["out_dir"] == self.out_dir:
+                r["name"] = self.name_edit.text().strip()
+        self._refresh_run_combo()
 
     def _resolve_group(self, base):
         """A tree name for a NEW area that is not already taken.
@@ -657,8 +788,12 @@ class ChangeDock(QDockWidget):
         root = QgsProject.instance().layerTreeRoot()
         if not self._current_group:
             self._current_group = self._resolve_group(self._group_name())
-        return (root.findGroup(self._current_group)
-                or root.insertGroup(0, self._current_group))
+        g = root.findGroup(self._current_group)
+        # `found or insert(...)` looks natural and is wrong: an EMPTY QgsLayerTreeGroup is
+        # falsy, so the moment a group had its layers cleared — which is exactly what returning
+        # to an area does — the `or` fell through and built a second group beside it. Compare
+        # against None.
+        return g if g is not None else root.insertGroup(0, self._current_group)
 
     def _add_to_group(self, layer, bottom=False):
         QgsProject.instance().addMapLayer(layer, False)
@@ -830,6 +965,7 @@ class ChangeDock(QDockWidget):
         note = (f", {n_cells} embedding tiles (classifier ready)." if n_cells else
                 ". No embedding tiles here, so the classifier cannot run; re-run to capture them.")
         self._sync()          # the panel needs to be enabled before it can rebuild its layer
+        self._register_run()
         restored = None
         if getattr(self, "classify", None) is not None:
             try:
@@ -969,6 +1105,8 @@ class ChangeDock(QDockWidget):
                 self.progress.setValue(done)
                 self.status.setText(f"{done} of {total} tiles")
                 self._refresh_layer()
+                if done == 1:
+                    self._register_run()
             elif line.startswith("AUTO ") and len(parts) >= 3:
                 t, frac = float(parts[1]), float(parts[2])
                 self.slider.setValue(int(round(t * 100)))
