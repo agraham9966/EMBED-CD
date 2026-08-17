@@ -335,36 +335,6 @@ class ChangeDock(QDockWidget):
         trow.addWidget(self.auto_btn)
         s2.addLayout(trow)
 
-        # Ground truth: every year there are embeddings for, as a strip of small toggles. Binding
-        # this to the two chosen years would have been the obvious thing and the wrong one —
-        # confirming WHEN something changed means scrubbing across years, not just the two ends.
-        # Two-digit labels because nine four-digit buttons do not fit a docked panel.
-        prow = QHBoxLayout()
-        prow.setSpacing(2)
-        lbl = QLabel("Photo:")
-        lbl.setToolTip("Sentinel-2 cloudless imagery (EOX), clipped to your area, one year per "
-                       "button — so you can check what the change map is claiming, and see which "
-                       "year a change actually appeared in.\n\nOne at a time: clicking another "
-                       "year swaps it instantly, which is what makes the comparison readable. "
-                       "Click the active year to turn it off.")
-        prow.addWidget(lbl)
-        self.photo_btns = {}
-        for y in (int(v) for v in _YEARS):
-            b = QPushButton(f"{y % 100:02d}")
-            b.setCheckable(True)
-            b.setFixedWidth(28)
-            b.clicked.connect(lambda _c, yr=y: self._toggle_photo(yr))
-            prow.addWidget(b)
-            self.photo_btns[y] = b
-        prow.addStretch(1)
-        s2.addLayout(prow)
-        from .engine import basemap as _BM
-        credit = QLabel(f"{_BM.ATTRIBUTION}  ·  {_BM.LICENCE}")
-        credit.setWordWrap(True)
-        credit.setOpenExternalLinks(True)
-        credit.setStyleSheet("color: palette(mid); font-size: 9px;")
-        s2.addWidget(credit)
-        self._sync_photos()
 
         # Both are exports, both are rare, and "Polygonize" sat one row from the classifier's
         # "Make polygons" doing something different under a near-identical name. Tucked away
@@ -397,6 +367,41 @@ class ChangeDock(QDockWidget):
         self.classify = ClassifyPanel(self, self.iface)
         cl.addWidget(self.classify)
         self.steps.addItem(self.classify_group, "3 · Objects and classes")
+
+        # OUTSIDE the accordion, deliberately. Turning on a year's imagery is what you do
+        # BEFORE deciding where to draw, so burying it behind a step you cannot reach
+        # until a change map exists gets the order backwards. It is also cheap — streamed
+        # global tiles, no run required.
+        # Ground truth: every year there are embeddings for, as a strip of small toggles. Binding
+        # this to the two chosen years would have been the obvious thing and the wrong one —
+        # confirming WHEN something changed means scrubbing across years, not just the two ends.
+        # Two-digit labels because nine four-digit buttons do not fit a docked panel.
+        prow = QHBoxLayout()
+        prow.setSpacing(2)
+        lbl = QLabel("Photo:")
+        lbl.setToolTip("Sentinel-2 cloudless imagery (EOX), clipped to your area, one year per "
+                       "button — so you can check what the change map is claiming, and see which "
+                       "year a change actually appeared in.\n\nOne at a time: clicking another "
+                       "year swaps it instantly, which is what makes the comparison readable. "
+                       "Click the active year to turn it off.")
+        prow.addWidget(lbl)
+        self.photo_btns = {}
+        for y in (int(v) for v in _YEARS):
+            b = QPushButton(f"{y % 100:02d}")
+            b.setCheckable(True)
+            b.setFixedWidth(28)
+            b.clicked.connect(lambda _c, yr=y: self._toggle_photo(yr))
+            prow.addWidget(b)
+            self.photo_btns[y] = b
+        prow.addStretch(1)
+        lay.addLayout(prow)
+        from .engine import basemap as _BM
+        credit = QLabel(f"{_BM.ATTRIBUTION}  ·  {_BM.LICENCE}")
+        credit.setWordWrap(True)
+        credit.setOpenExternalLinks(True)
+        credit.setStyleSheet("color: palette(mid); font-size: 9px;")
+        lay.addWidget(credit)
+        self._sync_photos()
 
         g = _GroupBox("How it works")
         gl = QVBoxLayout(g)

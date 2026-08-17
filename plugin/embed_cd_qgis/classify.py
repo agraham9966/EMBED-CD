@@ -167,9 +167,21 @@ class ClassifyPanel(QWidget):
         self.opts_btn.setText("⚙")
         self.opts_btn.setAutoRaise(True)
         self.opts_btn.setFixedWidth(26)
-        self.opts_btn.setToolTip("Classifier options, bulk assign, and saving class sets.")
+        self.opts_btn.setToolTip("Classifier options: bulk assign, pause, best guess, "
+                                 "strictness.")
         self.opts_btn.setPopupMode(_scoped(QToolButton, "ToolButtonPopupMode", "InstantPopup"))
         crow.addWidget(self.opts_btn)
+        # Saving gets its own button rather than hiding inside the gear: a class set is the
+        # user's own work and the fact that it CAN be carried to another area is the whole
+        # point of the classifier. Buried in a settings menu, nobody finds it.
+        self.savemenu_btn = QToolButton()
+        self.savemenu_btn.setText("💾")
+        self.savemenu_btn.setAutoRaise(True)
+        self.savemenu_btn.setFixedWidth(26)
+        self.savemenu_btn.setToolTip("Save or load a class set, to reuse it on another area.")
+        self.savemenu_btn.setPopupMode(
+            _scoped(QToolButton, "ToolButtonPopupMode", "InstantPopup"))
+        crow.addWidget(self.savemenu_btn)
         lay.addLayout(crow)
 
         self.label_btn = QPushButton("Label by clicking the map")
@@ -302,12 +314,30 @@ class ClassifyPanel(QWidget):
         qwrap = QWidget()
         qwrap.setLayout(qrow)
         pl.addWidget(qwrap)
-        pl.addWidget(row_of(self.save_btn, self.load_btn))
         act = QWidgetAction(menu)
         act.setDefaultWidget(panel)
         menu.addAction(act)
         self.opts_btn.setMenu(menu)
         self._opts_menu = menu
+
+        smenu = QMenu(self)
+        spanel = QWidget()
+        sl = QVBoxLayout(spanel)
+        sl.setContentsMargins(8, 6, 8, 6)
+        sl.setSpacing(6)
+        hint = QLabel("A class set is just your labelled examples — save it and the same "
+                      "classes can be applied to another area.")
+        hint.setWordWrap(True)
+        hint.setMaximumWidth(240)
+        hint.setStyleSheet("color: palette(mid);")
+        sl.addWidget(hint)
+        sl.addWidget(self.save_btn)
+        sl.addWidget(self.load_btn)
+        sact = QWidgetAction(smenu)
+        sact.setDefaultWidget(spanel)
+        smenu.addAction(sact)
+        self.savemenu_btn.setMenu(smenu)
+        self._save_menu = smenu
 
         self.status = QLabel("")
         self.status.setWordWrap(True)
@@ -463,18 +493,21 @@ class ClassifyPanel(QWidget):
         nothing here is worth an exception.
         """
         try:
-            from qgis.core import QgsFillSymbol, QgsSelectionProperties
+            from qgis.core import QgsFillSymbol, Qgis
             sym = QgsFillSymbol.createSimple({
                 "color": "255,255,255,0",          # no fill: never hide the object
                 "outline_color": "255,215,0,255",
-                "outline_width": "0.8",
+                "outline_width": "1.4",            # thick enough to read at a glance
             })
             props = layer.selectionProperties()
-            props.setSelectionRenderingMode(
-                _scoped(QgsSelectionProperties, "SelectionRenderingMode", "CustomSymbol"))
+            # The enum lives on Qgis, and the properties class is
+            # QgsVectorLayerSelectionProperties — there is no QgsSelectionProperties to import.
+            # Getting that wrong threw inside the try and the bare except swallowed it, so the
+            # default solid yellow simply stayed and the failure was invisible.
+            props.setSelectionRenderingMode(Qgis.SelectionRenderingMode.CustomSymbol)
             props.setSelectionSymbol(sym)
-        except Exception:
-            pass
+        except Exception as exc:
+            self.status.setText(f"(selection style unavailable: {exc})")
 
     def _layer_ok(self):
         """Is the polygon layer still alive?
