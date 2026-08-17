@@ -98,6 +98,7 @@ class ClassifyPanel(QWidget):
         self._undo = []
         self._cycle = []               # ordered rows for the < > arrows
         self._filling_combo = False    # writing TO the class combo, not reading a user edit
+        self._band = None              # yellow highlight over the current object
         self._cycle_at = -1
         # Examples banked from earlier polygon sets. A class is the user's vocabulary and the
         # expensive part of their work, so it must outlive a re-polygonize or a new area; only
@@ -235,13 +236,15 @@ class ClassifyPanel(QWidget):
         self.discard_btn.clicked.connect(self.discard_label)
         r2.addWidget(self.discard_btn)
         self.cycle_mode = QComboBox()
-        self.cycle_mode.addItems(["Least certain first", "Only unknown", "Only labelled",
-                                  "All objects"])
+        self.cycle_mode.addItems(["Least certain first", "Only unlabelled", "Only unknown",
+                                  "Only labelled", "All objects"])
         self.cycle_mode.setToolTip(
             "What the arrows step through." + chr(10) * 2 +
             "Least certain first: abstentions, then the ones it nearly called differently — "
             "where a label teaches the model most." + chr(10) +
-            "Only unknown: work through the gaps." + chr(10) +
+            "Only unlabelled: everything you have not personally labelled yet, whatever the "
+            "model guessed for it." + chr(10) +
+            "Only unknown: the ones the model would not commit to." + chr(10) +
             "Only labelled: check what you have already assigned.")
         self.cycle_mode.currentTextChanged.connect(lambda _t: setattr(self, "_cycle_at", -1))
         r2.addWidget(self.cycle_mode, 1)
@@ -484,6 +487,42 @@ class ClassifyPanel(QWidget):
         layer.selectionChanged.connect(self._on_selection)
         self._style()
 
+    def _highlight(self, geom=None):
+        """Draw the yellow outline of the current object as a canvas overlay.
+
+        A rubber band rather than QGIS's selection rendering, because selection replaces the
+        feature's own symbol and there is only one selection symbol per layer — so it could
+        never keep each object's class colour underneath. As an overlay the class fill shows
+        through and the yellow only ever adds an outline.
+        """
+        from qgis.gui import QgsRubberBand, QgsMapCanvas
+        from qgis.core import QgsWkbTypes
+
+        canvas = self.iface.mapCanvas()
+        # QgsRubberBand takes a QgsMapCanvas*, and sip hands anything else straight to C++ —
+        # a stand-in canvas does not raise, it takes the process down. Check the real type
+        # rather than trusting the caller.
+        if not isinstance(canvas, QgsMapCanvas):
+            return
+        if getattr(self, "_band", None) is None:
+            try:
+                self._band = QgsRubberBand(canvas, QgsWkbTypes.GeometryType.PolygonGeometry)
+            except Exception:
+                self._band = QgsRubberBand(canvas, QgsWkbTypes.PolygonGeometry)
+            self._band.setColor(QColor(255, 215, 0))
+            self._band.setFillColor(QColor(0, 0, 0, 0))       # outline only
+            self._band.setWidth(3)
+        if geom is None:
+            self._band.reset(_scoped(QgsWkbTypes, "GeometryType", "PolygonGeometry")
+                             if hasattr(QgsWkbTypes, "GeometryType") else
+                             QgsWkbTypes.PolygonGeometry)
+            return
+        self._band.setToGeometry(geom, self.layer)
+
+    def _clear_highlight(self):
+        if getattr(self, "_band", None) is not None:
+            self._highlight(None)
+
     def _style_selection(self, layer):
         """Selected objects get a yellow OUTLINE, not QGIS's default solid yellow fill.
 
@@ -494,18 +533,21 @@ class ClassifyPanel(QWidget):
         """
         try:
             from qgis.core import QgsFillSymbol, Qgis
-            sym = QgsFillSymbol.createSimple({
-                "color": "255,255,255,0",          # no fill: never hide the object
-                "outline_color": "255,215,0,255",
-                "outline_width": "1.4",            # thick enough to read at a glance
-            })
+            # A selection symbol REPLACES the feature's own rendering, and there is only one per
+            # layer — so any fill here would erase the class colour and you could no longer tell
+            # what an object is without reading the dropdown. Hence no fill and no stroke at all:
+            # selection changes nothing, and the yellow outline is drawn separately as a
+            # highlight over the top, where it can sit on the class colour instead of replacing
+            # it.
+            invisible = QgsFillSymbol.createSimple({
+                "color": "0,0,0,0", "outline_color": "0,0,0,0", "outline_width": "0"})
             props = layer.selectionProperties()
             # The enum lives on Qgis, and the properties class is
             # QgsVectorLayerSelectionProperties — there is no QgsSelectionProperties to import.
             # Getting that wrong threw inside the try and the bare except swallowed it, so the
             # default solid yellow simply stayed and the failure was invisible.
             props.setSelectionRenderingMode(Qgis.SelectionRenderingMode.CustomSymbol)
-            props.setSelectionSymbol(sym)
+            props.setSelectionSymbol(invisible)
         except Exception as exc:
             self.status.setText(f"(selection style unavailable: {exc})")
 
@@ -530,6 +572,7 @@ class ClassifyPanel(QWidget):
         return True
 
     def _forget_layer(self):
+        self._clear_highlight()
         """The polygons are gone, so anything indexed by their rows is meaningless. Banked
         class examples are NOT cleared — those are the user's labelling effort and they are
         stored as vectors, not row numbers, so they stay valid across areas."""
@@ -679,6 +722,10 @@ class ClassifyPanel(QWidget):
             # objects where one label teaches the model the most.
             from .engine import head as H
             return [int(i) for i in H.review_order(self.pred, self.scores)]
+        if mode.startswith("Only unlabelled"):
+            # Not the same as "unknown": the model may be perfectly confident about an object
+            # you have never confirmed. This is the "what still needs my eyes" list.
+            return [i for i in range(n) if i not in self.labels]
         if mode.startswith("Only unknown"):
             if self.pred is None:
                 return list(range(n))
@@ -962,6 +1009,9 @@ class ClassifyPanel(QWidget):
     def _on_selection(self, *_a):
         self._show_selected()
         self._sync_class_combo()
+        if self._layer_ok():
+            sel = self.layer.selectedFeatures()
+            self._highlight(sel[0].geometry() if len(sel) == 1 else None)
 
     def _show_selected(self):
         """Show the per-class scores for the selected polygon.
@@ -1260,9 +1310,23 @@ class ClassifyPanel(QWidget):
 
         Built explicitly rather than from defaultSymbol(), whose hairline outline is almost
         invisible over imagery."""
-        return QgsFillSymbol.createSimple({
+        sym = QgsFillSymbol.createSimple({
             "color": fill, "outline_color": outline, "outline_width": width,
             "outline_style": style})
+        # A label the USER set and a label the model guessed look identical otherwise, which is
+        # the one distinction that matters while reviewing. Driven off the `label` attribute per
+        # feature, so one symbol per class still covers both cases.
+        try:
+            from qgis.core import QgsProperty, QgsSymbolLayer
+            sl = sym.symbolLayer(0)
+            sl.setDataDefinedProperty(
+                QgsSymbolLayer.Property.StrokeWidth,
+                QgsProperty.fromExpression(
+                    f"CASE WHEN \"label\" IS NOT NULL AND \"label\" <> '' "
+                    f"THEN {float(width) * 2.6:g} ELSE {float(width):g} END"))
+        except Exception:
+            pass
+        return sym
 
     def _style(self):
         """Colour by prediction. Unknown stays a hollow outline — it is an honest answer, not a
