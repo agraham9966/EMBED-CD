@@ -99,6 +99,7 @@ class ClassifyPanel(QWidget):
         self._cycle = []               # ordered rows for the < > arrows
         self._filling_combo = False    # writing TO the class combo, not reading a user edit
         self._band = None              # yellow highlight over the current object
+        self._current_row = None       # the object being stepped through
         self._cycle_at = -1
         # Examples banked from earlier polygon sets. A class is the user's vocabulary and the
         # expensive part of their work, so it must outlive a re-polygonize or a new area; only
@@ -480,7 +481,6 @@ class ClassifyPanel(QWidget):
         self.layer = layer
         # Built once. Resolving a feature's row by reading its attribute on every access meant
         # walking the layer several times per click, which is most of why labelling felt slow.
-        self._style_selection(layer)
         idx_col = layer.fields().indexOf("idx")
         self._fid_row = {f.id(): int(f.attributes()[idx_col]) for f in layer.getFeatures()}
         # any selection — ours, or QGIS's own select tool — drives the breakdown readout
@@ -573,6 +573,7 @@ class ClassifyPanel(QWidget):
 
     def _forget_layer(self):
         self._clear_highlight()
+        self._current_row = None
         """The polygons are gone, so anything indexed by their rows is meaningless. Banked
         class examples are NOT cleared — those are the user's labelling effort and they are
         stored as vectors, not row numbers, so they stay valid across areas."""
@@ -760,11 +761,18 @@ class ClassifyPanel(QWidget):
         fid = next((f for f, r in self._fid_row.items() if r == row), None)
         if fid is None:
             return
-        self.layer.selectByIds([fid])
-        feats = self.layer.selectedFeatures()
-        if not feats:
+        # NOT selectByIds. QGIS renders a selected feature with the layer's single selection
+        # symbol INSTEAD of its own, so any selection at all loses the class colour — measured:
+        # default paints it yellow, and an "invisible" selection symbol paints nothing at all.
+        # The current object is our own idea, so we track it and draw it ourselves.
+        self._current_row = row
+        feat = next((f for f in self.layer.getFeatures() if f.id() == fid), None)
+        if feat is None:
             return
-        box = feats[0].geometry().boundingBox()
+        self._highlight(feat.geometry())
+        self._show_selected()
+        self._sync_class_combo()
+        box = feat.geometry().boundingBox()
         canvas = self.iface.mapCanvas()
         try:
             from qgis.core import QgsCoordinateTransform, QgsProject
@@ -791,8 +799,13 @@ class ClassifyPanel(QWidget):
         arrow-stepping you are not necessarily clicking the map."""
         if not self._layer_ok():
             return
+        # The current object first — stepping no longer selects, so reading the QGIS selection
+        # here would always come back empty. A real selection still works for bulk removal.
         rows = [r for r in (self._row_of(f) for f in self.layer.selectedFeatures())
                 if r is not None]
+        cur = self._selected_row()
+        if not rows and cur is not None:
+            rows = [cur]
         rows = [r for r in rows if r in self.labels]
         if not rows:
             self.status.setText("No labelled polygon selected.")
@@ -804,8 +817,13 @@ class ClassifyPanel(QWidget):
         self.status.setText(f"Removed {len(rows)} label{'s' if len(rows) != 1 else ''}.")
 
     def _selected_row(self):
+        """The object the panel is talking about: the one being stepped through, or failing
+        that a single feature the user picked with QGIS's own select tool."""
         if not self._layer_ok():
             return None
+        row = getattr(self, "_current_row", None)
+        if row is not None and self.vectors is not None and 0 <= row < len(self.vectors):
+            return row
         sel = self.layer.selectedFeatures()
         return self._row_of(sel[0]) if len(sel) == 1 else None
 
@@ -976,7 +994,8 @@ class ClassifyPanel(QWidget):
         else:
             self.labels[row] = name
             note = f"labelled '{name}'"
-        self.layer.selectByIds([hit.id()])          # flash it so the click is visibly registered
+        self._current_row = row                     # highlight it so the click is visibly registered
+        self._highlight(hit.geometry())
         self._apply_manual([row]) if self.paused else self._refit()
         self.status.setText(f"{note}. {self.status.text()}")
 
@@ -1023,13 +1042,14 @@ class ClassifyPanel(QWidget):
         if not self._layer_ok() or self.head is None or self.scores is None:
             self.detail_lbl.setText("")
             return
-        sel = self.layer.selectedFeatures()
-        if len(sel) != 1:
+        row = self._selected_row()
+        if row is None:
+            sel = self.layer.selectedFeatures()
             self.detail_lbl.setText(
                 f"<span style='color:gray'>{len(sel)} polygons selected</span>" if sel else "")
             return
-        row = self._row_of(sel[0])
-        if row is None:
+        sel = [f for f in self.layer.getFeatures() if self._row_of(f) == row]
+        if not sel:
             self.detail_lbl.setText("")
             return
         self.detail_lbl.setText(self._scores_html(row, sel[0]))

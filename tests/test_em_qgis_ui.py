@@ -137,7 +137,6 @@ def test_polygon_rows_are_read_from_idx_not_the_feature_id():
     class Panel(_Stub):
         _build_layer = ClassifyPanel._build_layer
         _remove_layer = ClassifyPanel._remove_layer
-        _style_selection = ClassifyPanel._style_selection
         _row_of = ClassifyPanel._row_of
         _fid_row = {}
 
@@ -1024,7 +1023,12 @@ def test_undo_and_stepping_through_objects():
     p.step(1)
     assert abs(dock.canvas.extent().width() - before) < 1e-6, \
         "stepping changed the zoom; it is meant to pan and keep scale"
-    assert len(p.layer.selectedFeatures()) == 1, "stepping did not select the object"
+    # Stepping must NOT use QGIS selection. A selected feature is drawn with the layer's single
+    # selection symbol INSTEAD of its own, so selecting it loses the class colour — measured:
+    # the default paints it yellow, an "invisible" selection symbol paints nothing at all. The
+    # current object is ours, drawn as an overlay on top of the normal symbology.
+    assert p._selected_row() is not None, "stepping did not set a current object"
+    assert len(p.layer.selectedFeatures()) == 0,         "stepping selected the feature, which repaints it and hides its class colour"
 
     # every filter returns something sane
     for mode in ("Least certain first", "Only unknown", "Only labelled", "All objects"):
@@ -1054,7 +1058,7 @@ def test_undo_and_stepping_through_objects():
     assert len(p._undo) == depth, "stepping through objects recorded phantom label edits"
 
     row = p._selected_row()
-    assert row is not None, "stepping should leave exactly one object selected"
+    assert row is not None, "stepping should leave exactly one current object"
     was = p.labels.get(row)          # may already carry a label from earlier in this test
     p.cls_combo.setCurrentIndex(p.cls_combo.findData("b"))
     assert p.labels.get(row) == "b", f"setting the combo did not relabel: {p.labels}"
