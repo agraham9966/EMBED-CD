@@ -1220,6 +1220,62 @@ def test_switching_between_areas_restores_each_one():
     print(f"ok switched back to Area A: {a_objs} objects and {len(a_labels)} labels restored")
 
 
+def test_the_tile_estimate_asks_the_tiler_when_it_can():
+    """Area alone cannot count tiles, and the error is not small.
+
+    AlphaEarth publishes per UTM zone, so an area near a zone boundary fetches tiles from BOTH
+    and needs roughly twice as many. Measured against the real tiler: 19.9x19.9 km at the
+    9N/10N line is 21 tiles where the area formula says 9. It also over-counts well inside a
+    zone (13x10 km is 4, not 6) because the formula's +1 per axis assumes the worst case on
+    both. So the dock asks the tiler whenever the index is on disk, and only estimates when it
+    is not — an estimate is flagged as one, so a quoted number is never quietly wrong.
+    """
+    from qgis.PyQt.QtWidgets import QMainWindow
+    from qgis.gui import QgsMapCanvas
+    from embed_cd_qgis.dock import ChangeDock
+    from embed_cd import source as SRC
+
+    class _Iface:
+        def __init__(self, win, canvas):
+            self._w, self._c = win, canvas
+
+        def mainWindow(self):
+            return self._w
+
+        def mapCanvas(self):
+            return self._c
+
+    dock = ChangeDock(_Iface(QMainWindow(), QgsMapCanvas()))
+    dock.bbox = (-126.05, 50.28, -125.90, 50.37)
+    dock._tile_memo = None
+    e = dock._estimate()
+    assert e["tiles"] > 0
+    assert "approx" in e, "the estimate must say whether it is exact"
+
+    have_index = any(os.path.exists(SRC.Index(c).npz_path)
+                     for c in (dock._cache_dir(), None))
+    if have_index:
+        assert not e["approx"], "the index is present, so the count should be exact"
+        src = SRC.AlphaEarthSource(index=SRC.Index(
+            dock._cache_dir() if os.path.exists(SRC.Index(dock._cache_dir()).npz_path) else None))
+        exact = len(src.list_tiles(dock.bbox, 2019, 2024)[0])
+        assert e["tiles"] == exact, f"dock said {e['tiles']}, tiler says {exact}"
+        print(f"ok tile count is exact ({exact}), not an area guess")
+    else:
+        assert e["approx"], "with no index there is nothing to be exact about"
+        print("ok no tile index present; estimate correctly flagged as approximate")
+
+    # the step header carries the cutoff, so everything that changes it must refresh the header
+    dock.layer_id = "pretend"
+    dock.slider.setValue(11)
+    title = dock.step2.title() if hasattr(dock.step2, "title") else dock.steps.itemText(1)
+    assert "0.11" in title, f"header did not follow the slider: {title!r}"
+    dock.slider.setValue(25)
+    title = dock.step2.title() if hasattr(dock.step2, "title") else dock.steps.itemText(1)
+    assert "0.25" in title, f"header did not follow the slider: {title!r}"
+    dock.cleanup()
+
+
 if __name__ == "__main__":
     test_a_rewritten_vrt_is_only_seen_at_a_new_path()
     test_a_users_correction_is_never_revised_by_the_model()
@@ -1241,4 +1297,5 @@ if __name__ == "__main__":
     test_undo_and_stepping_through_objects()
     test_steps_fold_once_and_keep_their_answer_in_the_title()
     test_switching_between_areas_restores_each_one()
+    test_the_tile_estimate_asks_the_tiler_when_it_can()
     print("all ok")
