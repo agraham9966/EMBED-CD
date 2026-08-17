@@ -11,8 +11,8 @@ import os
 
 import numpy as np
 
-from qgis.PyQt.QtCore import Qt
-from qgis.PyQt.QtGui import QColor
+from qgis.PyQt.QtCore import Qt, QSize
+from qgis.PyQt.QtGui import QColor, QIcon
 from qgis.PyQt.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QListWidget, QListWidgetItem,
     QDoubleSpinBox, QInputDialog, QFileDialog, QMessageBox, QSlider, QCheckBox,
@@ -28,6 +28,26 @@ from qgis.gui import QgsMapTool
 UNKNOWN = "unknown"
 _PALETTE = ["#d85a30", "#1d9e75", "#7f77dd", "#d4537e", "#378add", "#ba7517",
             "#639922", "#993556"]
+
+
+class _ClassList(QListWidget):
+    """A class list whose colour swatch is clickable.
+
+    setItemWidget on every row would give the same thing but replaces the item with a widget,
+    which costs the list's own selection and keyboard behaviour. Reading the click x against the
+    icon width keeps a plain QListWidget and everything that comes with it.
+    """
+
+    def __init__(self, on_swatch):
+        super().__init__()
+        self._on_swatch = on_swatch
+
+    def mousePressEvent(self, ev):
+        item = self.itemAt(ev.pos())
+        x = int(ev.position().x()) if hasattr(ev, "position") else int(ev.x())
+        super().mousePressEvent(ev)
+        if item is not None and x <= self.iconSize().width() + 6:
+            self._on_swatch(item)
 
 
 def row_of(*widgets):
@@ -100,6 +120,7 @@ class ClassifyPanel(QWidget):
         self._filling_combo = False    # writing TO the class combo, not reading a user edit
         self._band = None              # yellow highlight over the current object
         self._current_row = None       # the object being stepped through
+        self._styling = False          # guards the styleChanged read-back loop
         self._cycle_at = -1
         # Examples banked from earlier polygon sets. A class is the user's vocabulary and the
         # expensive part of their work, so it must outlive a re-polygonize or a new area; only
@@ -140,7 +161,8 @@ class ClassifyPanel(QWidget):
         self.count_lbl.setWordWrap(True)
         lay.addWidget(self.count_lbl)
 
-        self.list = QListWidget()
+        self.list = _ClassList(self._swatch_clicked)
+        self.list.setIconSize(QSize(16, 16))
         self.list.setMaximumHeight(120)
         self.list.setToolTip("Click to pick the class you are labelling with. "
                              "Double-click to select that class's polygons on the map — "
@@ -153,17 +175,39 @@ class ClassifyPanel(QWidget):
         # is how QGIS's own layer and style panels handle exactly this. The gear at the end
         # holds everything that is real but rarely touched mid-session.
         crow = QHBoxLayout()
-        crow.setSpacing(2)
-        for text, slot, tip in (("+", self.add_class, "Add a class"),
-                                ("−", self.delete_class, "Delete the selected class"),
-                                ("✎", self.rename_class, "Rename the selected class")):
+        crow.setSpacing(3)
+        # QGIS's own icons rather than typed glyphs: a "+" in a label is whatever the UI font
+        # happens to draw, which is why they looked low-res next to real toolbar buttons.
+        from qgis.core import QgsApplication as _QApp
+        for icon, text, slot, tip in (
+                ("/symbologyAdd.svg", "Add", self.add_class, "Add a class"),
+                ("/symbologyRemove.svg", "", self.delete_class, "Delete the selected class"),
+                ("/mActionEditTable.svg", "", self.rename_class,
+                 "Rename the selected class")):
             b = QToolButton()
-            b.setText(text)
+            ic = _QApp.getThemeIcon(icon)
+            if not ic.isNull():
+                b.setIcon(ic)
+                b.setIconSize(QSize(18, 18))
+            if text and ic.isNull():
+                b.setText(text)
             b.setToolTip(tip)
             b.setAutoRaise(True)
-            b.setFixedWidth(26)
+            b.setFixedSize(QSize(28, 26))
             b.clicked.connect(slot)
             crow.addWidget(b)
+        self.color_btn = QToolButton()
+        _ic = _QApp.getThemeIcon("/mIconColorBox.svg")
+        if not _ic.isNull():
+            self.color_btn.setIcon(_ic)
+            self.color_btn.setIconSize(QSize(18, 18))
+        else:
+            self.color_btn.setText("■")
+        self.color_btn.setToolTip("Change the selected class's colour.")
+        self.color_btn.setAutoRaise(True)
+        self.color_btn.setFixedSize(QSize(28, 26))
+        self.color_btn.clicked.connect(self.pick_color)
+        crow.addWidget(self.color_btn)
         crow.addStretch(1)
         self.opts_btn = QToolButton()
         self.opts_btn.setText("⚙")
@@ -485,6 +529,13 @@ class ClassifyPanel(QWidget):
         self._fid_row = {f.id(): int(f.attributes()[idx_col]) for f in layer.getFeatures()}
         # any selection — ours, or QGIS's own select tool — drives the breakdown readout
         layer.selectionChanged.connect(self._on_selection)
+        # Two-way: recolouring a class in QGIS's symbology dialog edits this same layer, and
+        # without listening the panel would keep showing the old colour and then overwrite it
+        # on the next refit.
+        try:
+            layer.styleChanged.connect(self._colors_from_layer)
+        except Exception:
+            pass
         self._style()
 
     def _highlight(self, geom=None):
@@ -645,6 +696,62 @@ class ClassifyPanel(QWidget):
         self._refresh_list()
         self._refit()
 
+    @staticmethod
+    def _swatch(hexcol):
+        """A solid colour chip. Filled directly rather than painted: QPainter on a QPixmap needs
+        a GUI-enabled application, and this runs under one that may not be."""
+        from qgis.PyQt.QtGui import QPixmap
+        pm = QPixmap(14, 14)
+        pm.fill(QColor(hexcol))
+        return QIcon(pm)
+
+    def _swatch_clicked(self, item):
+        name = item.data(_scoped(Qt, "ItemDataRole", "UserRole"))
+        if name:
+            self.pick_color(name)
+
+    def pick_color(self, name=None):
+        """Change a class's colour, here and on the map.
+
+        The layer is the same object QGIS's own symbology dialog edits, so writing the renderer
+        is what makes this two-way: our change shows there, and a change made there comes back
+        through `styleChanged`.
+        """
+        from qgis.PyQt.QtWidgets import QColorDialog
+        name = name if isinstance(name, str) and name else self.current_class()
+        if not name:
+            self.status.setText("Pick a class in the list first.")
+            return
+        start = QColor(self.colors.get(name) or "#888780")
+        col = QColorDialog.getColor(start, self, f"Colour for '{name}'")
+        if not col.isValid():
+            return
+        self.colors[name] = col.name()
+        self._style()
+        self._refresh_list()
+
+    def _colors_from_layer(self):
+        """Read class colours back off the renderer.
+
+        Editing the layer's symbology in QGIS is a perfectly reasonable way to recolour a class,
+        and without this the panel would keep showing — and then re-apply — the old colour.
+        """
+        if self._styling or not self._layer_ok():
+            return
+        r = self.layer.renderer()
+        if not hasattr(r, "categories"):
+            return
+        changed = False
+        for cat in r.categories():
+            name = str(cat.value())
+            if name in self.classes and cat.symbol() is not None:
+                hexcol = cat.symbol().color().name()
+                if self.colors.get(name) != hexcol:
+                    self.colors[name] = hexcol
+                    changed = True
+        if changed:
+            self._refresh_list()
+
     def current_class(self):
         item = self.list.currentItem()
         return item.data(_scoped(Qt, "ItemDataRole", "UserRole")) if item else None
@@ -658,10 +765,10 @@ class ClassifyPanel(QWidget):
         pred = self._predicted_counts()
         for name in self.classes:
             item = QListWidgetItem(
-                f"  {name} — {counts.get(name, 0)} labelled, {pred.get(name, 0)} predicted")
+                f" {name} — {counts.get(name, 0)} labelled, {pred.get(name, 0)} predicted")
             item.setData(_scoped(Qt, "ItemDataRole", "UserRole"), name)
-            c = QColor(self.colors.get(name) or "#888780")
-            item.setForeground(c)
+            item.setIcon(self._swatch(self.colors.get(name) or "#888780"))
+            item.setToolTip("Click the colour box to change this class's colour.")
             self.list.addItem(item)
         if pred.get(UNKNOWN):
             item = QListWidgetItem(f"  {UNKNOWN} — {pred[UNKNOWN]} predicted")
@@ -1338,12 +1445,16 @@ class ClassifyPanel(QWidget):
         # feature, so one symbol per class still covers both cases.
         try:
             from qgis.core import QgsProperty, QgsSymbolLayer
+            # DASHED for what the user labelled, solid for what the model predicted, everything
+            # else identical. A heavier line was the first attempt and it read as noise — at
+            # this width the difference between 0.6 and 1.6 mm is not something the eye picks
+            # out across a map, whereas solid-versus-dashed is unmistakable at any width.
             sl = sym.symbolLayer(0)
             sl.setDataDefinedProperty(
-                QgsSymbolLayer.Property.StrokeWidth,
+                QgsSymbolLayer.Property.StrokeStyle,
                 QgsProperty.fromExpression(
-                    f"CASE WHEN \"label\" IS NOT NULL AND \"label\" <> '' "
-                    f"THEN {float(width) * 2.6:g} ELSE {float(width):g} END"))
+                    "CASE WHEN \"label\" IS NOT NULL AND \"label\" <> '' "
+                    "THEN 'dash' ELSE 'solid' END"))
         except Exception:
             pass
         return sym
@@ -1371,11 +1482,17 @@ class ClassifyPanel(QWidget):
         cats.append(QgsRendererCategory(
             "", self._symbol("255,255,255,22", "235,235,235,220", "0.7", "dash"),
             "not classified yet"))
+        # `styleChanged` fires on setRenderer, and the handler reads colours back off the
+        # renderer — so without this flag our own write would immediately re-enter and rebuild
+        # the list on every restyle.
+        self._styling = True
         try:
             self.layer.setRenderer(QgsCategorizedSymbolRenderer("predicted", cats))
             self.layer.triggerRepaint()
         except Exception:
             pass
+        finally:
+            self._styling = False
 
     # ---------------- presets ----------------
     def save_classes(self):

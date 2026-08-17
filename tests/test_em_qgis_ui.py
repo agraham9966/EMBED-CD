@@ -1280,6 +1280,21 @@ def test_the_tile_estimate_asks_the_tiler_when_it_can():
     dock.cleanup()
 
 
+# NOT COVERED HERE: class-colour sync and the dashed outline for labelled objects.
+#
+# The feature is verified — a scratch script drives the panel end to end and confirms the
+# data-defined expression is "CASE WHEN \"label\" ... THEN 'dash' ELSE 'solid' END", that a
+# swatch colour written in the panel reaches the renderer, and that a colour set on the renderer
+# comes back to the panel. What could not be made stable is a version of that living in THIS
+# file: constructing a panel and touching its renderer here takes the process down with no
+# traceback and no failing assertion, first at the end of the run and then equally when moved to
+# the front, while the same calls in a standalone script survive. That is Qt object ownership,
+# not the plugin logic, and a test that crashes the suite is worse than an honest gap.
+#
+# If this is picked up again: the crash is silent (exit 127), so run with PYTHONUNBUFFERED=1 or
+# the progress lines are lost in the buffer and it looks like an earlier test failed.
+
+
 if __name__ == "__main__":
     test_a_rewritten_vrt_is_only_seen_at_a_new_path()
     test_a_users_correction_is_never_revised_by_the_model()
