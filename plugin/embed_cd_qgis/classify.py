@@ -16,7 +16,7 @@ from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QListWidget, QListWidgetItem,
     QDoubleSpinBox, QInputDialog, QFileDialog, QMessageBox, QSlider, QCheckBox,
-    QProgressDialog, QApplication, QComboBox,
+    QProgressDialog, QApplication, QComboBox, QToolButton, QMenu, QWidgetAction,
 )
 from qgis.core import (
     QgsProject, QgsVectorLayer, QgsFeature, QgsGeometry, QgsField,
@@ -28,6 +28,17 @@ from qgis.gui import QgsMapTool
 UNKNOWN = "unknown"
 _PALETTE = ["#d85a30", "#1d9e75", "#7f77dd", "#d4537e", "#378add", "#ba7517",
             "#639922", "#993556"]
+
+
+def row_of(*widgets):
+    """Small helper: a horizontal strip, since the options panel needs a couple of them."""
+    w = QWidget()
+    l = QHBoxLayout(w)
+    l.setContentsMargins(0, 0, 0, 0)
+    l.setSpacing(4)
+    for x in widgets:
+        l.addWidget(x)
+    return w
 
 
 def _scoped(owner, category, name):
@@ -136,14 +147,29 @@ class ClassifyPanel(QWidget):
         self.list.currentRowChanged.connect(lambda _r: self._show_selected())
         lay.addWidget(self.list)
 
+        # Three full-width buttons for class housekeeping became a strip of small ones, which
+        # is how QGIS's own layer and style panels handle exactly this. The gear at the end
+        # holds everything that is real but rarely touched mid-session.
         crow = QHBoxLayout()
-        for text, slot, tip in (("+ Add", self.add_class, "Add a class."),
-                                ("Rename", self.rename_class, "Rename the selected class."),
-                                ("Delete", self.delete_class, "Delete the selected class.")):
-            b = QPushButton(text)
+        crow.setSpacing(2)
+        for text, slot, tip in (("+", self.add_class, "Add a class"),
+                                ("−", self.delete_class, "Delete the selected class"),
+                                ("✎", self.rename_class, "Rename the selected class")):
+            b = QToolButton()
+            b.setText(text)
             b.setToolTip(tip)
+            b.setAutoRaise(True)
+            b.setFixedWidth(26)
             b.clicked.connect(slot)
             crow.addWidget(b)
+        crow.addStretch(1)
+        self.opts_btn = QToolButton()
+        self.opts_btn.setText("⚙")
+        self.opts_btn.setAutoRaise(True)
+        self.opts_btn.setFixedWidth(26)
+        self.opts_btn.setToolTip("Classifier options, bulk assign, and saving class sets.")
+        self.opts_btn.setPopupMode(_scoped(QToolButton, "ToolButtonPopupMode", "InstantPopup"))
+        crow.addWidget(self.opts_btn)
         lay.addLayout(crow)
 
         self.label_btn = QPushButton("Label by clicking the map")
@@ -153,11 +179,10 @@ class ClassifyPanel(QWidget):
         self.label_btn.clicked.connect(self._toggle_label_tool)
         lay.addWidget(self.label_btn)
 
-        self.assign_btn = QPushButton("…or assign the selected polygons")
+        self.assign_btn = QPushButton("Assign the selected polygons to this class")
         self.assign_btn.setToolTip("For bulk work: select polygons with QGIS's own select tool, "
                                    "then press this.")
         self.assign_btn.clicked.connect(self.assign_selected)
-        lay.addWidget(self.assign_btn)
 
         # Review row: undo, step through objects, drop a label. One row, because this is what
         # you use once the map is nearly right and you are working through what is left.
@@ -226,7 +251,6 @@ class ClassifyPanel(QWidget):
             "reshuffle everything you already fixed. Your labels still accumulate, so you can "
             "still save them for another area.")
         self.pause_box.stateChanged.connect(self._toggle_pause)
-        lay.addWidget(self.pause_box)
 
         self.guess_box = QCheckBox("Prefer a best guess over 'unknown'")
         self.guess_box.setToolTip(
@@ -237,7 +261,6 @@ class ClassifyPanel(QWidget):
             "things under whichever class they resemble most, so the classes stop meaning "
             "what they say.")
         self.guess_box.stateChanged.connect(lambda _s: self._refit())
-        lay.addWidget(self.guess_box)
 
         qrow = QHBoxLayout()
         qrow.addWidget(QLabel("Strictness"))
@@ -256,18 +279,35 @@ class ClassifyPanel(QWidget):
         self.q_lbl = QLabel("0.05")
         self.q_slider.valueChanged.connect(lambda v: self.q_lbl.setText(f"{v/100:.2f}"))
         qrow.addWidget(self.q_lbl)
-        lay.addLayout(qrow)
 
-        srow = QHBoxLayout()
         self.save_btn = QPushButton("Save classes…")
         self.save_btn.setToolTip("Save the labelled examples so they can be reused on another "
                                  "area.")
         self.save_btn.clicked.connect(self.save_classes)
-        srow.addWidget(self.save_btn)
         self.load_btn = QPushButton("Load classes…")
         self.load_btn.clicked.connect(self.load_classes)
-        srow.addWidget(self.load_btn)
-        lay.addLayout(srow)
+
+        # Everything above is real and none of it is touched more than once or twice a session,
+        # so it lives behind the gear rather than competing with the controls used every few
+        # seconds. QWidgetAction keeps the SAME widgets — nothing is re-implemented for the
+        # menu, so every existing signal, tooltip and test still applies.
+        menu = QMenu(self)
+        panel = QWidget()
+        pl = QVBoxLayout(panel)
+        pl.setContentsMargins(8, 6, 8, 6)
+        pl.setSpacing(6)
+        pl.addWidget(self.assign_btn)
+        pl.addWidget(self.pause_box)
+        pl.addWidget(self.guess_box)
+        qwrap = QWidget()
+        qwrap.setLayout(qrow)
+        pl.addWidget(qwrap)
+        pl.addWidget(row_of(self.save_btn, self.load_btn))
+        act = QWidgetAction(menu)
+        act.setDefaultWidget(panel)
+        menu.addAction(act)
+        self.opts_btn.setMenu(menu)
+        self._opts_menu = menu
 
         self.status = QLabel("")
         self.status.setWordWrap(True)
