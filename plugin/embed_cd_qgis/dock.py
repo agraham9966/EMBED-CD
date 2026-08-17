@@ -96,6 +96,7 @@ class ChangeDock(QDockWidget):
         self.n_tiles = 0
         self._canceled = False
         self._switching = False
+        self._tile_memo = None
         self._tmp_root = None
         # Each step folds itself ONCE, the first time it is finished with. Re-folding on every
         # refresh would fight anyone who reopened it to change something, which is worse than a
@@ -474,6 +475,7 @@ class ChangeDock(QDockWidget):
                 self.run_combo.setCurrentIndex(cur)
         finally:
             self._switching = False
+        self._tile_memo = None
         self.run_row.setVisible(len(self.runs) > 1)
 
     def _switch_run(self, _i):
@@ -516,6 +518,7 @@ class ChangeDock(QDockWidget):
             self._describe_area()
         finally:
             self._switching = False
+        self._tile_memo = None
         restored = None
         if getattr(self, "classify", None) is not None:
             try:
@@ -652,13 +655,18 @@ class ChangeDock(QDockWidget):
         res = _DETAIL[self.detail.currentText()]
         factor = SRC.factor_for(res)
         tile_km = _TILE_KM * factor
-        # +1 per axis: the area is not aligned to the COG block grid, so a rectangle that is
-        # nominally one tile wide almost always straddles two. Measured — an 8x9 km box needs
-        # 4 tiles, a 16x16 km box needs 9. Better to overestimate the bill than surprise you.
-        tiles = (math.ceil(w / tile_km) + 1) * (math.ceil(h / tile_km) + 1)
+        # Ask the real tiler when it can answer. Area alone cannot: AlphaEarth publishes per UTM
+        # zone, so an area near a zone boundary fetches tiles from BOTH and needs roughly twice
+        # as many. Measured against the tiler — 19.9x19.9 km at the 9N/10N line is 21 tiles,
+        # where the formula says 9. It also over-counts inside a single zone (13x10 km: 4, not
+        # 6), because the +1 per axis assumes worst-case misalignment on both.
+        tiles = self._exact_tiles(factor)
+        approx = tiles is None
+        if approx:
+            tiles = (math.ceil(w / tile_km) + 1) * (math.ceil(h / tile_km) + 1)
         px = (w * 1000 / res) * (h * 1000 / res)
         across = min(w, h) * 1000 / res         # pixels along the SHORT side of the output
-        return {"w": w, "h": h, "tiles": tiles, "factor": factor,
+        return {"w": w, "h": h, "tiles": tiles, "approx": approx, "factor": factor,
                 "src_m": SRC.NATIVE_RES * factor,
                 "gb": tiles * 2 * 67e6 / 1e9,
                 "minutes": tiles * (_SEC_PER_TILE if factor == 1
@@ -667,10 +675,43 @@ class ChangeDock(QDockWidget):
                 # polygonize holds the change band, its int32 labels and a bool mask at once
                 "poly_gb": px * 4 * 2.25 / 1e9}
 
+    def _exact_tiles(self, factor):
+        """The tiler's own count, or None if the tile index is not on disk yet.
+
+        The index is a ~10 MB npz after its one-off build; consulting it is a numpy mask over
+        the rows, so this is cheap. It is NOT built here on demand — that would mean a 78 MB
+        download triggered by dragging a rectangle.
+        """
+        if self.bbox is None:
+            return None
+        ya, yb = self.year_a.currentText(), self.year_b.currentText()
+        key = (tuple(round(v, 6) for v in self.bbox), ya, yb, factor)
+        if getattr(self, "_tile_memo", None) and self._tile_memo[0] == key:
+            return self._tile_memo[1]
+        try:
+            from .engine import source as SRC
+            # Two places it can be: the profile cache this dock passes to the worker, and the
+            # engine's own default. Checking both means the count is exact whichever built it.
+            idx = None
+            for cache in (self._cache_dir(), None):
+                cand = SRC.Index(cache)
+                if os.path.exists(cand.npz_path):
+                    idx = cand
+                    break
+            if idx is None:
+                return None                       # not built yet; fall back to the estimate
+            src = SRC.AlphaEarthSource(idx.cache_dir, index=idx, factor=factor)
+            n = len(src.list_tiles(self.bbox, int(ya), int(yb))[0])
+        except Exception:
+            return None
+        self._tile_memo = (key, n)
+        return n
+
     def _describe_area(self):
         e = self._estimate()
-        msg = (f"Area ~{e['w']:.0f}×{e['h']:.0f} km · ~{e['tiles']} tiles · "
-               f"~{e['gb']:.1f} GB to read · ~{e['minutes']:.0f} min · "
+        about = "~" if e["approx"] else ""
+        msg = (f"Area ~{e['w']:.0f}×{e['h']:.0f} km · {about}{e['tiles']} tiles · "
+               f"{about}{e['gb']:.1f} GB to read · ~{e['minutes']:.0f} min · "
                f"output {e['out_px'] / 1e6:.1f} Mpx")
         # Too few pixels to be a map. At 100 m a 0.5 km box is 5x5 px, every polygon is a 1 ha
         # square, and it still costs a whole block to download — you pay full price for nothing.
@@ -1232,6 +1273,10 @@ class ChangeDock(QDockWidget):
 
     def _on_threshold(self):
         self.thr_lbl.setText(f"{self._threshold():.2f}")
+        # The step's own header carries the cutoff, and the slider never went through _sync —
+        # so dragging it left the header quoting a value that was no longer set. A header that
+        # is the record of a step has to be updated by everything that changes the step.
+        self._step_summary()
         self._thr_timer.start()
 
     def _apply_threshold(self, layer=None):
