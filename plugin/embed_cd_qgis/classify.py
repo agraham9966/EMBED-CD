@@ -16,7 +16,7 @@ from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QListWidget, QListWidgetItem,
     QDoubleSpinBox, QInputDialog, QFileDialog, QMessageBox, QSlider, QCheckBox,
-    QProgressDialog, QApplication, QComboBox,
+    QProgressDialog, QApplication, QComboBox, QToolButton, QMenu, QWidgetAction,
 )
 from qgis.core import (
     QgsProject, QgsVectorLayer, QgsFeature, QgsGeometry, QgsField,
@@ -28,6 +28,17 @@ from qgis.gui import QgsMapTool
 UNKNOWN = "unknown"
 _PALETTE = ["#d85a30", "#1d9e75", "#7f77dd", "#d4537e", "#378add", "#ba7517",
             "#639922", "#993556"]
+
+
+def row_of(*widgets):
+    """Small helper: a horizontal strip, since the options panel needs a couple of them."""
+    w = QWidget()
+    l = QHBoxLayout(w)
+    l.setContentsMargins(0, 0, 0, 0)
+    l.setSpacing(4)
+    for x in widgets:
+        l.addWidget(x)
+    return w
 
 
 def _scoped(owner, category, name):
@@ -87,6 +98,7 @@ class ClassifyPanel(QWidget):
         self._undo = []
         self._cycle = []               # ordered rows for the < > arrows
         self._filling_combo = False    # writing TO the class combo, not reading a user edit
+        self._band = None              # yellow highlight over the current object
         self._cycle_at = -1
         # Examples banked from earlier polygon sets. A class is the user's vocabulary and the
         # expensive part of their work, so it must outlive a re-polygonize or a new area; only
@@ -136,14 +148,41 @@ class ClassifyPanel(QWidget):
         self.list.currentRowChanged.connect(lambda _r: self._show_selected())
         lay.addWidget(self.list)
 
+        # Three full-width buttons for class housekeeping became a strip of small ones, which
+        # is how QGIS's own layer and style panels handle exactly this. The gear at the end
+        # holds everything that is real but rarely touched mid-session.
         crow = QHBoxLayout()
-        for text, slot, tip in (("+ Add", self.add_class, "Add a class."),
-                                ("Rename", self.rename_class, "Rename the selected class."),
-                                ("Delete", self.delete_class, "Delete the selected class.")):
-            b = QPushButton(text)
+        crow.setSpacing(2)
+        for text, slot, tip in (("+", self.add_class, "Add a class"),
+                                ("−", self.delete_class, "Delete the selected class"),
+                                ("✎", self.rename_class, "Rename the selected class")):
+            b = QToolButton()
+            b.setText(text)
             b.setToolTip(tip)
+            b.setAutoRaise(True)
+            b.setFixedWidth(26)
             b.clicked.connect(slot)
             crow.addWidget(b)
+        crow.addStretch(1)
+        self.opts_btn = QToolButton()
+        self.opts_btn.setText("⚙")
+        self.opts_btn.setAutoRaise(True)
+        self.opts_btn.setFixedWidth(26)
+        self.opts_btn.setToolTip("Classifier options: bulk assign, pause, best guess, "
+                                 "strictness.")
+        self.opts_btn.setPopupMode(_scoped(QToolButton, "ToolButtonPopupMode", "InstantPopup"))
+        crow.addWidget(self.opts_btn)
+        # Saving gets its own button rather than hiding inside the gear: a class set is the
+        # user's own work and the fact that it CAN be carried to another area is the whole
+        # point of the classifier. Buried in a settings menu, nobody finds it.
+        self.savemenu_btn = QToolButton()
+        self.savemenu_btn.setText("💾")
+        self.savemenu_btn.setAutoRaise(True)
+        self.savemenu_btn.setFixedWidth(26)
+        self.savemenu_btn.setToolTip("Save or load a class set, to reuse it on another area.")
+        self.savemenu_btn.setPopupMode(
+            _scoped(QToolButton, "ToolButtonPopupMode", "InstantPopup"))
+        crow.addWidget(self.savemenu_btn)
         lay.addLayout(crow)
 
         self.label_btn = QPushButton("Label by clicking the map")
@@ -153,11 +192,10 @@ class ClassifyPanel(QWidget):
         self.label_btn.clicked.connect(self._toggle_label_tool)
         lay.addWidget(self.label_btn)
 
-        self.assign_btn = QPushButton("…or assign the selected polygons")
+        self.assign_btn = QPushButton("Assign the selected polygons to this class")
         self.assign_btn.setToolTip("For bulk work: select polygons with QGIS's own select tool, "
                                    "then press this.")
         self.assign_btn.clicked.connect(self.assign_selected)
-        lay.addWidget(self.assign_btn)
 
         # Review row: undo, step through objects, drop a label. One row, because this is what
         # you use once the map is nearly right and you are working through what is left.
@@ -198,13 +236,15 @@ class ClassifyPanel(QWidget):
         self.discard_btn.clicked.connect(self.discard_label)
         r2.addWidget(self.discard_btn)
         self.cycle_mode = QComboBox()
-        self.cycle_mode.addItems(["Least certain first", "Only unknown", "Only labelled",
-                                  "All objects"])
+        self.cycle_mode.addItems(["Least certain first", "Only unlabelled", "Only unknown",
+                                  "Only labelled", "All objects"])
         self.cycle_mode.setToolTip(
             "What the arrows step through." + chr(10) * 2 +
             "Least certain first: abstentions, then the ones it nearly called differently — "
             "where a label teaches the model most." + chr(10) +
-            "Only unknown: work through the gaps." + chr(10) +
+            "Only unlabelled: everything you have not personally labelled yet, whatever the "
+            "model guessed for it." + chr(10) +
+            "Only unknown: the ones the model would not commit to." + chr(10) +
             "Only labelled: check what you have already assigned.")
         self.cycle_mode.currentTextChanged.connect(lambda _t: setattr(self, "_cycle_at", -1))
         r2.addWidget(self.cycle_mode, 1)
@@ -226,7 +266,6 @@ class ClassifyPanel(QWidget):
             "reshuffle everything you already fixed. Your labels still accumulate, so you can "
             "still save them for another area.")
         self.pause_box.stateChanged.connect(self._toggle_pause)
-        lay.addWidget(self.pause_box)
 
         self.guess_box = QCheckBox("Prefer a best guess over 'unknown'")
         self.guess_box.setToolTip(
@@ -237,7 +276,6 @@ class ClassifyPanel(QWidget):
             "things under whichever class they resemble most, so the classes stop meaning "
             "what they say.")
         self.guess_box.stateChanged.connect(lambda _s: self._refit())
-        lay.addWidget(self.guess_box)
 
         qrow = QHBoxLayout()
         qrow.addWidget(QLabel("Strictness"))
@@ -256,18 +294,53 @@ class ClassifyPanel(QWidget):
         self.q_lbl = QLabel("0.05")
         self.q_slider.valueChanged.connect(lambda v: self.q_lbl.setText(f"{v/100:.2f}"))
         qrow.addWidget(self.q_lbl)
-        lay.addLayout(qrow)
 
-        srow = QHBoxLayout()
         self.save_btn = QPushButton("Save classes…")
         self.save_btn.setToolTip("Save the labelled examples so they can be reused on another "
                                  "area.")
         self.save_btn.clicked.connect(self.save_classes)
-        srow.addWidget(self.save_btn)
         self.load_btn = QPushButton("Load classes…")
         self.load_btn.clicked.connect(self.load_classes)
-        srow.addWidget(self.load_btn)
-        lay.addLayout(srow)
+
+        # Everything above is real and none of it is touched more than once or twice a session,
+        # so it lives behind the gear rather than competing with the controls used every few
+        # seconds. QWidgetAction keeps the SAME widgets — nothing is re-implemented for the
+        # menu, so every existing signal, tooltip and test still applies.
+        menu = QMenu(self)
+        panel = QWidget()
+        pl = QVBoxLayout(panel)
+        pl.setContentsMargins(8, 6, 8, 6)
+        pl.setSpacing(6)
+        pl.addWidget(self.assign_btn)
+        pl.addWidget(self.pause_box)
+        pl.addWidget(self.guess_box)
+        qwrap = QWidget()
+        qwrap.setLayout(qrow)
+        pl.addWidget(qwrap)
+        act = QWidgetAction(menu)
+        act.setDefaultWidget(panel)
+        menu.addAction(act)
+        self.opts_btn.setMenu(menu)
+        self._opts_menu = menu
+
+        smenu = QMenu(self)
+        spanel = QWidget()
+        sl = QVBoxLayout(spanel)
+        sl.setContentsMargins(8, 6, 8, 6)
+        sl.setSpacing(6)
+        hint = QLabel("A class set is just your labelled examples — save it and the same "
+                      "classes can be applied to another area.")
+        hint.setWordWrap(True)
+        hint.setMaximumWidth(240)
+        hint.setStyleSheet("color: palette(mid);")
+        sl.addWidget(hint)
+        sl.addWidget(self.save_btn)
+        sl.addWidget(self.load_btn)
+        sact = QWidgetAction(smenu)
+        sact.setDefaultWidget(spanel)
+        smenu.addAction(sact)
+        self.savemenu_btn.setMenu(smenu)
+        self._save_menu = smenu
 
         self.status = QLabel("")
         self.status.setWordWrap(True)
@@ -414,6 +487,42 @@ class ClassifyPanel(QWidget):
         layer.selectionChanged.connect(self._on_selection)
         self._style()
 
+    def _highlight(self, geom=None):
+        """Draw the yellow outline of the current object as a canvas overlay.
+
+        A rubber band rather than QGIS's selection rendering, because selection replaces the
+        feature's own symbol and there is only one selection symbol per layer — so it could
+        never keep each object's class colour underneath. As an overlay the class fill shows
+        through and the yellow only ever adds an outline.
+        """
+        from qgis.gui import QgsRubberBand, QgsMapCanvas
+        from qgis.core import QgsWkbTypes
+
+        canvas = self.iface.mapCanvas()
+        # QgsRubberBand takes a QgsMapCanvas*, and sip hands anything else straight to C++ —
+        # a stand-in canvas does not raise, it takes the process down. Check the real type
+        # rather than trusting the caller.
+        if not isinstance(canvas, QgsMapCanvas):
+            return
+        if getattr(self, "_band", None) is None:
+            try:
+                self._band = QgsRubberBand(canvas, QgsWkbTypes.GeometryType.PolygonGeometry)
+            except Exception:
+                self._band = QgsRubberBand(canvas, QgsWkbTypes.PolygonGeometry)
+            self._band.setColor(QColor(255, 215, 0))
+            self._band.setFillColor(QColor(0, 0, 0, 0))       # outline only
+            self._band.setWidth(3)
+        if geom is None:
+            self._band.reset(_scoped(QgsWkbTypes, "GeometryType", "PolygonGeometry")
+                             if hasattr(QgsWkbTypes, "GeometryType") else
+                             QgsWkbTypes.PolygonGeometry)
+            return
+        self._band.setToGeometry(geom, self.layer)
+
+    def _clear_highlight(self):
+        if getattr(self, "_band", None) is not None:
+            self._highlight(None)
+
     def _style_selection(self, layer):
         """Selected objects get a yellow OUTLINE, not QGIS's default solid yellow fill.
 
@@ -423,18 +532,24 @@ class ClassifyPanel(QWidget):
         nothing here is worth an exception.
         """
         try:
-            from qgis.core import QgsFillSymbol, QgsSelectionProperties
-            sym = QgsFillSymbol.createSimple({
-                "color": "255,255,255,0",          # no fill: never hide the object
-                "outline_color": "255,215,0,255",
-                "outline_width": "0.8",
-            })
+            from qgis.core import QgsFillSymbol, Qgis
+            # A selection symbol REPLACES the feature's own rendering, and there is only one per
+            # layer — so any fill here would erase the class colour and you could no longer tell
+            # what an object is without reading the dropdown. Hence no fill and no stroke at all:
+            # selection changes nothing, and the yellow outline is drawn separately as a
+            # highlight over the top, where it can sit on the class colour instead of replacing
+            # it.
+            invisible = QgsFillSymbol.createSimple({
+                "color": "0,0,0,0", "outline_color": "0,0,0,0", "outline_width": "0"})
             props = layer.selectionProperties()
-            props.setSelectionRenderingMode(
-                _scoped(QgsSelectionProperties, "SelectionRenderingMode", "CustomSymbol"))
-            props.setSelectionSymbol(sym)
-        except Exception:
-            pass
+            # The enum lives on Qgis, and the properties class is
+            # QgsVectorLayerSelectionProperties — there is no QgsSelectionProperties to import.
+            # Getting that wrong threw inside the try and the bare except swallowed it, so the
+            # default solid yellow simply stayed and the failure was invisible.
+            props.setSelectionRenderingMode(Qgis.SelectionRenderingMode.CustomSymbol)
+            props.setSelectionSymbol(invisible)
+        except Exception as exc:
+            self.status.setText(f"(selection style unavailable: {exc})")
 
     def _layer_ok(self):
         """Is the polygon layer still alive?
@@ -457,6 +572,7 @@ class ClassifyPanel(QWidget):
         return True
 
     def _forget_layer(self):
+        self._clear_highlight()
         """The polygons are gone, so anything indexed by their rows is meaningless. Banked
         class examples are NOT cleared — those are the user's labelling effort and they are
         stored as vectors, not row numbers, so they stay valid across areas."""
@@ -606,6 +722,10 @@ class ClassifyPanel(QWidget):
             # objects where one label teaches the model the most.
             from .engine import head as H
             return [int(i) for i in H.review_order(self.pred, self.scores)]
+        if mode.startswith("Only unlabelled"):
+            # Not the same as "unknown": the model may be perfectly confident about an object
+            # you have never confirmed. This is the "what still needs my eyes" list.
+            return [i for i in range(n) if i not in self.labels]
         if mode.startswith("Only unknown"):
             if self.pred is None:
                 return list(range(n))
@@ -889,6 +1009,9 @@ class ClassifyPanel(QWidget):
     def _on_selection(self, *_a):
         self._show_selected()
         self._sync_class_combo()
+        if self._layer_ok():
+            sel = self.layer.selectedFeatures()
+            self._highlight(sel[0].geometry() if len(sel) == 1 else None)
 
     def _show_selected(self):
         """Show the per-class scores for the selected polygon.
@@ -1187,9 +1310,23 @@ class ClassifyPanel(QWidget):
 
         Built explicitly rather than from defaultSymbol(), whose hairline outline is almost
         invisible over imagery."""
-        return QgsFillSymbol.createSimple({
+        sym = QgsFillSymbol.createSimple({
             "color": fill, "outline_color": outline, "outline_width": width,
             "outline_style": style})
+        # A label the USER set and a label the model guessed look identical otherwise, which is
+        # the one distinction that matters while reviewing. Driven off the `label` attribute per
+        # feature, so one symbol per class still covers both cases.
+        try:
+            from qgis.core import QgsProperty, QgsSymbolLayer
+            sl = sym.symbolLayer(0)
+            sl.setDataDefinedProperty(
+                QgsSymbolLayer.Property.StrokeWidth,
+                QgsProperty.fromExpression(
+                    f"CASE WHEN \"label\" IS NOT NULL AND \"label\" <> '' "
+                    f"THEN {float(width) * 2.6:g} ELSE {float(width):g} END"))
+        except Exception:
+            pass
+        return sym
 
     def _style(self):
         """Colour by prediction. Unknown stays a hollow outline — it is an honest answer, not a

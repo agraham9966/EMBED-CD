@@ -169,7 +169,7 @@ class ChangeDock(QDockWidget):
         if node is not None:
             node.setItemVisibilityChecked(bool(visible))
         if not visible:
-            self._fold_once("step2", self.step2)
+            self._fold_once("step2", 2)          # objects exist: move on to classifying
 
     def _toggle_float(self):
         self.setFloating(not self.isFloating())
@@ -201,9 +201,12 @@ class ChangeDock(QDockWidget):
         self.run_row.setVisible(False)
         lay.addWidget(self.run_row)
 
-        self.step1 = _GroupBox("1 · Area, years and output")
-        lay.addWidget(self.step1)
+        from qgis.PyQt.QtWidgets import QToolBox
+        self.steps = QToolBox()
+        lay.addWidget(self.steps)
+        self.step1 = QWidget()
         s1 = QVBoxLayout(self.step1)
+        s1.setContentsMargins(4, 6, 4, 6)
 
         drow = QHBoxLayout()
         self.draw_btn = QPushButton("Draw area on map")
@@ -294,7 +297,6 @@ class ChangeDock(QDockWidget):
         s1.addWidget(self.dest_lbl)
         self.out_edit.textChanged.connect(lambda _t: self._describe_dest())
 
-        # Outside the fold: whatever else is collapsed, the action for this state stays put.
         rrow = QHBoxLayout()
         self.run_btn = QPushButton("Make change map")
         self.run_btn.setStyleSheet("font-weight: 600;")     # emphasis without a colour to clash
@@ -304,7 +306,7 @@ class ChangeDock(QDockWidget):
         self.cancel_btn.clicked.connect(self._cancel)
         self.cancel_btn.setVisible(False)
         rrow.addWidget(self.cancel_btn)
-        lay.addLayout(rrow)
+        s1.addLayout(rrow)
 
         self.progress = QProgressBar()
         self.progress.setVisible(False)
@@ -314,9 +316,10 @@ class ChangeDock(QDockWidget):
         self.status.setWordWrap(True)
         lay.addWidget(self.status)
 
-        self.step2 = _GroupBox("2 · Change map")
-        lay.addWidget(self.step2)
+        self.steps.addItem(self.step1, "1 · Area, years and output")
+        self.step2 = QWidget()
         s2 = QVBoxLayout(self.step2)
+        s2.setContentsMargins(4, 6, 4, 6)
 
         trow = QHBoxLayout()
         trow.addWidget(QLabel("Changed if ≥"))
@@ -333,36 +336,6 @@ class ChangeDock(QDockWidget):
         trow.addWidget(self.auto_btn)
         s2.addLayout(trow)
 
-        # Ground truth: every year there are embeddings for, as a strip of small toggles. Binding
-        # this to the two chosen years would have been the obvious thing and the wrong one —
-        # confirming WHEN something changed means scrubbing across years, not just the two ends.
-        # Two-digit labels because nine four-digit buttons do not fit a docked panel.
-        prow = QHBoxLayout()
-        prow.setSpacing(2)
-        lbl = QLabel("Photo:")
-        lbl.setToolTip("Sentinel-2 cloudless imagery (EOX), clipped to your area, one year per "
-                       "button — so you can check what the change map is claiming, and see which "
-                       "year a change actually appeared in.\n\nOne at a time: clicking another "
-                       "year swaps it instantly, which is what makes the comparison readable. "
-                       "Click the active year to turn it off.")
-        prow.addWidget(lbl)
-        self.photo_btns = {}
-        for y in (int(v) for v in _YEARS):
-            b = QPushButton(f"{y % 100:02d}")
-            b.setCheckable(True)
-            b.setFixedWidth(28)
-            b.clicked.connect(lambda _c, yr=y: self._toggle_photo(yr))
-            prow.addWidget(b)
-            self.photo_btns[y] = b
-        prow.addStretch(1)
-        s2.addLayout(prow)
-        from .engine import basemap as _BM
-        credit = QLabel(f"{_BM.ATTRIBUTION}  ·  {_BM.LICENCE}")
-        credit.setWordWrap(True)
-        credit.setOpenExternalLinks(True)
-        credit.setStyleSheet("color: palette(mid); font-size: 9px;")
-        s2.addWidget(credit)
-        self._sync_photos()
 
         # Both are exports, both are rare, and "Polygonize" sat one row from the classifier's
         # "Make polygons" doing something different under a near-identical name. Tucked away
@@ -387,14 +360,49 @@ class ChangeDock(QDockWidget):
 
         # Stays collapsed and disabled until a change map exists. Someone who only wants a
         # change map should never have to look at any of this.
-        self.classify_group = _GroupBox("3 · Objects and classes")
+        self.steps.addItem(self.step2, "2 · Change map")
+        self.classify_group = QWidget()
         cl = QVBoxLayout(self.classify_group)
+        cl.setContentsMargins(4, 6, 4, 6)
         from .classify import ClassifyPanel
         self.classify = ClassifyPanel(self, self.iface)
         cl.addWidget(self.classify)
-        lay.addWidget(self.classify_group)
-        if hasattr(self.classify_group, "setCollapsed"):
-            self.classify_group.setCollapsed(True)
+        self.steps.addItem(self.classify_group, "3 · Objects and classes")
+
+        # OUTSIDE the accordion, deliberately. Turning on a year's imagery is what you do
+        # BEFORE deciding where to draw, so burying it behind a step you cannot reach
+        # until a change map exists gets the order backwards. It is also cheap — streamed
+        # global tiles, no run required.
+        # Ground truth: every year there are embeddings for, as a strip of small toggles. Binding
+        # this to the two chosen years would have been the obvious thing and the wrong one —
+        # confirming WHEN something changed means scrubbing across years, not just the two ends.
+        # Two-digit labels because nine four-digit buttons do not fit a docked panel.
+        prow = QHBoxLayout()
+        prow.setSpacing(2)
+        lbl = QLabel("Photo:")
+        lbl.setToolTip("Sentinel-2 cloudless imagery (EOX), clipped to your area, one year per "
+                       "button — so you can check what the change map is claiming, and see which "
+                       "year a change actually appeared in.\n\nOne at a time: clicking another "
+                       "year swaps it instantly, which is what makes the comparison readable. "
+                       "Click the active year to turn it off.")
+        prow.addWidget(lbl)
+        self.photo_btns = {}
+        for y in (int(v) for v in _YEARS):
+            b = QPushButton(f"{y % 100:02d}")
+            b.setCheckable(True)
+            b.setFixedWidth(28)
+            b.clicked.connect(lambda _c, yr=y: self._toggle_photo(yr))
+            prow.addWidget(b)
+            self.photo_btns[y] = b
+        prow.addStretch(1)
+        lay.addLayout(prow)
+        from .engine import basemap as _BM
+        credit = QLabel(f"{_BM.ATTRIBUTION}  ·  {_BM.LICENCE}")
+        credit.setWordWrap(True)
+        credit.setOpenExternalLinks(True)
+        credit.setStyleSheet("color: palette(mid); font-size: 9px;")
+        lay.addWidget(credit)
+        self._sync_photos()
 
         g = _GroupBox("How it works")
         gl = QVBoxLayout(g)
@@ -529,11 +537,14 @@ class ChangeDock(QDockWidget):
                             + (f"  {restored}" if restored else ""))
         self._sync()
 
-    def _fold_once(self, key, box, collapsed=True):
-        if key in self._folded_once or not hasattr(box, "setCollapsed"):
+    def _fold_once(self, key, page_index):
+        """Move to the next page, once. An accordion shows exactly one phase, so "finishing a
+        step" means advancing rather than collapsing — but it still happens only once, or it
+        would drag you forward every refresh when you had deliberately gone back."""
+        if key in self._folded_once:
             return
         self._folded_once.add(key)
-        box.setCollapsed(collapsed)
+        self.steps.setCurrentIndex(page_index)
 
     def _step_summary(self):
         """Titles carry the answer once a step is folded, so a collapsed box still tells you
@@ -541,14 +552,18 @@ class ChangeDock(QDockWidget):
         if getattr(self, "step1", None) is None:
             return
         if self.bbox is None:
-            self.step1.setTitle("1 · Area, years and output")
+            self.steps.setItemText(0, "1 · Area, years and output")
         else:
             name = self.name_edit.text().strip() or self._auto_name()
-            self.step1.setTitle(
-                f"1 · {name} — {self.year_a.currentText()}→{self.year_b.currentText()}, "
-                f"{self.detail.currentText()}")
-        self.step2.setTitle("2 · Change map" if self.layer_id is None else
-                            f"2 · Change map — cutoff {self._threshold():.2f}")
+            self.steps.setItemText(
+                0, f"1 · {name} — {self.year_a.currentText()}→{self.year_b.currentText()}, "
+                   f"{self.detail.currentText()}")
+        self.steps.setItemText(1, "2 · Change map" if self.layer_id is None else
+                               f"2 · Change map — cutoff {self._threshold():.2f}")
+        # A page you cannot use yet says so in its own header, since an accordion hides the
+        # fact that its controls are disabled until you open it.
+        self.steps.setItemEnabled(1, self.layer_id is not None)
+        self.steps.setItemEnabled(2, self.layer_id is not None)
 
     def _sync(self):
         running = self.proc is not None
@@ -559,7 +574,7 @@ class ChangeDock(QDockWidget):
         # imagery, useful for looking at an area before any run exists. The widgets that really
         # need a result — threshold, Auto, the exports — are gated individually below.
         if has_result:
-            self._fold_once("step1", self.step1)
+            self._fold_once("step1", 1)          # move on to the change map
         self.run_btn.setEnabled(has_area and not running)
         self.run_btn.setToolTip("" if has_area else "Draw an area first.")
         self.cancel_btn.setVisible(running)
@@ -633,8 +648,7 @@ class ChangeDock(QDockWidget):
             self.canvas.unsetMapTool(self.tool)
         self._show_area_band(rect)          # replaces any previous outline
         self._folded_once.discard("step1")  # drawing a new area makes step 1 live again
-        if hasattr(self.step1, "setCollapsed"):
-            self.step1.setCollapsed(False)
+        self.steps.setCurrentIndex(0)
         self._describe_area()
         self._sync()
 
