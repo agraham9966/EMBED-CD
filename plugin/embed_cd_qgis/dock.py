@@ -206,9 +206,28 @@ class ChangeDock(QDockWidget):
 
         from qgis.PyQt.QtWidgets import QToolBox
         self.steps = QToolBox()
+        # A QToolBox tab is drawn as a thin rule with a label on it, which reads as a divider
+        # rather than as something you can press — so the two folded steps looked like captions
+        # and people did not try clicking them. Give the tabs a real button face and weight.
+        #
+        # Palette roles only, no literal colours: this has to hold up in whatever theme the user
+        # runs, light or dark, and a hard-coded grey would be invisible in half of them.
+        self.steps.setStyleSheet("""
+            QToolBox::tab {
+                background: palette(button);
+                border: 1px solid palette(mid);
+                border-radius: 3px;
+                padding: 5px 6px;
+                margin-top: 2px;
+                font-weight: 600;
+                color: palette(button-text);
+            }
+            QToolBox::tab:hover { background: palette(midlight); }
+            QToolBox::tab:selected { border: 1px solid palette(highlight); }
+        """)
         # Each page needs a different height, so the toolbox has to be re-fitted whenever the
         # open one changes — see _fit_steps.
-        self.steps.currentChanged.connect(lambda _i: self._fit_steps())
+        self.steps.currentChanged.connect(lambda _i: (self._fit_steps(), self._step_summary()))
         lay.addWidget(self.steps)
         self.step1 = QWidget()
         s1 = QVBoxLayout(self.step1)
@@ -628,15 +647,21 @@ class ChangeDock(QDockWidget):
         what it is holding — without that, folding hides the settings AND the record of them."""
         if getattr(self, "step1", None) is None:
             return
+        # A caret as well as the styled tab face. The stylesheet does most of the work, but it
+        # is the one thing here a user's Qt style can override, and a triangle in the text
+        # cannot be — so the affordance survives regardless of what theme this lands in.
+        def cap(i, text):
+            self.steps.setItemText(i, ("▾ " if self.steps.currentIndex() == i else "▸ ") + text)
+
         if self.bbox is None:
-            self.steps.setItemText(0, "1 · Area, years and output")
+            cap(0, "1 · Area, years and output")
         else:
             name = self.name_edit.text().strip() or self._auto_name()
-            self.steps.setItemText(
-                0, f"1 · {name} — {self.year_a.currentText()}→{self.year_b.currentText()}, "
+            cap(0, f"1 · {name} — {self.year_a.currentText()}→{self.year_b.currentText()}, "
                    f"{self.detail.currentText()}")
-        self.steps.setItemText(1, "2 · Change map" if self.layer_id is None else
-                               f"2 · Change map — cutoff {self._threshold():.2f}")
+        cap(1, "2 · Change map" if self.layer_id is None else
+               f"2 · Change map — cutoff {self._threshold():.2f}")
+        cap(2, "3 · Objects and classes")
         # A page you cannot use yet says so in its own header, since an accordion hides the
         # fact that its controls are disabled until you open it.
         self.steps.setItemEnabled(1, self.layer_id is not None)

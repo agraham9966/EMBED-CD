@@ -30,6 +30,14 @@ UNKNOWN = "unknown"
 _MODES = (("Transition — what changed", "delta"),
           ("End state — what it is now", "after"))
 _ARROW = " → "          # what a Transition class name is built with, and split back on
+_MODE_KEYS = [k for _label, k in _MODES]
+# The panel opens on End state while the ENGINE still defaults to delta — deliberately two
+# different defaults. The engine's is a data-compatibility contract: a labels file or preset
+# written before modes existed records no mode, and delta is what it was in fact labelled
+# under, so reading it any other way would silently change what it means. The panel's is a
+# usability choice for new work, and carries no such history.
+_MODE_SETTING = "embed_cd/classify_features"
+_DEFAULT_MODE = "after"
 _PALETTE = ["#d85a30", "#1d9e75", "#7f77dd", "#d4537e", "#378add", "#ba7517",
             "#639922", "#993556"]
 
@@ -83,11 +91,15 @@ def _qv(kind):
 
 
 class LabelTool(QgsMapTool):
-    """Click a polygon on the map to label it with the current class; right-click to unlabel.
+    """Click a polygon on the map: to label it, or just to ask what the model makes of it.
 
     This exists because making the user drive QGIS's selection first was a bad call: it depends
     on the right layer being active, gives no feedback when it isn't, and is an extra concept
     for something that should be one click.
+
+    One tool for both jobs rather than two, because they are the same gesture on the same
+    layer and only the consequence differs — and because two QgsMapTools would have to be kept
+    mutually exclusive by hand anyway.
     """
 
     def __init__(self, canvas, panel):
@@ -96,6 +108,9 @@ class LabelTool(QgsMapTool):
 
     def canvasReleaseEvent(self, event):
         pt = self.toMapCoordinates(event.pos())
+        if self.panel.inspecting():
+            self.panel.inspect_at(pt)
+            return
         right = event.button() == _scoped(Qt, "MouseButton", "RightButton")
         self.panel.label_at(pt, clear=right)
 
@@ -212,6 +227,27 @@ class ClassifyPanel(QWidget):
         self.color_btn.setFixedSize(QSize(28, 26))
         self.color_btn.clicked.connect(self.pick_color)
         crow.addWidget(self.color_btn)
+
+        # Reading what the model thinks used to require LABELLING something: the breakdown
+        # below only appeared after a click that also assigned a class. So the only way to ask
+        # "why did you call it that" was to overwrite the answer you were asking about.
+        self.inspect_btn = QToolButton()
+        _ii = _QApp.getThemeIcon("/mActionIdentify.svg")
+        if not _ii.isNull():
+            self.inspect_btn.setIcon(_ii)
+            self.inspect_btn.setIconSize(QSize(18, 18))
+        else:
+            self.inspect_btn.setText("?")
+        self.inspect_btn.setCheckable(True)
+        self.inspect_btn.setToolTip(
+            "Inspect: click a polygon to see the model's scores for it, without labelling it."
+            + chr(10) * 2 +
+            "The same click while 'Label by clicking the map' is on assigns a class instead, so "
+            "only one of the two is ever active.")
+        self.inspect_btn.setAutoRaise(True)
+        self.inspect_btn.setFixedSize(QSize(28, 26))
+        self.inspect_btn.clicked.connect(self._toggle_inspect)
+        crow.addWidget(self.inspect_btn)
         crow.addStretch(1)
         self.opts_btn = QToolButton()
         self.opts_btn.setText("⚙")
@@ -234,16 +270,20 @@ class ClassifyPanel(QWidget):
         crow.addWidget(self.savemenu_btn)
         lay.addLayout(crow)
 
-        # Between the class list and the labelling button on purpose: this reads "here are your
-        # classes, here is what they MEAN, now go label". It is not in the gear menu with the
-        # other classifier settings because it is not a setting — it changes what every class
-        # name refers to, and nobody should label a whole set under a reading they never chose.
+        # Built here, shown in the gear menu (see below). It was a visible row for one version
+        # and that was one row too many — with the label button, the class stepper, the review
+        # row and the breakdown, the panel had become a stack of controls with no shape. It is
+        # a decision you make once per session, not per object, so it belongs with the other
+        # once-per-session settings.
         mrow = QHBoxLayout()
         mrow.setSpacing(4)
         mrow.addWidget(QLabel("Classify by:"))
         self.mode_combo = QComboBox()
         for label, key in _MODES:
             self.mode_combo.addItem(label, key)
+        _i = self.mode_combo.findData(self._remembered_mode())
+        if _i > 0:
+            self.mode_combo.setCurrentIndex(_i)     # before the signal below is connected
         self.mode_combo.setToolTip(
             "What a class means." + chr(10) * 2 +
             "Transition — what happened here: 'forest → clearing'. The object's before AND "
@@ -258,7 +298,9 @@ class ClassifyPanel(QWidget):
             "nothing is recomputed and no labels are lost.")
         self.mode_combo.currentIndexChanged.connect(self._mode_changed)
         mrow.addWidget(self.mode_combo, 1)
-        lay.addLayout(mrow)
+        self.mode_row = QWidget()
+        self.mode_row.setLayout(mrow)
+        mrow.setContentsMargins(0, 0, 0, 0)
 
         self.label_btn = QPushButton("Label by clicking the map")
         self.label_btn.setCheckable(True)
@@ -386,6 +428,7 @@ class ClassifyPanel(QWidget):
         pl = QVBoxLayout(panel)
         pl.setContentsMargins(8, 6, 8, 6)
         pl.setSpacing(6)
+        pl.addWidget(self.mode_row)
         pl.addWidget(self.assign_btn)
         pl.addWidget(self.pause_box)
         pl.addWidget(self.guess_box)
@@ -429,7 +472,7 @@ class ClassifyPanel(QWidget):
         for w in (self.list, self.assign_btn, self.save_btn,
                   self.q_slider, self.label_btn, self.guess_box, self.pause_box,
                   self.prev_btn, self.next_btn, self.cycle_mode, self.discard_btn,
-                  self.mode_combo):
+                  self.mode_combo, self.inspect_btn):
             w.setEnabled(has_polys)
         self._sync_review()
         # A restored run already HAS objects, so telling the user to run one is stale advice —
@@ -693,8 +736,31 @@ class ClassifyPanel(QWidget):
     def features(self):
         """Which question the classes answer: "delta" (transition) or "after" (end state)."""
         if getattr(self, "mode_combo", None) is None:
-            return _MODES[0][1]
-        return self.mode_combo.currentData() or _MODES[0][1]
+            return _DEFAULT_MODE
+        return self.mode_combo.currentData() or _DEFAULT_MODE
+
+    @staticmethod
+    def _remembered_mode():
+        """The mode this user last chose, or the default.
+
+        Per-user rather than per-project: which question you ask is a working habit, and being
+        put back into the other one every time QGIS restarts is the kind of small friction that
+        makes a control feel broken. A run SAVED in a mode still overrides this when it is
+        reopened — that file knows what its own class names meant. This only seeds new work.
+        """
+        try:
+            from qgis.core import QgsSettings
+            val = QgsSettings().value(_MODE_SETTING, _DEFAULT_MODE)
+        except Exception:
+            return _DEFAULT_MODE
+        return val if val in _MODE_KEYS else _DEFAULT_MODE
+
+    def _remember_mode(self):
+        try:
+            from qgis.core import QgsSettings
+            QgsSettings().setValue(_MODE_SETTING, self.features())
+        except Exception:
+            pass
 
     def _set_features(self, key):
         """Point the combo at a mode without treating it as a user edit."""
@@ -710,6 +776,7 @@ class ClassifyPanel(QWidget):
     def _mode_changed(self, _i):
         """force=True: choosing a mode is an explicit "classify with this", the same reasoning
         load_classes uses. Without it, switching while paused would appear to do nothing."""
+        self._remember_mode()
         self._refit(force=True)
         self._save_labels()
         self.status.setText(
@@ -1161,16 +1228,84 @@ class ClassifyPanel(QWidget):
             self.label_btn.setChecked(False)
             self.status.setText("Add a class first, then click polygons to fill it.")
             return
-        if self.tool is None:
-            self.tool = LabelTool(canvas, self)
-        canvas.setMapTool(self.tool)
+        self.inspect_btn.setChecked(False)          # one click, one consequence
+        self._ensure_tool()
         self.status.setText(f"Click polygons to label them '{self.current_class()}'. "
                             f"Right-click removes a label.")
 
+    def inspecting(self):
+        return bool(getattr(self, "inspect_btn", None)) and self.inspect_btn.isChecked()
+
+    def _ensure_tool(self):
+        canvas = self.iface.mapCanvas()
+        if canvas is None:
+            return
+        if self.tool is None:
+            self.tool = LabelTool(canvas, self)
+        canvas.setMapTool(self.tool)
+
+    def _toggle_inspect(self):
+        """Inspect and Label are the same click with different consequences, so exactly one of
+        them is ever on."""
+        if self.inspect_btn.isChecked():
+            self.label_btn.setChecked(False)
+            self._ensure_tool()
+            self.status.setText("Click a polygon to see what the classifier makes of it. "
+                                "Nothing is labelled in this mode.")
+        else:
+            canvas = self.iface.mapCanvas()
+            if canvas is not None and self.tool is not None:
+                canvas.unsetMapTool(self.tool)
+            self.status.setText("")
+
+    def _polygon_at(self, point):
+        """The feature under a map click, or None.
+
+        Hit-tests the polygon layer directly rather than relying on it being the active layer —
+        the active layer is a QGIS concept the user should not have to think about here.
+        """
+        tol = self.iface.mapCanvas().mapUnitsPerPixel() * 3
+        rect = QgsRectangle(point.x() - tol, point.y() - tol,
+                            point.x() + tol, point.y() + tol)
+        geom_pt = QgsGeometry.fromPointXY(QgsPointXY(point))
+        for f in self.layer.getFeatures(QgsFeatureRequest().setFilterRect(rect)):
+            if f.geometry().intersects(geom_pt) or f.geometry().intersects(
+                    QgsGeometry.fromRect(rect)):
+                return f
+        return None
+
+    def inspect_at(self, point):
+        """Show the breakdown for a clicked polygon, and change nothing.
+
+        Reading the model's reasoning used to require LABELLING: the breakdown only appeared
+        after a click that also assigned a class, so the only way to ask "why did you call it
+        that" was to overwrite the answer being asked about.
+
+        Deliberately not `_goto_row`, which pans to centre the object — right when an arrow key
+        brought you to something off-screen, wrong when you just clicked the thing in front of
+        you.
+        """
+        if not self._layer_ok():
+            return
+        hit = self._polygon_at(point)
+        if hit is None:
+            self.status.setText("No polygon there.")
+            return
+        row = self._row_of(hit)
+        if row is None:
+            return
+        self._current_row = row
+        self._highlight(hit.geometry())
+        self._show_selected()
+        self._sync_class_combo()
+        mine = self.labels.get(row)
+        called = str(self.pred[row]) if self.pred is not None and row < len(self.pred) else ""
+        self.status.setText(
+            f"you labelled this '{mine}'." if mine else
+            f"the model calls this '{called or 'nothing yet'}'.")
+
     def label_at(self, point, clear=False):
-        """Label whichever polygon was clicked. Hit-tests the polygon layer directly rather
-        than relying on it being the active layer — the active layer is a QGIS concept the user
-        should not have to think about here."""
+        """Label whichever polygon was clicked."""
         if not self._layer_ok():
             self.status.setText("The polygon layer is gone — press 'Generate Embedded Vector Set' again.")
             return
@@ -1178,16 +1313,7 @@ class ClassifyPanel(QWidget):
         if name is None and not clear:
             self.status.setText("Pick a class in the list first.")
             return
-        tol = self.iface.mapCanvas().mapUnitsPerPixel() * 3
-        rect = QgsRectangle(point.x() - tol, point.y() - tol,
-                            point.x() + tol, point.y() + tol)
-        geom_pt = QgsGeometry.fromPointXY(QgsPointXY(point))
-        hit = None
-        for f in self.layer.getFeatures(QgsFeatureRequest().setFilterRect(rect)):
-            if f.geometry().intersects(geom_pt) or f.geometry().intersects(
-                    QgsGeometry.fromRect(rect)):
-                hit = f
-                break
+        hit = self._polygon_at(point)
         if hit is None:
             self.status.setText("No polygon there.")
             return

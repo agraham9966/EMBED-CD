@@ -1387,11 +1387,21 @@ def test_no_step_hides_its_own_controls_and_the_header_tracks_the_settings():
         assert area is not None, "QToolBox is expected to wrap pages in a QScrollArea"
         return area.verticalScrollBar().maximum()
 
+    # Steps 2 and 3 are DISABLED until a result exists, and setCurrentIndex on a disabled item
+    # is a silent no-op — so without this the loop below would test step 1 three times and pass
+    # while proving nothing. Give the dock the state a real finished run has.
+    dock.bbox = (-126.5, 49.0, -124.0, 51.0)
+    dock.layer_id = "pretend-a-change-map-exists"
+    dock._sync()
+    for _ in range(3):
+        QApplication.processEvents()
+
     pages = (dock.step1, dock.step2, dock.classify_group)
     for i, page in enumerate(pages):
         dock.steps.setCurrentIndex(i)
         for _ in range(3):
             QApplication.processEvents()
+        assert dock.steps.currentIndex() == i,             f"step {i + 1} would not open — is it still disabled?"
         assert clipped(page) == 0,             f"step {i + 1} hides {clipped(page)} px of its own content"
 
     # Cancel belongs with the progress bar, outside the accordion — a running job has to be
@@ -1401,12 +1411,25 @@ def test_no_step_hides_its_own_controls_and_the_header_tracks_the_settings():
 
     # Everything quoted in step 1's header must refresh it. Detail used to update the cost
     # line and not the header, so the header claimed a resolution that was no longer set.
-    dock.bbox = (-126.5, 49.0, -124.0, 51.0)
-    dock._sync()
     dock.detail.setCurrentText("100 m")
     assert "100 m" in dock.steps.itemText(0),         f"header did not follow Detail: {dock.steps.itemText(0)!r}"
     dock.year_b.setCurrentText("2025")
     assert "2025" in dock.steps.itemText(0),         f"header did not follow the year: {dock.steps.itemText(0)!r}"
+
+    # The headers have to LOOK pressable. A QToolBox tab is drawn as a thin rule with a label,
+    # which reads as a divider, so folded steps looked like captions and went unclicked. The
+    # tab face is styled, and a caret carries the same signal in the text — because a user's Qt
+    # style can override a stylesheet and cannot override a triangle.
+    assert "QToolBox::tab" in dock.steps.styleSheet(), "the tab face lost its styling"
+    for i in range(3):
+        dock.steps.setCurrentIndex(i)
+        for _ in range(2):
+            QApplication.processEvents()
+        texts = [dock.steps.itemText(j) for j in range(3)]
+        assert texts[i].startswith("▾"), f"open step {i} should show an open caret: {texts[i]!r}"
+        for j in range(3):
+            if j != i:
+                assert texts[j].startswith("▸"),                     f"folded step {j} should show a closed caret: {texts[j]!r}"
 
     dock.deleteLater()
     win.deleteLater()
@@ -1437,7 +1460,13 @@ def test_the_two_classify_modes_reread_the_same_labels():
     labels_before = dict(p.labels)
     assert labels_before, "setup: the click must have labelled something"
 
-    assert p.features() == "delta", "Transition must stay the default"
+    # The PANEL defaults to End state (a usability choice); the ENGINE still defaults to delta
+    # (a data-compatibility contract for files written before modes existed). Both are asserted,
+    # here and in test_em_head, because it would be easy to "fix" the difference and silently
+    # change what every untagged preset means.
+    p._set_features("delta")
+    p._refit(force=True)
+    assert p.features() == "delta"
     assert p.head.features == "delta"
     first = list(p.pred)
 
