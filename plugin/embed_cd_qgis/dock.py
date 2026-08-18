@@ -115,6 +115,9 @@ class ChangeDock(QDockWidget):
         self._build_ui()
         self._build_title_bar()
         self._sync()
+        # Deferred: at __init__ nothing has been laid out, so the header/frame height the fit
+        # is measured against is not known yet. One trip through the event loop and it is.
+        QTimer.singleShot(0, self._fit_steps)
 
     def _build_title_bar(self):
         """Show the logo instead of the words EMBED-CD.
@@ -203,6 +206,9 @@ class ChangeDock(QDockWidget):
 
         from qgis.PyQt.QtWidgets import QToolBox
         self.steps = QToolBox()
+        # Each page needs a different height, so the toolbox has to be re-fitted whenever the
+        # open one changes — see _fit_steps.
+        self.steps.currentChanged.connect(lambda _i: self._fit_steps())
         lay.addWidget(self.steps)
         self.step1 = QWidget()
         s1 = QVBoxLayout(self.step1)
@@ -251,10 +257,13 @@ class ChangeDock(QDockWidget):
         self.detail = QComboBox()
         self.detail.addItems(list(_DETAIL))
         self.detail.setCurrentText("10 m (full)")
-        self.detail.currentTextChanged.connect(
-            lambda _t: self._describe_area() if self.bbox else None)
-        for _c in (self.year_a, self.year_b):
-            _c.currentTextChanged.connect(lambda _t: self._describe_dest())
+        # Years and Detail all three appear in step 1's own header, so every one of them has
+        # to refresh it. Detail updated the cost line but not the header, which then quoted a
+        # resolution that was no longer set — the same failure the threshold slider had, where
+        # a header that is the record of a step was not updated by everything that changes the
+        # step. One handler for all three, so the next control added here cannot repeat it.
+        for _c in (self.year_a, self.year_b, self.detail):
+            _c.currentTextChanged.connect(lambda _t: self._job_settings_changed())
         self.detail.setToolTip(
             "Output pixel size — and, above 10 m, how much gets downloaded. A coarser setting "
             "reads the data's own built-in reduced-resolution copies, so a large area takes "
@@ -297,20 +306,30 @@ class ChangeDock(QDockWidget):
         s1.addWidget(self.dest_lbl)
         self.out_edit.textChanged.connect(lambda _t: self._describe_dest())
 
-        rrow = QHBoxLayout()
         self.run_btn = QPushButton("Make change map")
         self.run_btn.setStyleSheet("font-weight: 600;")     # emphasis without a colour to clash
         self.run_btn.clicked.connect(self._run)
-        rrow.addWidget(self.run_btn)
-        self.cancel_btn = QPushButton("Cancel")
-        self.cancel_btn.clicked.connect(self._cancel)
-        self.cancel_btn.setVisible(False)
-        rrow.addWidget(self.cancel_btn)
-        s1.addLayout(rrow)
+        s1.addWidget(self.run_btn)
 
+        # Progress and Cancel live OUTSIDE the accordion, on one row.
+        #
+        # Cancel used to sit beside Make change map inside step 1, which meant it was reachable
+        # only while that step was the open one — and step 1 folds itself the moment a result
+        # exists. A running job you cannot stop from wherever you happen to be is not a cancel
+        # button. Out here it is next to the bar that says the job is running, which is where
+        # anyone looks for it.
+        prow_run = QHBoxLayout()
+        prow_run.setContentsMargins(0, 0, 0, 0)
         self.progress = QProgressBar()
         self.progress.setVisible(False)
-        lay.addWidget(self.progress)
+        prow_run.addWidget(self.progress, 1)
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setToolTip("Stop after the tile now downloading. Finished tiles are "
+                                   "kept, so re-running resumes from here.")
+        self.cancel_btn.clicked.connect(self._cancel)
+        self.cancel_btn.setVisible(False)
+        prow_run.addWidget(self.cancel_btn)
+        lay.addLayout(prow_run)
 
         self.status = QLabel("")
         self.status.setWordWrap(True)
@@ -377,6 +396,19 @@ class ChangeDock(QDockWidget):
         # this to the two chosen years would have been the obvious thing and the wrong one —
         # confirming WHEN something changed means scrubbing across years, not just the two ends.
         # Two-digit labels because nine four-digit buttons do not fit a docked panel.
+        # A rule and a heading, because without them the strip reads as the tail of step 3
+        # rather than as its own thing — it sits directly under the accordion and inherits its
+        # apparent grouping. It belongs to no step: it works before any area is drawn and stays
+        # useful after everything else is finished.
+        from qgis.PyQt.QtWidgets import QFrame
+        rule = QFrame()
+        rule.setFrameShape(_scoped(QFrame, "Shape", "HLine"))
+        rule.setFrameShadow(_scoped(QFrame, "Shadow", "Sunken"))
+        lay.addWidget(rule)
+        head = QLabel("Reference imagery")
+        head.setStyleSheet("font-weight: 600; color: palette(mid);")
+        lay.addWidget(head)
+
         prow = QHBoxLayout()
         prow.setSpacing(2)
         lbl = QLabel("Photo:")
@@ -537,6 +569,50 @@ class ChangeDock(QDockWidget):
                             + (f"  {restored}" if restored else ""))
         self._sync()
 
+    def _job_settings_changed(self):
+        """Years or Detail moved: refresh everything that quotes them."""
+        if self.bbox is not None:
+            self._describe_area()
+        self._describe_dest()
+        self._step_summary()
+        self._fit_steps()          # the cost line can wrap to another line and change height
+
+    def _fit_steps(self):
+        """Give the open step enough height that nothing inside it has to be scrolled to.
+
+        QToolBox puts EVERY page in a QScrollArea of its own, so this panel had two nested
+        scroll areas and the inner one silently clipped the open step. Measured on a 700 px
+        dock: step 1 needs 190 px, its viewport was 164, and the 26 px it lost were exactly
+        the 'Make change map' button — a primary action, invisible, with only a thin inner
+        scrollbar hinting it existed at all.
+
+        So the toolbox is asked for the current page's full height. Overflow then belongs to
+        the ONE outer scroll area, where a scrollbar means "the panel is taller than the dock"
+        instead of "this section is hiding something from you".
+
+        `chrome` is measured rather than assumed — it is the header buttons plus frame, which
+        is style- and theme-dependent, and hard-coding it would be wrong on someone else's
+        desktop.
+        """
+        from qgis.PyQt.QtWidgets import QScrollArea
+        page = self.steps.currentWidget()
+        if page is None:
+            return
+        area = page.parentWidget()
+        while area is not None and not isinstance(area, QScrollArea):
+            area = area.parentWidget()
+        if area is None:
+            return
+        # No inner bars at all: with the height below they are never needed, and a bar that
+        # flickers during a resize is the same confusion in miniature.
+        off = _scoped(Qt, "ScrollBarPolicy", "ScrollBarAlwaysOff")
+        area.setVerticalScrollBarPolicy(off)
+        area.setHorizontalScrollBarPolicy(off)
+        chrome = self.steps.height() - area.viewport().height()
+        if chrome < 0:
+            return                       # not laid out yet; the next call gets it
+        self.steps.setMinimumHeight(page.sizeHint().height() + chrome)
+
     def _fold_once(self, key, page_index):
         """Move to the next page, once. An accordion shows exactly one phase, so "finishing a
         step" means advancing rather than collapsing — but it still happens only once, or it
@@ -545,6 +621,7 @@ class ChangeDock(QDockWidget):
             return
         self._folded_once.add(key)
         self.steps.setCurrentIndex(page_index)
+        self._fit_steps()
 
     def _step_summary(self):
         """Titles carry the answer once a step is folded, so a collapsed box still tells you
@@ -594,6 +671,8 @@ class ChangeDock(QDockWidget):
         if getattr(self, "classify", None) is not None:
             self.classify_group.setEnabled(has_result)
             self.classify.sync()
+        # Last, so it measures the page AFTER everything above has resized it.
+        self._fit_steps()
 
     # ---------------- area ----------------
     def _toggle_draw(self):

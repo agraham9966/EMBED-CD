@@ -1344,6 +1344,75 @@ def test_the_worker_interpreter_is_found_and_a_failed_start_is_reported():
     print(f"ok worker interpreter resolves to {os.path.basename(exe)}, failed start reports itself")
 
 
+def test_no_step_hides_its_own_controls_and_the_header_tracks_the_settings():
+    """An open step must never need scrolling to reach its own buttons.
+
+    QToolBox puts every page in a QScrollArea of its own, so this panel had TWO nested scroll
+    areas. Measured on a 700 px dock before the fix: step 1 wanted 190 px, its viewport gave
+    164, and the 26 px it lost were exactly the 'Make change map' button — the primary action
+    of the whole plugin, invisible, with a thin inner scrollbar as the only clue. Steps 2 and 3
+    lost 69 and 305 px.
+
+    Also guards Cancel and the step header, both of which were the same kind of bug: a control
+    or a fact stranded where the user cannot see it.
+    """
+    from qgis.PyQt.QtWidgets import QMainWindow, QScrollArea, QApplication
+    from qgis.PyQt.QtCore import Qt
+    from qgis.gui import QgsMapCanvas
+    from embed_cd_qgis.dock import ChangeDock
+
+    class _Iface:
+        def __init__(self, win, canvas):
+            self._w, self._c = win, canvas
+
+        def mainWindow(self):
+            return self._w
+
+        def mapCanvas(self):
+            return self._c
+
+    win = QMainWindow()
+    win.resize(420, 700)
+    dock = ChangeDock(_Iface(win, QgsMapCanvas()))
+    win.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
+    win.show()
+    for _ in range(4):
+        QApplication.processEvents()
+
+    def clipped(page):
+        """How many pixels the page's own scroll area is hiding."""
+        area = page.parentWidget()
+        while area is not None and not isinstance(area, QScrollArea):
+            area = area.parentWidget()
+        assert area is not None, "QToolBox is expected to wrap pages in a QScrollArea"
+        return area.verticalScrollBar().maximum()
+
+    pages = (dock.step1, dock.step2, dock.classify_group)
+    for i, page in enumerate(pages):
+        dock.steps.setCurrentIndex(i)
+        for _ in range(3):
+            QApplication.processEvents()
+        assert clipped(page) == 0,             f"step {i + 1} hides {clipped(page)} px of its own content"
+
+    # Cancel belongs with the progress bar, outside the accordion — a running job has to be
+    # stoppable from whichever step happens to be open, and step 1 folds itself once a result
+    # exists.
+    assert dock.cancel_btn.parentWidget() is dock.progress.parentWidget(),         "Cancel must live with the progress bar, not inside a foldable step"
+
+    # Everything quoted in step 1's header must refresh it. Detail used to update the cost
+    # line and not the header, so the header claimed a resolution that was no longer set.
+    dock.bbox = (-126.5, 49.0, -124.0, 51.0)
+    dock._sync()
+    dock.detail.setCurrentText("100 m")
+    assert "100 m" in dock.steps.itemText(0),         f"header did not follow Detail: {dock.steps.itemText(0)!r}"
+    dock.year_b.setCurrentText("2025")
+    assert "2025" in dock.steps.itemText(0),         f"header did not follow the year: {dock.steps.itemText(0)!r}"
+
+    dock.deleteLater()
+    win.deleteLater()
+    print("ok every step fits its own controls; Cancel is always reachable; header tracks")
+
+
 # NOT COVERED HERE: class-colour sync and the dashed outline for labelled objects.
 #
 # The feature is verified — a scratch script drives the panel end to end and confirms the
@@ -1382,4 +1451,5 @@ if __name__ == "__main__":
     test_switching_between_areas_restores_each_one()
     test_the_tile_estimate_asks_the_tiler_when_it_can()
     test_the_worker_interpreter_is_found_and_a_failed_start_is_reported()
+    test_no_step_hides_its_own_controls_and_the_header_tracks_the_settings()
     print("all ok")
