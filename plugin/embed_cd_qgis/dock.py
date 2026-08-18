@@ -212,14 +212,26 @@ class ChangeDock(QDockWidget):
         #
         # Palette roles only, no literal colours: this has to hold up in whatever theme the user
         # runs, light or dark, and a hard-coded grey would be invisible in half of them.
+        #
+        # The BOLD is set on the font, not in the stylesheet, and that is the whole fix for the
+        # clipped titles this first shipped with. QToolBoxButton takes its size hint from the
+        # widget font; a stylesheet `font-weight` never reaches that font (measured: the tab
+        # stayed `bold=False`), and stylesheet padding is not added to the hint either. So the
+        # box kept its unstyled 20 px while the padding alone claimed 10 of them, and the text
+        # lost its descenders.
+        _tab_font = self.steps.font()
+        _tab_font.setBold(True)
+        self.steps.setFont(_tab_font)
+        # `em`, never pixels: a fixed height re-clips the moment someone runs a larger UI font
+        # or display scaling, which is the exact bug being fixed here.
         self.steps.setStyleSheet("""
             QToolBox::tab {
                 background: palette(button);
                 border: 1px solid palette(mid);
                 border-radius: 3px;
-                padding: 5px 6px;
+                padding: 4px 6px;
                 margin-top: 2px;
-                font-weight: 600;
+                min-height: 1.6em;
                 color: palette(button-text);
             }
             QToolBox::tab:hover { background: palette(midlight); }

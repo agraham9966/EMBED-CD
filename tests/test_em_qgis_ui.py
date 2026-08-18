@@ -1017,7 +1017,7 @@ def test_undo_and_stepping_through_objects():
     # stepping selects and pans, WITHOUT changing scale
     p.labels[0] = "a"
     p._refit()
-    p.cycle_mode.setCurrentText("Only labelled")
+    p.cycle_mode.setCurrentIndex(p.cycle_mode.findData("labelled"))
     p._cycle_at = -1
     before = dock.canvas.extent().width()
     p.step(1)
@@ -1030,12 +1030,16 @@ def test_undo_and_stepping_through_objects():
     assert p._selected_row() is not None, "stepping did not set a current object"
     assert len(p.layer.selectedFeatures()) == 0,         "stepping selected the feature, which repaints it and hides its class colour"
 
-    # every filter returns something sane
-    for mode in ("Least certain first", "Only unknown", "Only labelled", "All objects"):
-        p.cycle_mode.setCurrentText(mode)
+    # every filter returns something sane. Set by KEY, not by label: one entry is renamed
+    # live to the selected class, so tests that matched on text would be testing the wording.
+    def use(key):
+        p.cycle_mode.setCurrentIndex(p.cycle_mode.findData(key))
+
+    for key in ("uncertain", "unlabelled", "unknown", "labelled", "all"):
+        use(key)
         got = p._cycle_rows()
-        assert all(0 <= r < len(p.polys) for r in got), f"{mode} produced out-of-range rows"
-    p.cycle_mode.setCurrentText("Only labelled")
+        assert all(0 <= r < len(p.polys) for r in got), f"{key} produced out-of-range rows"
+    use("labelled")
     assert p._cycle_rows() == sorted(p.labels), "labelled filter disagrees with the labels"
 
     # discard removes the selected polygon's label and is itself undoable
@@ -1049,7 +1053,7 @@ def test_undo_and_stepping_through_objects():
     # The class combo reads the selection and writes to it — and STEPPING must not count as
     # writing, or panning past an object would relabel it as whatever it already was, filling
     # the undo stack with phantom edits and marking every object you looked at as user-labelled.
-    p.cycle_mode.setCurrentText("All objects")
+    use("all")
     p._cycle_at = -1
     p.step(1)
     depth = len(p._undo)
@@ -1511,6 +1515,70 @@ def test_a_transition_class_name_can_be_typed_as_one_field_or_two():
     print("ok transition names compose from two fields and split back for rename")
 
 
+def test_stepping_respects_the_selected_class_and_skips_what_you_answered():
+    """The two complaints about cycling, which were two different bugs.
+
+    Selecting a class had NO effect on the arrows — `_cycle_rows` never consulted
+    `current_class()`, so "pick cutblock, step through cutblocks" was simply not implemented.
+
+    And "Least certain first" called `review_order` without `locked`, a parameter that has
+    existed since the port for exactly this, so the work-list kept handing back objects the
+    user had already labelled. That is what made stepping look like it was wandering between
+    classes at random.
+    """
+    import tempfile
+    from embed_cd_qgis.classify import ClassifyPanel
+
+    d = tempfile.mkdtemp(prefix="aecycle_")
+    p = _panel(d, _tiny_job(d), ClassifyPanel)
+    p.make_polygons()
+    assert len(p.polys) == 2, p.polys
+
+    p.classes.extend(["cutblock", "field"])
+    p.colors.update({"cutblock": "#d85a30", "field": "#1d9e75"})
+    p._refresh_list()
+
+    def use(key):
+        p.cycle_mode.setCurrentIndex(p.cycle_mode.findData(key))
+
+    # label row 0 cutblock, leave row 1 for the model
+    p.labels = {0: "cutblock"}
+    p._refit(force=True)
+
+    # --- the class filter names itself after the selection, and scopes to it ---
+    p.list.setCurrentRow(p.classes.index("cutblock"))
+    i = p.cycle_mode.findData("class")
+    assert p.cycle_mode.itemText(i) == 'Only "cutblock"', p.cycle_mode.itemText(i)
+    use("class")
+    rows = p._cycle_rows()
+    assert 0 in rows, "the class filter dropped an object the user put in that class"
+    for r in rows:
+        called = p.labels.get(r) or (str(p.pred[r]) if p.pred is not None else "")
+        assert called == "cutblock", f"row {r} is '{called}', not the selected class"
+
+    # switching the selected class re-aims both the name and the rows
+    p.list.setCurrentRow(p.classes.index("field"))
+    assert p.cycle_mode.itemText(i) == 'Only "field"', p.cycle_mode.itemText(i)
+    assert 0 not in p._cycle_rows(), "the filter still walks the previously selected class"
+
+    # --- least-certain no longer re-offers what you already answered ---
+    use("uncertain")
+    assert 0 not in p._cycle_rows(),         "'least certain first' is still offering an object the user has labelled"
+    use("labelled")
+    assert 0 in p._cycle_rows(), "a labelled object must stay reachable under 'Only labelled'"
+
+    # --- renaming a class follows through to the filter ---
+    p.list.setCurrentRow(p.classes.index("cutblock"))
+    p.classes[p.classes.index("cutblock")] = "clearcut"
+    p.labels = {0: "clearcut"}
+    p._refresh_list()
+    p.list.setCurrentRow(p.classes.index("clearcut"))
+    assert p.cycle_mode.itemText(i) == 'Only "clearcut"', p.cycle_mode.itemText(i)
+
+    QgsProject.instance().removeMapLayer(p.layer.id())
+    print("ok arrows scope to the selected class and skip what you already labelled")
+
+
 # NOT COVERED HERE: class-colour sync and the dashed outline for labelled objects.
 #
 # The feature is verified — a scratch script drives the panel end to end and confirms the
@@ -1552,4 +1620,5 @@ if __name__ == "__main__":
     test_no_step_hides_its_own_controls_and_the_header_tracks_the_settings()
     test_the_two_classify_modes_reread_the_same_labels()
     test_a_transition_class_name_can_be_typed_as_one_field_or_two()
+    test_stepping_respects_the_selected_class_and_skips_what_you_answered()
     print("all ok")

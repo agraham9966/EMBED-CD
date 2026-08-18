@@ -413,6 +413,29 @@ def test_a_preset_remembers_which_question_it_was_answering():
     print("ok presets carry their mode; older ones read as delta")
 
 
+def test_review_order_honours_locked():
+    """The work-list must be able to exclude what the user has already answered.
+
+    `locked` has been part of this signature since the port and the UI passed nothing for it,
+    so "least certain first" kept walking back over objects that were already settled. Unit
+    test here as well as in the panel, because the parameter is the contract.
+    """
+    x, y, _ = _planted()
+    h = H.OvRHead().fit(x, y)
+    pred, scores = h.predict(x)
+    everything = list(H.review_order(pred, scores))
+    assert sorted(everything) == list(range(len(x))), "unlocked must offer every row"
+
+    locked = np.zeros(len(x), bool)
+    locked[[0, 1, 2]] = True
+    rest = list(H.review_order(pred, scores, locked=locked))
+    assert not ({0, 1, 2} & set(rest)), f"locked rows came back anyway: {rest[:6]}"
+    assert sorted(rest) == list(range(3, len(x))), "locking dropped rows it should have kept"
+
+    assert list(H.review_order(pred, scores, locked=np.ones(len(x), bool))) == [],         "everything locked must yield an empty work-list, not a full one"
+    print("ok review_order excludes locked rows and keeps the rest")
+
+
 def test_best_guess_never_abstains():
     """The control says "prefer a best guess over unknown", so it must not return unknown.
 
@@ -491,6 +514,7 @@ if __name__ == "__main__":
     test_baseline_plus_delta_handles_a_class_spanning_two_baselines()
     test_a_single_class_cannot_yet_reject_the_opposite_change()
     test_features_default_is_baseline_plus_delta()
+    test_review_order_honours_locked()
     test_a_preset_remembers_which_question_it_was_answering()
     test_predicting_on_a_different_embedding_width_raises()
     test_an_unknown_features_value_is_refused_not_silently_ignored()

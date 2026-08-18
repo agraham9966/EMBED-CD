@@ -1,6 +1,6 @@
 [project]
 name = "embed_cd"
-version = "0.33.0"
+version = "0.34.0"
 description = "Engine for the EMBED-CD QGIS plugin: tiled year-over-year change maps from AlphaEarth satellite embeddings, plus an editable classifier head. QGIS-free, testable."
 requires-python = ">=3.9"
 license = "AGPL-3.0-or-later"

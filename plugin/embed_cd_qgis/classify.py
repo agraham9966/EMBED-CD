@@ -31,6 +31,14 @@ _MODES = (("Transition — what changed", "delta"),
           ("End state — what it is now", "after"))
 _ARROW = " → "          # what a Transition class name is built with, and split back on
 _MODE_KEYS = [k for _label, k in _MODES]
+# (key, label). Keyed, because the "class" entry is RENAMED live to whatever class is selected
+# and matching a filter on what it currently says would break the moment it says something else.
+_CYCLES = (("uncertain", "Least certain first"),
+           ("unlabelled", "Only unlabelled"),
+           ("unknown", "Only unknown"),
+           ("labelled", "Only labelled"),
+           ("class", "Only the selected class"),
+           ("all", "All objects"))
 # The panel opens on End state while the ENGINE still defaults to delta — deliberately two
 # different defaults. The engine's is a data-compatibility contract: a labels file or preset
 # written before modes existed records no mode, and delta is what it was in fact labelled
@@ -187,7 +195,7 @@ class ClassifyPanel(QWidget):
                              "Double-click to select that class's polygons on the map — "
                              "double-click 'unknown' to see everything still unaccounted for.")
         self.list.itemDoubleClicked.connect(self._select_class_on_map)
-        self.list.currentRowChanged.connect(lambda _r: self._show_selected())
+        self.list.currentRowChanged.connect(lambda _r: self._class_selection_changed())
         lay.addWidget(self.list)
 
         # Three full-width buttons for class housekeeping became a strip of small ones, which
@@ -314,32 +322,55 @@ class ClassifyPanel(QWidget):
                                    "then press this.")
         self.assign_btn.clicked.connect(self.assign_selected)
 
-        # Review row: undo, step through objects, drop a label. One row, because this is what
-        # you use once the map is nearly right and you are working through what is left.
-        # Arrows either side of the CURRENT object's class: stepping and setting are the same
-        # gesture when you are working through a list, so they belong on one line.
+        # Two rows, grouped by what they DO. They used to be grouped by nothing in
+        # particular: the arrows sat with the object's class editor while Undo and Discard sat
+        # with the filter that drives the arrows — the two halves swapped. That is most of why
+        # the dropdowns read as an interchangeable pair when they are completely different
+        # kinds of thing (one is a filter, one is a value).
+        #
+        # Row 1 is navigation: the filter and the arrows it drives.
         rrow = QHBoxLayout()
         rrow.setSpacing(3)
+        rrow.addWidget(QLabel("Step through:"))
+        self.cycle_mode = QComboBox()
+        for _key, _label in _CYCLES:
+            self.cycle_mode.addItem(_label, _key)
+        self.cycle_mode.setToolTip(
+            "What the arrows step through." + chr(10) * 2 +
+            "Least certain first: the ones it would not commit to, then the ones it nearly "
+            "called differently — where a label teaches the model most. Skips what you have "
+            "already labelled; use 'Only labelled' to revisit those." + chr(10) +
+            "Only unlabelled: everything you have not personally labelled, whatever the model "
+            "guessed for it." + chr(10) +
+            "Only unknown: the ones the model would not commit to." + chr(10) +
+            "Only labelled: check what you have already assigned." + chr(10) +
+            "Only \"<class>\": the class selected in the list above — both the ones you put "
+            "there and the ones the model did.")
+        self.cycle_mode.currentIndexChanged.connect(
+            lambda _i: setattr(self, "_cycle_at", -1))
+        rrow.addWidget(self.cycle_mode, 1)
         self.prev_btn = QPushButton("◀")
         self.prev_btn.setFixedWidth(30)
         self.next_btn = QPushButton("▶")
         self.next_btn.setFixedWidth(30)
         for b, d in ((self.prev_btn, -1), (self.next_btn, 1)):
-            b.setToolTip("Step to the previous/next object. The map pans to it and keeps your "
-                         "zoom; the breakdown below shows what the classifier makes of it.")
+            b.setToolTip("Step to the previous/next object in the list on the left. The map "
+                         "pans to it and keeps your zoom; the breakdown below shows what the "
+                         "classifier makes of it.")
             b.clicked.connect(lambda _c, dd=d: self.step(dd))
-        rrow.addWidget(self.prev_btn)
-        self.cls_combo = QComboBox()
-        self.cls_combo.setToolTip(
-            "The selected object's class. Changing it relabels that object — the same as "
-            "clicking it on the map, without leaving the keyboard.")
-        self.cls_combo.currentIndexChanged.connect(self._class_combo_changed)
-        rrow.addWidget(self.cls_combo, 1)
-        rrow.addWidget(self.next_btn)
+            rrow.addWidget(b)
         lay.addLayout(rrow)
 
+        # Row 2 is the current object: what it is, and the two things you do to it.
         r2 = QHBoxLayout()
         r2.setSpacing(3)
+        r2.addWidget(QLabel("This object:"))
+        self.cls_combo = QComboBox()
+        self.cls_combo.setToolTip(
+            "The class of the object you are looking at. Changing it relabels that object — "
+            "the same as clicking it on the map, without leaving the keyboard.")
+        self.cls_combo.currentIndexChanged.connect(self._class_combo_changed)
+        r2.addWidget(self.cls_combo, 1)
         self.undo_btn = QPushButton("↶ Undo")
         self.undo_btn.setToolTip(
             "Undo the last labelling action. A bulk assign comes back as one step, not thirty."
@@ -349,22 +380,9 @@ class ClassifyPanel(QWidget):
         self.undo_btn.clicked.connect(self.undo_label)
         r2.addWidget(self.undo_btn)
         self.discard_btn = QPushButton("Discard")
-        self.discard_btn.setToolTip("Remove the selected object's label.")
+        self.discard_btn.setToolTip("Remove this object's label.")
         self.discard_btn.clicked.connect(self.discard_label)
         r2.addWidget(self.discard_btn)
-        self.cycle_mode = QComboBox()
-        self.cycle_mode.addItems(["Least certain first", "Only unlabelled", "Only unknown",
-                                  "Only labelled", "All objects"])
-        self.cycle_mode.setToolTip(
-            "What the arrows step through." + chr(10) * 2 +
-            "Least certain first: abstentions, then the ones it nearly called differently — "
-            "where a label teaches the model most." + chr(10) +
-            "Only unlabelled: everything you have not personally labelled yet, whatever the "
-            "model guessed for it." + chr(10) +
-            "Only unknown: the ones the model would not commit to." + chr(10) +
-            "Only labelled: check what you have already assigned.")
-        self.cycle_mode.currentTextChanged.connect(lambda _t: setattr(self, "_cycle_at", -1))
-        r2.addWidget(self.cycle_mode, 1)
         lay.addLayout(r2)
 
         # Selecting a polygon — with the label tool or QGIS's own select tool — shows what the
@@ -945,6 +963,7 @@ class ClassifyPanel(QWidget):
             if self.list.item(i).data(_scoped(Qt, "ItemDataRole", "UserRole")) == keep:
                 self.list.setCurrentRow(i)
                 break
+        self._sync_cycle_class_entry()      # add / rename / delete all land here
 
     def _predicted_counts(self):
         """Counted from the prediction array, not by walking every feature. Rescanning the
@@ -986,29 +1005,81 @@ class ClassifyPanel(QWidget):
             self._goto_row(rows[0])
 
     def _cycle_rows(self):
-        """The ordered rows the arrows walk, per the filter."""
-        mode = self.cycle_mode.currentText() if getattr(self, "cycle_mode", None) else "All"
+        """The ordered rows the arrows walk, per the filter.
+
+        Keyed on `currentData()`, never on the visible text: one entry is renamed live to
+        whatever class is selected, so matching on what it says would break the moment it says
+        something else.
+        """
+        combo = getattr(self, "cycle_mode", None)
+        mode = combo.currentData() if combo is not None else "all"
         n = 0 if self.vectors is None else len(self.vectors)
-        if mode.startswith("Least certain"):
+        if mode == "uncertain":
             if self.head is None or self.scores is None or self.pred is None:
                 return list(range(n))
-            # review_order has been implemented and tested since the port and wired to nothing:
-            # abstentions first, then the smallest margin between best and second-best — the
-            # objects where one label teaches the model the most.
             from .engine import head as H
-            return [int(i) for i in H.review_order(self.pred, self.scores)]
-        if mode.startswith("Only unlabelled"):
+            # `locked` marks what the user has already answered. review_order has accepted this
+            # parameter since the port and NOTHING passed it, so the work-list kept handing back
+            # objects that were already settled — which is what made stepping feel like it was
+            # wandering between classes at random. Those rows are still reachable, under
+            # "Only labelled", which exists for exactly that.
+            locked = np.zeros(n, bool)
+            for r in self.labels:
+                if 0 <= r < n:
+                    locked[r] = True
+            return [int(i) for i in H.review_order(self.pred, self.scores, locked=locked)]
+        if mode == "unlabelled":
             # Not the same as "unknown": the model may be perfectly confident about an object
             # you have never confirmed. This is the "what still needs my eyes" list.
             return [i for i in range(n) if i not in self.labels]
-        if mode.startswith("Only unknown"):
+        if mode == "unknown":
             if self.pred is None:
                 return list(range(n))
             return [i for i in range(n)
                     if str(self.pred[i]) in (UNKNOWN, "") and i not in self.labels]
-        if mode.startswith("Only labelled"):
+        if mode == "labelled":
             return sorted(self.labels)
+        if mode == "class":
+            name = self.current_class()
+            if not name:
+                return []
+            # Both what YOU put there and what the MODEL put there. Walking a class is how you
+            # check its predictions at least as much as your own labels, and a filter that
+            # showed only your own would be a list you already know the contents of.
+            return [i for i in range(n)
+                    if self.labels.get(i) == name
+                    or (i not in self.labels and self.pred is not None and i < len(self.pred)
+                        and str(self.pred[i]) == name)]
         return list(range(n))
+
+    def _sync_cycle_class_entry(self):
+        """Name the class filter after the class that is selected.
+
+        The connection between picking a class and stepping through it should be visible in the
+        control, not something to be discovered — reading `Only "cutblock"` says what will
+        happen; reading `Only the selected class` does not say which.
+        """
+        combo = getattr(self, "cycle_mode", None)
+        if combo is None:
+            return
+        i = combo.findData("class")
+        if i < 0:
+            return
+        name = self.current_class()
+        combo.setItemText(i, f'Only "{name}"' if name else "Only the selected class")
+        # A filter that can only walk nothing should not be pickable. Guarded because this
+        # relies on the combo's default QStandardItemModel.
+        model = combo.model()
+        item = model.item(i) if hasattr(model, "item") else None
+        if item is not None:
+            item.setEnabled(bool(name))
+
+    def _class_selection_changed(self):
+        """Picking a class changes what the arrows would walk, so the cursor into that list is
+        no longer meaningful."""
+        self._show_selected()
+        self._sync_cycle_class_entry()
+        self._cycle_at = -1
 
     def step(self, delta):
         rows = self._cycle_rows()
