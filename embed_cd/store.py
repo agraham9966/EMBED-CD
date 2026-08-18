@@ -116,7 +116,8 @@ def load_objects(path):
     return polys, vectors, crs
 
 
-def save_labels(path, class_vectors, colors, labels, threshold, names=None):
+def save_labels(path, class_vectors, colors, labels, threshold, names=None,
+                features=None):
     """`labels` is row -> class for the CURRENT polygon set; `class_vectors` is the banked
     examples that outlive it. Both are stored: the bank is the durable training set, the row map
     is only restorable while the cut is unchanged.
@@ -126,6 +127,11 @@ def save_labels(path, class_vectors, colors, labels, threshold, names=None):
     from `class_vectors` silently loses it — which is every class in a fresh session. Storing
     the merged view instead would fix that but double-count those examples at fit time, since
     the panel merges banked and current itself.
+
+    `features` is which question the labels were answering — a transition, or an end state. The
+    vectors are identical either way, so nothing here would fail without it; the class NAMES
+    would just quietly come to mean something else. "clearcut" meaning forest->bare, reopened
+    in end-state mode, becomes "things that look like bare ground", with no error anywhere.
     """
     payload = {
         "version": 1,
@@ -133,6 +139,7 @@ def save_labels(path, class_vectors, colors, labels, threshold, names=None):
         "colors": dict(colors or {}),
         "names": list(names) if names else sorted(class_vectors or {}),
         "labels": {str(k): v for k, v in (labels or {}).items()},
+        "features": features or "delta",
         "classes": [{"name": name, "vectors": np.asarray(v, np.float32).tolist()}
                     for name, v in (class_vectors or {}).items() if len(v)],
     }
@@ -144,14 +151,20 @@ def save_labels(path, class_vectors, colors, labels, threshold, names=None):
 
 
 def load_labels(path):
-    """(class_vectors, colors, labels, threshold, names)."""
+    """(class_vectors, colors, labels, threshold, names, features).
+
+    A file written before modes existed has no `features` key, and "delta" is not merely a safe
+    default there — it is what those labels were actually made under, so the migration is
+    correct rather than just non-breaking.
+    """
     with open(path, encoding="utf-8") as f:
         payload = json.load(f)
     class_vectors = {c["name"]: [np.asarray(v, np.float32) for v in c["vectors"]]
                      for c in payload.get("classes", [])}
     labels = {int(k): v for k, v in payload.get("labels", {}).items()}
     names = payload.get("names") or sorted(class_vectors)
-    return class_vectors, payload.get("colors", {}), labels, payload.get("threshold"), names
+    return (class_vectors, payload.get("colors", {}), labels, payload.get("threshold"), names,
+            payload.get("features", "delta"))
 
 
 def meta_path(out_dir):

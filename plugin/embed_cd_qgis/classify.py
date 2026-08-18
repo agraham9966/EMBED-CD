@@ -26,6 +26,10 @@ from qgis.core import (
 from qgis.gui import QgsMapTool
 
 UNKNOWN = "unknown"
+# (what the user sees, what the head is told). Order matters: the first is the default.
+_MODES = (("Transition — what changed", "delta"),
+          ("End state — what it is now", "after"))
+_ARROW = " → "          # what a Transition class name is built with, and split back on
 _PALETTE = ["#d85a30", "#1d9e75", "#7f77dd", "#d4537e", "#378add", "#ba7517",
             "#639922", "#993556"]
 
@@ -230,6 +234,32 @@ class ClassifyPanel(QWidget):
         crow.addWidget(self.savemenu_btn)
         lay.addLayout(crow)
 
+        # Between the class list and the labelling button on purpose: this reads "here are your
+        # classes, here is what they MEAN, now go label". It is not in the gear menu with the
+        # other classifier settings because it is not a setting — it changes what every class
+        # name refers to, and nobody should label a whole set under a reading they never chose.
+        mrow = QHBoxLayout()
+        mrow.setSpacing(4)
+        mrow.addWidget(QLabel("Classify by:"))
+        self.mode_combo = QComboBox()
+        for label, key in _MODES:
+            self.mode_combo.addItem(label, key)
+        self.mode_combo.setToolTip(
+            "What a class means." + chr(10) * 2 +
+            "Transition — what happened here: 'forest → clearing'. The object's before AND "
+            "after are both used, so a class is tied to the land cover it started from. This "
+            "is the default and it is the better answer when you care how something changed."
+            + chr(10) * 2 +
+            "End state — what it is now, ignoring what preceded it. Use this to carry classes "
+            "to a different landscape: measured, a class trained on one baseline is recognised "
+            "on a baseline it never saw 99% of the time, against 0% for Transition. The cost "
+            "is that it can no longer tell 'became bare' from 'was already bare'." + chr(10) * 2 +
+            "Switching is free and reversible — both read the same stored embeddings, so "
+            "nothing is recomputed and no labels are lost.")
+        self.mode_combo.currentIndexChanged.connect(self._mode_changed)
+        mrow.addWidget(self.mode_combo, 1)
+        lay.addLayout(mrow)
+
         self.label_btn = QPushButton("Label by clicking the map")
         self.label_btn.setCheckable(True)
         self.label_btn.setToolTip("Turn this on, then click polygons on the map to put them in "
@@ -398,7 +428,8 @@ class ClassifyPanel(QWidget):
         self.make_btn.setEnabled(ready)
         for w in (self.list, self.assign_btn, self.save_btn,
                   self.q_slider, self.label_btn, self.guess_box, self.pause_box,
-                  self.prev_btn, self.next_btn, self.cycle_mode, self.discard_btn):
+                  self.prev_btn, self.next_btn, self.cycle_mode, self.discard_btn,
+                  self.mode_combo):
             w.setEnabled(has_polys)
         self._sync_review()
         # A restored run already HAS objects, so telling the user to run one is stale advice —
@@ -659,10 +690,80 @@ class ClassifyPanel(QWidget):
         self._fid_row = {}
 
     # ---------------- classes ----------------
+    def features(self):
+        """Which question the classes answer: "delta" (transition) or "after" (end state)."""
+        if getattr(self, "mode_combo", None) is None:
+            return _MODES[0][1]
+        return self.mode_combo.currentData() or _MODES[0][1]
+
+    def _set_features(self, key):
+        """Point the combo at a mode without treating it as a user edit."""
+        if getattr(self, "mode_combo", None) is None:
+            return
+        i = self.mode_combo.findData(key)
+        if i < 0 or i == self.mode_combo.currentIndex():
+            return
+        self.mode_combo.blockSignals(True)
+        self.mode_combo.setCurrentIndex(i)
+        self.mode_combo.blockSignals(False)
+
+    def _mode_changed(self, _i):
+        """force=True: choosing a mode is an explicit "classify with this", the same reasoning
+        load_classes uses. Without it, switching while paused would appear to do nothing."""
+        self._refit(force=True)
+        self._save_labels()
+        self.status.setText(
+            f"Now classifying by {self.mode_combo.currentText().split(chr(0x2014))[0].strip()}. "
+            "Your labels are unchanged — the same examples, read differently.")
+
+    def _ask_class_name(self, title, text=""):
+        """Name a class, prompting for the transition when that is what a class means.
+
+        In End state mode this is one box, exactly as it always was. In Transition mode it is
+        two, because the NAME is the only place a transition is recorded — nothing in the data
+        model stores a before and an after, and it should not: the name is already displayed in
+        the class list, the legend, two GeoPackage columns, the score breakdown and the status
+        line, and a structured pair would need formatting at every one of them.
+
+        Filling only the first box gives exactly the old behaviour, so the second is an offer
+        and never an obstacle.
+        """
+        from qgis.PyQt.QtWidgets import QDialog, QFormLayout, QDialogButtonBox, QLineEdit
+
+        if self.features() != "delta":
+            name, ok = QInputDialog.getText(self, title, "Name:", text=text)
+            return (name or "").strip() if ok else None
+
+        before, _, after = text.partition(_ARROW.strip()) if _ARROW.strip() in text             else (text, "", "")
+        dlg = QDialog(self)
+        dlg.setWindowTitle(title)
+        form = QFormLayout(dlg)
+        e_from, e_to = QLineEdit(before.strip()), QLineEdit(after.strip())
+        e_from.setPlaceholderText("forest")
+        e_to.setPlaceholderText("clearing   (optional)")
+        e_to.setToolTip("Leave this empty to use the first box alone as the name.")
+        form.addRow("From:", e_from)
+        form.addRow("To:", e_to)
+        hint = QLabel("A class is a transition, so name both ends. Leave 'To' empty for a "
+                      "plain name.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: palette(mid);")
+        form.addRow(hint)
+        buttons = QDialogButtonBox(
+            _scoped(QDialogButtonBox, "StandardButton", "Ok")
+            | _scoped(QDialogButtonBox, "StandardButton", "Cancel"))
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        form.addRow(buttons)
+        e_from.setFocus()
+        if dlg.exec() != _scoped(QDialog, "DialogCode", "Accepted"):
+            return None
+        a, b = e_from.text().strip(), e_to.text().strip()
+        return f"{a}{_ARROW}{b}" if a and b else (a or b)
+
     def add_class(self):
-        name, ok = QInputDialog.getText(self, "Add class", "Name:")
-        name = (name or "").strip()
-        if not ok or not name or name in self.classes:
+        name = self._ask_class_name("Add class")
+        if not name or name in self.classes:
             return
         self.classes.append(name)
         self.colors[name] = _PALETTE[(len(self.classes) - 1) % len(_PALETTE)]
@@ -673,9 +774,8 @@ class ClassifyPanel(QWidget):
         old = self.current_class()
         if not old:
             return
-        name, ok = QInputDialog.getText(self, "Rename class", "Name:", text=old)
-        name = (name or "").strip()
-        if not ok or not name or name == old or name in self.classes:
+        name = self._ask_class_name("Rename class", text=old)
+        if not name or name == old or name in self.classes:
             return
         self.classes[self.classes.index(old)] = name
         self.colors[name] = self.colors.pop(old, None)
@@ -1027,7 +1127,7 @@ class ClassifyPanel(QWidget):
         obvious nothing is moving underneath you.
         """
         self.paused = self.pause_box.isChecked()
-        for w in (self.q_slider, self.guess_box):
+        for w in (self.q_slider, self.guess_box, self.mode_combo):
             w.setEnabled(not self.paused)
         if self.paused:
             self.status.setText("Paused. Labels now apply to just that polygon; nothing else "
@@ -1273,10 +1373,13 @@ class ClassifyPanel(QWidget):
                 msg.append(f"{len(polys)} polygons")
         if os.path.exists(jsn):
             try:
-                cv, colors, labels, thr, names = ST.load_labels(jsn)
+                cv, colors, labels, thr, names, feats = ST.load_labels(jsn)
             except Exception as exc:
                 return f"Could not read saved labels: {exc}"
             self.class_vectors = {k: list(v) for k, v in cv.items()}
+            # Before the refit at the end, so the run comes back answering the question it was
+            # left answering. The names were chosen under that reading.
+            self._set_features(feats)
             self.colors.update(colors or {})
             for name in names:
                 if name not in self.classes:
@@ -1341,7 +1444,8 @@ class ClassifyPanel(QWidget):
             # value would make a reopened run claim a cut it was never made at.
             thr = self._cut_threshold
             ST.save_labels(paths[1], self.class_vectors, self.colors, self.labels,
-                           self.host._threshold() if thr is None else thr, names=self.classes)
+                           self.host._threshold() if thr is None else thr, names=self.classes,
+                           features=self.features())
         except Exception:
             pass                     # never let a failed autosave interrupt labelling
 
@@ -1386,7 +1490,8 @@ class ClassifyPanel(QWidget):
             # can only be found from the candidates, not from the handful of labelled examples
             self.head = H.fit_from_classes(
                 classes, pool=self.vectors, abstain_quantile=self.q(),
-                decision="argmax" if self.guess_box.isChecked() else "threshold")
+                decision="argmax" if self.guess_box.isChecked() else "threshold",
+                features=self.features())
             pred, self.scores = self.head.predict(self.vectors)
             conf = self.head.confidence(self.vectors)
             pred = np.asarray(pred, dtype=object)
@@ -1504,7 +1609,7 @@ class ClassifyPanel(QWidget):
             return
         try:
             from .engine import head as H
-            H.save_classes(path, self._class_vectors(), self.colors)
+            H.save_classes(path, self._class_vectors(), self.colors, features=self.features())
             self.status.setText(f"Saved to {os.path.basename(path)}.")
         except Exception as exc:
             self.status.setText(f"Save failed: {exc}")
@@ -1515,7 +1620,7 @@ class ClassifyPanel(QWidget):
             return
         try:
             from .engine import head as H
-            classes, colors = H.load_classes(path)
+            classes, colors, feats = H.load_classes(path)
         except Exception as exc:
             self.status.setText(f"Load failed: {exc}")
             return
@@ -1527,6 +1632,13 @@ class ClassifyPanel(QWidget):
                                     "layout and can't be applied here.")
                 return
         self.classes = list(classes)
+        # Adopt the preset's mode. The vectors load fine either way — that is deliberate — but
+        # the NAMES were written under one reading, and "forest -> clearing" read as an end
+        # state is a class that no longer says what it means. Switching and saying so beats
+        # silently reinterpreting someone's labelling.
+        was = self.features()
+        self._set_features(feats)
+        switched = self.features() != was
         self.colors.update({k: v for k, v in (colors or {}).items() if v})
         for i, name in enumerate(self.classes):
             self.colors.setdefault(name, _PALETTE[i % len(_PALETTE)])
@@ -1540,8 +1652,10 @@ class ClassifyPanel(QWidget):
         # which should not silently do nothing just because the head is paused.
         self._refit(force=True)
         n_lab = sum(len(v) for v in classes.values())
+        note = (f" Switched to {self.mode_combo.currentText().split(chr(0x2014))[0].strip()}, "
+                "which is how these were labelled." if switched else "")
         self.status.setText(
-            f"Loaded {len(self.classes)} classes ({n_lab} examples). {self.status.text()}")
+            f"Loaded {len(self.classes)} classes ({n_lab} examples).{note} {self.status.text()}")
 
     def cleanup(self):
         if self.tool is not None and self.iface.mapCanvas() is not None:

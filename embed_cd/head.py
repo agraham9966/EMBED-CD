@@ -25,6 +25,8 @@ import numpy as np
 
 UNKNOWN = "unknown"
 DEFAULT_Q = 0.05      # the strictness slider's resting position
+# What a class MEANS. See OvRHead.__init__ for what each one is worth.
+FEATURES = ("delta", "after", "raw")
 
 
 def _fit_logistic(x, y, C=1.0, max_iter=500):
@@ -89,7 +91,12 @@ class OvRHead:
         self.min_confidence = min_confidence
         self.C = C
         self.decision = decision                  # "threshold" (can abstain) or "argmax" (cannot)
-        # "delta" = [A, B-A]; "raw" = [A, B] exactly as the cell store holds it.
+        if features not in FEATURES:
+            raise ValueError(f"features must be one of {sorted(FEATURES)}, got {features!r}")
+        # What the detectors see, from the stored [A, B] pair:
+        #   "delta" = [A, B-A]   the TRANSITION: what this was, and what happened to it
+        #   "after" = [B]        the END STATE: what it is now, baseline discarded
+        #   "raw"   = [A, B]     both absolute states, exactly as the cell store holds them
         #
         # Baseline+delta is the default because a class is usually a KIND OF CHANGE, and naming
         # the change explicitly beats making the model infer it from two absolute states.
@@ -104,17 +111,41 @@ class OvRHead:
         # What it does NOT do — asserted here first, then disproved by the test that now guards
         # it: transfer a class to a baseline it never saw. Both forms score 0%, because A is
         # still half the vector, so an unseen baseline is an unseen vector however the other
-        # half is written. Only dropping or downweighting A would change that, and baseline
-        # context is the thing that makes these features good to begin with.
+        # half is written. Only DROPPING A changes that, which is what "after" is.
         #
         # On magnitude, since the single-class path takes cosine on UN-standardized vectors and
         # a tiny delta half would simply be swamped: on 817 real polygons ||B-A|| is 47% of
         # ||A||, and prototype similarity correlates 0.876 with baseline-only under [A, B-A]
         # against 0.901 under [A, B]. Both lean on the baseline; delta leans slightly less.
         #
-        # Switchable, and presets are unaffected either way: save_classes stores the raw stored
-        # vectors and this transform is applied at fit/predict time, so a class set saved under
-        # one setting still loads under the other.
+        # "after" answers the question delta cannot: name a thing by what it BECAME, so a class
+        # is recognisable on a baseline it was never trained on. Measured, training on one
+        # baseline and testing on another that reaches the SAME end state, 12 seeds:
+        #
+        #     raw 0%      delta 0%      after 99%
+        #
+        # Note it does not do this by evading the distance gate — the gate is ON in that
+        # measurement. Dropping A makes an unseen baseline genuinely IN distribution, so the
+        # gate correctly passes it. (With the gate off, raw and delta reach 92% and 87%: the
+        # information was always there, the familiarity test was the binding constraint.)
+        #
+        # Two things it does NOT buy, both measured rather than hoped:
+        #   - It does not fix the single-class weakness (see the D7 test). From three examples
+        #     it still accepts 100% of the OPPOSITE change, exactly as raw and delta do: with
+        #     one class the score is cosine to a prototype, and B for "forest cleared" and B
+        #     for "forest regrown" still share the forest component that dominates the cosine.
+        #     Different half of the vector, same failure.
+        #   - It does not help when a class spans two baselines reaching DIFFERENT end states.
+        #     There it is delta's case, and after scores like raw (0.956 vs 0.954, delta 0.978).
+        #
+        # So this is a different question, not a better answer. With B alone the head can no
+        # longer tell "became bare" from "was already bare-ish" — inside a change map that makes
+        # it land cover rather than change. Both modes are useful; neither replaces the other.
+        #
+        # Switchable, and presets are unaffected by the choice: save_classes stores the raw
+        # stored vectors and this transform is applied at fit/predict time, so a class set saved
+        # under one setting still loads under the others. What the class NAMES mean does change,
+        # which is why the mode is recorded in both the preset and the run.
         self.features = features
         # A detector's score alone cannot recognise the unfamiliar. Logistic regression is
         # linear and unbounded, so an object far outside everything the user ever labelled still
@@ -130,6 +161,7 @@ class OvRHead:
         # having, so the score bar is left to do the work alone.
         self.min_for_gate = min_for_gate
         self.classes = []
+        self.n_features_in_ = None                # width of the STORED vectors, set at fit
         self.mean_ = self.std_ = None
         self.dets = {}
         self.thr = {}
@@ -140,12 +172,37 @@ class OvRHead:
 
     # ---------- feature handling ----------
     def _transform(self, x):
+        """Stored `[A, B]` -> what the detectors actually see.
+
+        The input is ALWAYS the stored pair, never an already-transformed vector: the split is
+        `shape[1] // 2`, so a 64-d input would silently be read as a 32-d pair and answered
+        confidently with nonsense. `_check_width` is what stops that.
+        """
         x = np.asarray(x, np.float64)
+        self._check_width(x)
+        half = x.shape[1] // 2
+        a, b = x[:, :half], x[:, half:]
         if self.features == "delta":
-            half = x.shape[1] // 2
-            a, b = x[:, :half], x[:, half:]
-            x = np.concatenate([a, b - a], axis=1)
-        return x
+            return np.concatenate([a, b - a], axis=1)
+        if self.features == "after":
+            return b
+        return x                                        # "raw"
+
+    def _check_width(self, x):
+        """Even width to split, and the same width at predict as at fit.
+
+        Both are silent failures otherwise, and one of them has already cost real time: an
+        unrecognised `features` value used to fall through to "raw", so a mode that had not
+        been implemented yet measured as byte-identical to one that had, over a full run of
+        plausible-looking numbers. Hence the validation in __init__ too — a wrong answer that
+        looks right is the expensive kind.
+        """
+        if x.ndim != 2 or x.shape[1] % 2:
+            raise ValueError("expected [N, 2*depth] stored vectors (year A then year B), "
+                             f"got shape {x.shape}")
+        if self.n_features_in_ is not None and x.shape[1] != self.n_features_in_:
+            raise ValueError(f"fitted on {self.n_features_in_}-d stored vectors, "
+                             f"asked for {x.shape[1]}-d")
 
     def _standardize(self, x, fit=False):
         x = self._transform(x)
@@ -236,6 +293,10 @@ class OvRHead:
 
     def fit(self, x, y, seed=0, pool=None):
         y = np.asarray(y, dtype=object)
+        # Set BEFORE the first transform, and reset each fit: re-fitting on a different
+        # embedding layout is legitimate, predicting across one is not.
+        x = np.asarray(x)
+        self.n_features_in_ = x.shape[1] if x.ndim == 2 else None
         raw = self._transform(x)
         xs = self._standardize(x, fit=True)
         self.classes = sorted(set(y.tolist()))
@@ -414,13 +475,18 @@ def review_order(pred, scores, locked=None):
 
 # ---------- presets ----------
 
-def save_classes(path, classes, colors=None):
+def save_classes(path, classes, colors=None, features=None):
     """A preset stores the LABELLED EXAMPLE VECTORS, not fitted coefficients.
 
     That way loading refits in under a second, a preset stays valid if this implementation
     changes, and the user's labelling effort — the expensive part — is what actually travels.
+
+    `features` records which question the names were answering. The vectors load fine under any
+    mode — that is deliberate — so this is not a compatibility check; it is the only way the
+    file can say what "clearcut" was supposed to mean.
     """
     payload = {"version": 1,
+               "features": features or "delta",
                "classes": [{"name": name,
                             "color": (colors or {}).get(name),
                             "vectors": np.asarray(v, np.float32).tolist()}
@@ -431,6 +497,7 @@ def save_classes(path, classes, colors=None):
 
 
 def load_classes(path):
+    """(classes, colors, features). Presets written before modes existed report "delta"."""
     with open(path, encoding="utf-8") as f:
         payload = json.load(f)
     classes, colors = {}, {}
@@ -438,7 +505,7 @@ def load_classes(path):
         classes[entry["name"]] = np.asarray(entry["vectors"], np.float32)
         if entry.get("color"):
             colors[entry["name"]] = entry["color"]
-    return classes, colors
+    return classes, colors, payload.get("features", "delta")
 
 
 def fit_from_classes(classes, pool=None, **kw):

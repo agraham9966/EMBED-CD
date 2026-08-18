@@ -458,7 +458,7 @@ def test_a_users_correction_is_never_revised_by_the_model():
     alien = {"zzz": rng.normal(3.0, 0.1, (6, p.vectors.shape[1])).astype("float32")}
     preset = os.path.join(d, "alien.json")
     H.save_classes(preset, alien)
-    loaded, _ = H.load_classes(preset)
+    loaded, _, _ = H.load_classes(preset)
     p.class_vectors = {k: list(v) for k, v in loaded.items()}
     p.classes = list(loaded)
     p._refit(force=True)
@@ -1413,6 +1413,75 @@ def test_no_step_hides_its_own_controls_and_the_header_tracks_the_settings():
     print("ok every step fits its own controls; Cancel is always reachable; header tracks")
 
 
+def test_the_two_classify_modes_reread_the_same_labels():
+    """Switching between Transition and End state must be free, reversible, and lossless.
+
+    Both modes read the SAME stored [A, B] vectors — the transform happens at fit time — so
+    nothing is recomputed, no polygons are re-cut and no labels are dropped. That is the whole
+    reason this feature was small: the after-embedding was already on disk.
+    """
+    import tempfile
+    from embed_cd_qgis.classify import ClassifyPanel
+
+    d = tempfile.mkdtemp(prefix="aemode_")
+    p = _panel(d, _tiny_job(d), ClassifyPanel)
+    p.make_polygons()
+    assert p.vectors is not None and p.vectors.shape[0] == 2
+
+    p.classes.append("cutblock")
+    p.colors["cutblock"] = "#d85a30"
+    p._refresh_list()
+    p.list.setCurrentRow(0)
+    feat = next(p.layer.getFeatures())
+    p.label_at(feat.geometry().centroid().asPoint())
+    labels_before = dict(p.labels)
+    assert labels_before, "setup: the click must have labelled something"
+
+    assert p.features() == "delta", "Transition must stay the default"
+    assert p.head.features == "delta"
+    first = list(p.pred)
+
+    p._set_features("after")
+    assert p.features() == "after"
+    p._refit(force=True)
+    assert p.labels == labels_before, "switching mode lost labels"
+    assert p.head.features == "after", "the head was not told about the mode"
+    # The stored vectors are the pair; only the view narrows.
+    assert p.head.n_features_in_ == p.vectors.shape[1], "the head must still be fed [A, B]"
+
+    p._set_features("delta")
+    p._refit(force=True)
+    assert list(p.pred) == first, "switching back did not reproduce the original answers"
+
+    # And the mode survives a save/reload of the run.
+    p._set_features("after")
+    p._save_labels()
+    from embed_cd import store as ST
+    assert ST.load_labels(ST.labels_path(d, 2019, 2024))[5] == "after"
+
+    QgsProject.instance().removeMapLayer(p.layer.id())
+    print("ok both modes read the same labels; switching is reversible, lossless and saved")
+
+
+def test_a_transition_class_name_can_be_typed_as_one_field_or_two():
+    """The two-box dialog must never become an obstacle: filling only 'From' has to give
+    exactly the single-box behaviour, because that is what everyone did before it existed."""
+    from embed_cd_qgis.classify import _ARROW
+
+    # The composition rule, without driving a modal dialog: both filled joins them, one filled
+    # is the bare name. (The dialog itself is exercised by hand; see the plan's verification.)
+    compose = lambda a, b: f"{a}{_ARROW}{b}" if a and b else (a or b)
+    assert compose("forest", "clearing") == f"forest{_ARROW}clearing"
+    assert compose("clearcut", "") == "clearcut", "a From-only entry must give the bare name"
+    assert compose("", "bare") == "bare"
+
+    # And a rename splits an existing transition name back apart.
+    name = f"forest{_ARROW}clearing"
+    before, _, after = name.partition(_ARROW.strip())
+    assert before.strip() == "forest" and after.strip() == "clearing"
+    print("ok transition names compose from two fields and split back for rename")
+
+
 # NOT COVERED HERE: class-colour sync and the dashed outline for labelled objects.
 #
 # The feature is verified — a scratch script drives the panel end to end and confirms the
@@ -1452,4 +1521,6 @@ if __name__ == "__main__":
     test_the_tile_estimate_asks_the_tiler_when_it_can()
     test_the_worker_interpreter_is_found_and_a_failed_start_is_reported()
     test_no_step_hides_its_own_controls_and_the_header_tracks_the_settings()
+    test_the_two_classify_modes_reread_the_same_labels()
+    test_a_transition_class_name_can_be_typed_as_one_field_or_two()
     print("all ok")

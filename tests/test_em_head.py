@@ -183,7 +183,7 @@ def test_preset_roundtrip_refits_to_the_same_predictions():
     with tempfile.TemporaryDirectory() as d:
         p = H.save_classes(os.path.join(d, "c.json"), classes,
                            colors={"cutblock": "#ff0000"})
-        loaded, colors = H.load_classes(p)
+        loaded, colors, feats = H.load_classes(p)
     assert colors["cutblock"] == "#ff0000"
     head2 = H.fit_from_classes(loaded)
     pred2, _ = head2.predict(x)
@@ -254,6 +254,59 @@ def _same_change_two_baselines(n_per=20, seed=3, sep=3.0):
             other.astype(np.float32))
 
 
+def _same_destination_two_baselines(n_per=20, seed=3):
+    """Two baselines reaching the SAME end state — a demolished building and a fresh clearcut
+    both becoming bare ground.
+
+    Deliberately NOT the same thing as `_same_change_two_baselines`, whose prose says "both end
+    as bare ground" but whose construction adds the same delta to two DIFFERENT baselines, so
+    its groups end up somewhere different from each other. That fixture models a shared
+    MOVEMENT, which is delta's case; this one models a shared DESTINATION, which is after's.
+    Conflating them is how you conclude a mode works when it does not.
+    """
+    rng = np.random.default_rng(seed)
+    forest, urban = rng.normal(0, 1, DEPTH), rng.normal(0, 1, DEPTH)
+    bare, water = rng.normal(0, 1, DEPTH), rng.normal(0, 1, DEPTH)
+
+    def block(a, b, n):
+        return np.concatenate([np.tile(a, (n, 1)), np.tile(b, (n, 1))], axis=1)             + rng.normal(0, 0.30, (n, 2 * DEPTH))
+
+    return (block(forest, bare, n_per).astype(np.float32),    # forest -> bare
+            block(urban, bare, n_per).astype(np.float32),     # urban  -> bare (unseen baseline)
+            block(forest, water, n_per).astype(np.float32))   # forest -> water (distractor)
+
+
+def test_end_state_features_recognise_a_class_on_an_unseen_baseline():
+    """The one thing transition mode measurably cannot do, and the reason "after" exists.
+
+    Train on clearings that came from forest, then ask about clearings that came from urban —
+    a baseline the model has never seen. Measured over 12 seeds:
+
+        raw 0%      delta 0%      after 99%
+
+    The distance gate is ON throughout. "after" does not win by evading the familiarity test;
+    dropping A makes the unseen baseline genuinely in-distribution, so the gate passes it
+    correctly. (With the gate off, raw and delta reach 92% and 87% — the information was always
+    there, the gate was the binding constraint.)
+    """
+    got = {}
+    for mode in ("raw", "delta", "after"):
+        hits = []
+        for seed in range(12):
+            ff, fu, other = _same_destination_two_baselines(seed=seed)
+            x = np.concatenate([ff[:10], other[:10]])
+            y = np.array(["cleared"] * 10 + ["distractor"] * 10, dtype=object)
+            h = H.OvRHead(features=mode).fit(x, y)
+            hits.append((h.predict(fu)[0] == "cleared").mean())
+        got[mode] = float(np.mean(hits))
+    assert got["after"] > 0.9, f"end-state transfer collapsed to {got['after']:.0%}"
+    assert got["delta"] < 0.1, (f"transition mode now transfers at {got['delta']:.0%} — if this "
+                                "has genuinely improved, update these numbers everywhere they "
+                                "are quoted, starting with head.py's comment")
+    print(f"ok unseen baseline: raw {got['raw']:.0%}, delta {got['delta']:.0%}, "
+          f"after {got['after']:.0%}")
+
+
 def test_baseline_plus_delta_handles_a_class_spanning_two_baselines():
     """A class whose members reached the same end state from DIFFERENT starting land cover —
     a demolished building and a fresh clearcut both become bare ground.
@@ -289,11 +342,14 @@ def test_a_single_class_cannot_yet_reject_the_opposite_change():
     REVERSE change from the same baseline — regrowth gets selected as clearing. With one class
     there is nothing to discriminate against, so scoring is cosine to a prototype, and with A
     shared between both groups that cosine is largely measuring "did this start as forest".
-    Unchanged by the raw/delta choice: both fail identically.
+    Unchanged by the choice of features: all three fail identically. "after" was predicted to
+    fix this and does not — measured at 100% acceptance, same as the others. B for "forest
+    cleared" and B for "forest regrown" still share the forest component that dominates the
+    cosine, so it is the same failure on a different half of the vector.
     """
     ff, fu, other = _same_change_two_baselines()
     pool = np.concatenate([ff, fu, other])
-    for mode in ("raw", "delta"):
+    for mode in ("raw", "delta", "after"):
         h = H.OvRHead(features=mode).fit(ff[:3], np.array(["cleared"] * 3, dtype=object),
                                          pool=pool)
         assert (h.predict(ff)[0] == "cleared").mean() > 0.9, f"{mode}: lost its own examples"
@@ -310,6 +366,51 @@ def test_features_default_is_baseline_plus_delta():
     x, y, _ = _planted()
     assert H.fit_from_classes({c: x[y == c] for c in set(y.tolist())}).features == "delta"
     print("ok baseline+delta is the default representation")
+
+
+def test_an_unknown_features_value_is_refused_not_silently_ignored():
+    """This one cost a full measurement cycle. `_transform` only branched on "delta", so any
+    other value fell through to "raw" — and a mode that had not been implemented yet measured
+    as byte-identical to one that had, over a page of plausible numbers. Fail loudly instead."""
+    for bad in ("after_delta", "END", "", None):
+        try:
+            H.OvRHead(features=bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"features={bad!r} was accepted")
+    print("ok an unrecognised features value raises instead of silently meaning raw")
+
+
+def test_predicting_on_a_different_embedding_width_raises():
+    """Stored vectors are [A, B] and the split is shape[1]//2, so a half-width input would be
+    silently re-split and answered with confident nonsense."""
+    x, y, _ = _planted()
+    h = H.OvRHead().fit(x, y)
+    try:
+        h.predict(x[:, :x.shape[1] // 2])
+    except ValueError:
+        print("ok a width that does not match the fit raises")
+        return
+    raise AssertionError("predicting on half-width vectors did not raise")
+
+
+def test_a_preset_remembers_which_question_it_was_answering():
+    """The vectors load under any mode — deliberately — so the file is the only place that can
+    say what the names meant. Files written before modes existed report "delta", which is what
+    they were in fact labelled under."""
+    import json
+    x, y, _ = _planted()
+    classes = {c: x[y == c] for c in set(y.tolist())}
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "c.json")
+        H.save_classes(p, classes, features="after")
+        assert H.load_classes(p)[2] == "after"
+        old = os.path.join(d, "old.json")
+        payload = json.load(open(p))
+        del payload["features"]
+        json.dump(payload, open(old, "w"))
+        assert H.load_classes(old)[2] == "delta", "a pre-modes preset must read as delta"
+    print("ok presets carry their mode; older ones read as delta")
 
 
 def test_best_guess_never_abstains():
@@ -390,6 +491,10 @@ if __name__ == "__main__":
     test_baseline_plus_delta_handles_a_class_spanning_two_baselines()
     test_a_single_class_cannot_yet_reject_the_opposite_change()
     test_features_default_is_baseline_plus_delta()
+    test_a_preset_remembers_which_question_it_was_answering()
+    test_predicting_on_a_different_embedding_width_raises()
+    test_an_unknown_features_value_is_refused_not_silently_ignored()
+    test_end_state_features_recognise_a_class_on_an_unseen_baseline()
     test_best_guess_never_abstains()
     test_strictness_moves_the_bar_with_more_than_one_class()
     test_strictness_still_works_with_a_single_class()
