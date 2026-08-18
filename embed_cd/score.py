@@ -55,7 +55,7 @@ def coverage(valid_a, valid_b, shape=None):
 def change_score(raw_a, raw_b, chunk_rows=256):
     """(score [H,W] float32 in 0..1 with NODATA where unusable, coverage [H,W] uint8).
 
-    Both cubes come from the SAME TESSERA tile, so they already share a grid — no alignment
+    Both cubes come from the SAME source tile, so they already share a grid — no alignment
     or resampling is needed or done here.
     """
     if raw_a.shape != raw_b.shape:

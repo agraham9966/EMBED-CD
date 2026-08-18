@@ -1280,6 +1280,70 @@ def test_the_tile_estimate_asks_the_tiler_when_it_can():
     dock.cleanup()
 
 
+def test_the_worker_interpreter_is_found_and_a_failed_start_is_reported():
+    """Two halves of the same bug, which shipped through 0.29.0 as a silent hang off Windows.
+
+    `_python_exe` only ever looked for `python.exe` and otherwise returned bare "python". On
+    Linux and macOS QGIS puts the interpreter at `<prefix>/bin/python3` and most current
+    distributions have no `python` at all, so the worker could not start.
+
+    And a failed start is INVISIBLE: measured under QGIS 4.0.1, QProcess emits
+    errorOccurred(FailedToStart) and never emits `finished`. The dock listened only for
+    `finished`, so `self.proc` stayed set — Run disabled, progress bar spinning, no message,
+    no way out but restarting QGIS. Whatever goes wrong, the UI has to come back.
+
+    Only the first half is platform-specific, so this asserts it for whichever platform is
+    running; the reporting half is checked everywhere.
+    """
+    import os
+    from qgis.PyQt.QtWidgets import QMainWindow
+    from qgis.PyQt.QtCore import QProcess
+    from qgis.gui import QgsMapCanvas
+    from embed_cd_qgis.dock import ChangeDock, _scoped
+
+    class _Bar:
+        def pushMessage(self, *a, **k):
+            pass
+
+    class _Iface:
+        def __init__(self, win, canvas):
+            self._w, self._c = win, canvas
+
+        def mainWindow(self):
+            return self._w
+
+        def mapCanvas(self):
+            return self._c
+
+        def messageBar(self):
+            return _Bar()
+
+    dock = ChangeDock(_Iface(QMainWindow(), QgsMapCanvas()))
+
+    exe = dock._python_exe()
+    # The point of the fix: on THIS platform it must resolve to something that exists, not to
+    # a bare name that may not be on PATH.
+    assert os.path.isfile(exe), f"_python_exe returned {exe!r}, which is not a file"
+
+    # A failed start must release the UI and say why.
+    dock.proc = QProcess(dock)
+    dock.progress.setVisible(True)
+    dock._on_proc_error(_scoped(QProcess, "ProcessError", "FailedToStart"))
+    assert dock.proc is None, "a worker that never started must not leave the dock busy"
+    assert not dock.progress.isVisible(), "the progress bar must stop"
+    assert "Could not start Python" in dock.status.text(),         f"the failure has to be stated; status was {dock.status.text()!r}"
+
+    # Crashes and I/O errors ARE followed by `finished`, so handling them here too would clear
+    # self.proc out from under it.
+    dock.proc = QProcess(dock)
+    dock._on_proc_error(_scoped(QProcess, "ProcessError", "Crashed"))
+    assert dock.proc is not None, "only FailedToStart is terminal here; `finished` handles the rest"
+    dock.proc = None
+
+    dock.deleteLater()
+    print(f"ok worker interpreter resolves to {os.path.basename(exe)}, failed start reports itself")
+
+
 # NOT COVERED HERE: class-colour sync and the dashed outline for labelled objects.
 #
 # The feature is verified — a scratch script drives the panel end to end and confirms the
@@ -1317,4 +1381,5 @@ if __name__ == "__main__":
     test_steps_fold_once_and_keep_their_answer_in_the_title()
     test_switching_between_areas_restores_each_one()
     test_the_tile_estimate_asks_the_tiler_when_it_can()
+    test_the_worker_interpreter_is_found_and_a_failed_start_is_reported()
     print("all ok")

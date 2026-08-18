@@ -94,7 +94,7 @@ class OvRHead:
         # Baseline+delta is the default because a class is usually a KIND OF CHANGE, and naming
         # the change explicitly beats making the model infer it from two absolute states.
         # Google's comparison of embedding configurations found the same, as did this codebase
-        # independently in tessera_paint/change.py — hence baseline AND delta, not delta alone.
+        # independently by an earlier prototype here — hence baseline AND delta, not delta alone.
         #
         # What it is actually worth, measured over 12 seeds rather than assumed: for a class
         # whose members reached the same end state from DIFFERENT starting land cover, mean

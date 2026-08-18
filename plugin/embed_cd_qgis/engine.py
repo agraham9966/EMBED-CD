@@ -8,8 +8,8 @@ version survives and the new UI runs against it. That shipped once, in 0.7.1: a 
 a message that points at the new code while the actual fault is the old code still being loaded.
 
 Importing the engine as a subpackage of the plugin means QGIS's upgrader purges it along with
-everything else, so an upgraded plugin can never run last version's engine. This is gotcha 1 in
-HANDOFF.md, learned on Tessera Paint and not carried over to Change until it bit here too.
+everything else, so an upgraded plugin can never run last version's engine. This was learned
+once on a sibling plugin and not carried across until it bit here too.
 
 The top-level fallback is for dev mode, where the plugin folder is a symlink into the repo and
 there is no vendored copy; `__init__.py` puts the repo root on sys.path for that case.

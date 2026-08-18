@@ -217,7 +217,7 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# EMBED-ME project-specific
+# EMBED-CD project-specific
 releases/
 docs/
 HANDOFF*.md

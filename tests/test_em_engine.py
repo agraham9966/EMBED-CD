@@ -1,4 +1,4 @@
-"""Tessera Change engine self-check. Run: python tests/test_tc_engine.py
+"""EMBED-CD engine self-check. Run: python tests/test_em_engine.py
 
 Covers the three things that make a TILED change mosaic correct:
   1. scoring is absolute and nodata is a code (so tiles are comparable -> no seams)

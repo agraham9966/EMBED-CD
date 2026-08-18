@@ -1047,11 +1047,27 @@ class ChangeDock(QDockWidget):
         self._sync()
 
     def _python_exe(self):
-        for c in (os.path.join(sys.exec_prefix, "python.exe"),
-                  os.path.join(os.environ.get("PYTHONHOME", ""), "python.exe")):
+        """The interpreter to run the worker with.
+
+        NOT `sys.executable` — inside QGIS that is the QGIS binary itself, which would
+        re-launch the application rather than run a module.
+
+        Both platform layouts have to be here. QGIS on Windows puts python.exe beside
+        `sys.exec_prefix`; on Linux and macOS it is `bin/python3` under the same prefix, and
+        the interpreter is called python3 — plain `python` does not exist on most current
+        distributions. Falling back to bare "python" therefore failed to start at all off
+        Windows, and (see `_run`) a failed start is silent, so the dock simply hung.
+        """
+        cands = [os.path.join(sys.exec_prefix, "python.exe"),
+                 os.path.join(os.environ.get("PYTHONHOME", ""), "python.exe"),
+                 os.path.join(sys.exec_prefix, "bin", "python3"),
+                 os.path.join(sys.exec_prefix, "bin", "python"),
+                 os.path.join(os.environ.get("PYTHONHOME", ""), "bin", "python3")]
+        for c in cands:
             if c and os.path.isfile(c):
                 return c
-        return "python"
+        found = shutil.which("python3") or shutil.which("python")
+        return found or "python3"
 
     def _engine_root(self):
         here = os.path.dirname(os.path.abspath(__file__))
@@ -1136,6 +1152,12 @@ class ChangeDock(QDockWidget):
         self.proc.setProcessEnvironment(env)
         self.proc.readyReadStandardOutput.connect(self._on_output)
         self.proc.finished.connect(self._on_finished)
+        # `finished` is NOT emitted when the process never starts — measured: a bad executable
+        # emits errorOccurred(FailedToStart) and nothing else. Listening only for `finished`
+        # left `self.proc` set forever, so Run stayed disabled and the progress bar span with
+        # no message and no way out but restarting QGIS. Whatever goes wrong, the UI has to
+        # come back.
+        self.proc.errorOccurred.connect(self._on_proc_error)
         self.progress.setRange(0, 0)
         self.progress.setVisible(True)
         self.status.setText("Checking coverage…")
@@ -1183,6 +1205,30 @@ class ChangeDock(QDockWidget):
                                     "area changed.")
             elif line.startswith("ERR "):
                 self.status.setText(line[4:])
+
+    def _on_proc_error(self, error):
+        """The worker could not be started (or died mid-flight without `finished`).
+
+        Only FailedToStart is terminal here: Crashed and the read/write errors are followed by
+        `finished`, and handling those twice would clear `self.proc` out from under it.
+        """
+        from qgis.PyQt.QtCore import QProcess as _QP
+        failed_to_start = _scoped(_QP, "ProcessError", "FailedToStart")
+        if error != failed_to_start:
+            return
+        exe = self._python_exe()
+        if self.proc is not None:
+            self.proc.deleteLater()
+            self.proc = None
+        self.progress.setVisible(False)
+        self.status.setText(
+            f"Could not start Python to run the job (tried '{exe}'). The plugin runs its "
+            "download in a separate process using QGIS's own interpreter; please report this "
+            "with your platform and QGIS version.")
+        self.iface.messageBar().pushMessage(
+            "EMBED-CD", "Could not start the worker process — see the panel for details.",
+            level=_scoped(Qgis, "MessageLevel", "Critical"), duration=8)
+        self._sync()
 
     def _on_finished(self, exit_code, _status):
         self._on_output()

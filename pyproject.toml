@@ -1,12 +1,17 @@
 [project]
-name = "tessera_paint"
-version = "0.1.0"
-description = "Engine for the TESSERA QGIS similarity/mask tool: fetch precomputed pixel embeddings and run similarity/masking. QGIS-free, testable."
+name = "embed_cd"
+version = "0.30.0"
+description = "Engine for the EMBED-CD QGIS plugin: tiled year-over-year change maps from AlphaEarth satellite embeddings, plus an editable classifier head. QGIS-free, testable."
 requires-python = ">=3.9"
+license = "AGPL-3.0-or-later"
+# GDAL is deliberately absent: the engine uses osgeo.gdal, which ships with QGIS and is not
+# reasonably pip-installable. That is the whole reason rasterio was dropped — the plugin has
+# to work with no pip step at all. Installing this package is only for testing the engine
+# outside QGIS, and even then GDAL has to come from somewhere else.
 dependencies = [
     "numpy",
-    "geotessera",   # Tessera Paint only
-    "pyarrow",      # EMBED-CD: reads the published COG index (parquet)
+    "scipy",     # ndimage (connected components) and optimize (the logistic head)
+    "pyarrow",   # reads the published COG index (parquet), once
 ]
 
 [build-system]
@@ -14,4 +19,4 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["tessera_paint"]
+packages = ["embed_cd"]

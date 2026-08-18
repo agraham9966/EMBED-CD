@@ -135,9 +135,10 @@ def process_tile(src, tile, year_a, year_b, out_grid, out_dir, cell_px=None,
     transform = tr_a if tr_a is not None else tr_b
 
     # Place the tile by its ACTUAL fetched bounds, never by its identifier. This cost a whole
-    # debugging cycle under TESSERA (whose tiles are named by centre, so name-based placement
-    # offset every tile by half a tile and left a grid of gaps) — the rule stands regardless of
-    # source: a fetch is allowed to return fewer rows/cols than asked for at a COG's edge.
+    # debugging cycle against an earlier data source, whose tiles were named by their CENTRE:
+    # name-based placement offset every tile by half a tile and left a grid of gaps. The rule
+    # stands regardless of source — a fetch is allowed to return fewer rows/cols than asked
+    # for at a COG's edge.
     ref = a if a is not None else b
     h0, w0 = ref.shape[:2]
     win = G.window_for_bounds(out_grid, array_bounds(h0, w0, transform), crs)
@@ -203,7 +204,7 @@ def run(bbox, year_a, year_b, out_dir, dst_crs="EPSG:3857", res_m=10.0,
     out_grid = G.make_grid(bbox, dst_crs, res_m)
     os.makedirs(out_dir, exist_ok=True)
 
-    # ponytail: tiles run one at a time. The old TESSERA path needed a prefetch thread because
+    # ponytail: tiles run one at a time. An earlier source needed a prefetch thread because
     # a whole 150 MB tile had to land on disk before it was usable; a COG window read is
     # already parallel INSIDE GDAL (GDAL_HTTP_MULTIRANGE issues concurrent range requests), so
     # a thread pool here would mostly contend for the same bandwidth. If tile throughput ever
