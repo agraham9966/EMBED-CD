@@ -1618,13 +1618,14 @@ def test_the_output_crs_must_be_able_to_express_metres():
     dock = ChangeDock(_Iface(QMainWindow(), QgsMapCanvas()))
     original = QgsProject.instance().crs()
     try:
+        dock.bbox = (-114.78517, 50.45817, -114.77106, 50.46722)   # the reported area, UTM 11N
         for authid, expect, why in (
-                ("EPSG:3857", "EPSG:3857", "metres, and the default"),
-                ("EPSG:32611", "EPSG:32611", "a metric projected CRS is used as-is"),
-                ("EPSG:3400", "EPSG:3400", "Alberta 10-TM, metres"),
-                ("EPSG:4326", "EPSG:3857", "degrees"),
-                ("EPSG:4269", "EPSG:3857", "degrees (NAD83)"),
-                ("EPSG:2263", "EPSG:3857", "US survey FEET, the quiet version"),
+                ("EPSG:32611", "EPSG:32611", "already the right UTM zone, used as-is"),
+                ("EPSG:3400", "EPSG:3400", "Alberta 10-TM: projected and true to scale here"),
+                ("EPSG:3857", "EPSG:32611", "Web Mercator: metric in NAME only, 36% short here"),
+                ("EPSG:4326", "EPSG:32611", "degrees"),
+                ("EPSG:4269", "EPSG:32611", "degrees (NAD83)"),
+                ("EPSG:2263", "EPSG:32611", "US survey feet, and the wrong side of the continent"),
         ):
             crs = QgsCoordinateReferenceSystem(authid)
             if not crs.isValid():
@@ -1632,20 +1633,90 @@ def test_the_output_crs_must_be_able_to_express_metres():
             QgsProject.instance().setCrs(crs)
             got = dock._target_crs()
             assert got == expect, f"project {authid} ({why}) -> {got}, expected {expect}"
+
+        # The measurement behind that: Web Mercator's metre is not a ground metre away from
+        # the equator, which is why the test is on distance and not on units.
+        merc = dock._ground_metres("EPSG:3857")
+        utm = dock._ground_metres("EPSG:32611")
+        assert 600 < merc < 700, f"1000 Mercator units should be ~643 m here, measured {merc}"
+        assert abs(utm - 1000.0) < 5, f"1000 UTM metres should be ~1000 m, measured {utm}"
         # Close the loop: the CRS this returns must actually produce a usable grid. Checking
         # only the authid would pass even if the fallback itself were degenerate.
         from embed_cd import grid as G
         QgsProject.instance().setCrs(QgsCoordinateReferenceSystem("EPSG:4326"))
-        bbox = (-114.78517, 50.45817, -114.77106, 50.46722)      # the reported 1 km area
+        bbox = dock.bbox                                          # the reported 1 km area
         good = G.make_grid(bbox, dock._target_crs(), 10.0)
         bad = G.make_grid(bbox, "EPSG:4326", 10.0)
-        assert min(good.width, good.height) > 100,             f"the fallback CRS still gives a {good.width}x{good.height} grid"
         assert min(bad.width, bad.height) == 1,             "the degenerate case no longer reproduces — has make_grid changed?"
+        # ~1 km at 10 m ground metres is ~100 px a side. Web Mercator used to give ~158 here,
+        # which is the oversampling this change removes.
+        assert 95 <= good.width <= 110 and 95 <= good.height <= 110,             f"expected ~100 px for a 1 km area at 10 m, got {good.width}x{good.height}"
     finally:
         QgsProject.instance().setCrs(original)
     dock.deleteLater()
-    print(f"ok output CRS must be metric: 1 km area is {good.width}x{good.height} px via the "
-          f"fallback, {bad.width}x{bad.height} px if the project CRS were used raw")
+    print(f"ok output CRS is measured, not assumed: 1 km area is {good.width}x{good.height} px "
+          f"in UTM (~10 m ground pixels), {bad.width}x{bad.height} px if the project CRS were "
+          f"used raw")
+
+
+def test_the_panel_and_the_job_agree_on_the_output_size():
+    """The panel must not compute the output size a second way.
+
+    It used to derive pixels from kilometres and the Detail figure, which silently assumed the
+    output CRS was true to scale. Web Mercator is not, so on a 10x10 km area the panel promised
+    1000x1000 px while the job wrote 1525x1535 at 49N and 2670x2688 at 68N — under-reporting by
+    1/cos(lat)^2, up to 7x at 68N.
+
+    That is not cosmetic: `poly_gb` comes from the same number, so the confirmation that exists
+    to stop 'Generate Embedded Vector Set' running out of memory was wrong by the same factor.
+
+    This is the third time the panel and the engine have disagreed about a quantity they both
+    compute (tile count, output CRS, output size). The fix is the same each time — ask the
+    engine — and this test is what stops the fourth.
+    """
+    import math
+    from qgis.PyQt.QtWidgets import QMainWindow
+    from qgis.core import QgsProject, QgsCoordinateReferenceSystem
+    from qgis.gui import QgsMapCanvas
+    from embed_cd_qgis.dock import ChangeDock, _DETAIL
+    from embed_cd import grid as G
+
+    class _Iface:
+        def __init__(self, win, canvas):
+            self._w, self._c = win, canvas
+
+        def mainWindow(self):
+            return self._w
+
+        def mapCanvas(self):
+            return self._c
+
+    dock = ChangeDock(_Iface(QMainWindow(), QgsMapCanvas()))
+    original = QgsProject.instance().crs()
+    try:
+        QgsProject.instance().setCrs(QgsCoordinateReferenceSystem("EPSG:3857"))
+        for lat in (0.0, 30.0, 49.0, 50.46, 60.0, 68.0):
+            km = 10.0
+            dlon = km / (111.32 * math.cos(math.radians(lat))) / 2
+            dlat = km / 110.57 / 2
+            dock.bbox = (-114.0 - dlon, lat - dlat, -114.0 + dlon, lat + dlat)
+            for label, res in _DETAIL.items():
+                dock.detail.setCurrentText(label)
+                e = dock._estimate()
+                g = G.make_grid(dock.bbox, dock._target_crs(), res)
+                assert e["out_px"] == float(g.width) * g.height, (
+                    f"at {lat}N, {label}: panel says {e['out_px']:.0f} px, "
+                    f"the job writes {g.width * g.height} px")
+
+            # And a pixel must now be the size it claims to be, wherever you are.
+            dock.detail.setCurrentText("10 m (full)")
+            ground = dock._ground_metres(dock._target_crs())
+            assert abs(10.0 * ground / 1000.0 - 10.0) < 0.3, (
+                f"at {lat}N a 10 m pixel covers {10.0 * ground / 1000.0:.2f} m of ground")
+    finally:
+        QgsProject.instance().setCrs(original)
+    dock.deleteLater()
+    print("ok panel and job agree on output size, and 10 m means 10 m at every latitude")
 
 
 # NOT COVERED HERE: class-colour sync and the dashed outline for labelled objects.
@@ -1691,4 +1762,5 @@ if __name__ == "__main__":
     test_a_transition_class_name_can_be_typed_as_one_field_or_two()
     test_stepping_respects_the_selected_class_and_skips_what_you_answered()
     test_the_output_crs_must_be_able_to_express_metres()
+    test_the_panel_and_the_job_agree_on_the_output_size()
     print("all ok")

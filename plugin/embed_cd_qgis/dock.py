@@ -794,8 +794,19 @@ class ChangeDock(QDockWidget):
         approx = tiles is None
         if approx:
             tiles = (math.ceil(w / tile_km) + 1) * (math.ceil(h / tile_km) + 1)
-        px = (w * 1000 / res) * (h * 1000 / res)
-        across = min(w, h) * 1000 / res         # pixels along the SHORT side of the output
+        # ASK the engine for the output size rather than deriving it again. Deriving it from
+        # km and Detail assumed the output CRS was true to scale, and Web Mercator is not:
+        # measured on a 10x10 km area, the panel promised 1000x1000 px while the job wrote
+        # 1525x1535 at 49N and 2670x2688 at 68N — under-reporting by 1/cos(lat)^2, up to 7x.
+        # `poly_gb` below is computed from this number, so the confirmation that exists to stop
+        # 'Generate Embedded Vector Set' exhausting memory was wrong by the same factor.
+        #
+        # Same lesson as the tile count above, which stopped using a formula for the same
+        # reason: when the engine can answer, ask it.
+        from .engine import grid as _G
+        out_grid = _G.make_grid(self.bbox, self._target_crs(), res)
+        px = float(out_grid.width) * float(out_grid.height)
+        across = float(min(out_grid.width, out_grid.height))   # pixels along the SHORT side
         return {"w": w, "h": h, "tiles": tiles, "approx": approx, "factor": factor,
                 "src_m": SRC.NATIVE_RES * factor,
                 "gb": tiles * 2 * 67e6 / 1e9,
@@ -1236,14 +1247,18 @@ class ChangeDock(QDockWidget):
         dst_crs = self._target_crs()
         project_crs = QgsProject.instance().crs().authid()
         if project_crs and project_crs != dst_crs:
-            # Never silent: the layer lands in a CRS the user did not choose, and the reason
-            # (their project cannot express a pixel size in metres) is not something they can
-            # infer from the result.
+            # Never silent: the layer lands in a CRS the user did not choose, and the reason is
+            # not something they could infer from the result.
+            ground = self._ground_metres(project_crs)
+            res_m = _DETAIL[self.detail.currentText()]
+            why = (f"{project_crs} is not in metres"
+                   if ground is None else
+                   f"a {res_m:g} m pixel in {project_crs} covers only "
+                   f"{res_m * ground / 1000.0:.1f} m of ground here")
             self.iface.messageBar().pushMessage(
                 "EMBED-CD",
-                f"Project CRS {project_crs} is not in metres, so Detail could not be applied "
-                f"in it. Writing the change map in {dst_crs}; QGIS will reproject it for "
-                f"display.",
+                f"Detail is in ground metres, and {why}. Writing the change map in {dst_crs} "
+                f"instead; QGIS reprojects it for display.",
                 level=_scoped(Qgis, "MessageLevel", "Info"), duration=8)
         spec = {
             "bbox": list(self.bbox), "year_a": ya, "year_b": yb,
@@ -1606,36 +1621,83 @@ class ChangeDock(QDockWidget):
     # ---------------- helpers ----------------
     _METRIC_FALLBACK = "EPSG:3857"
 
-    def _target_crs(self):
-        """The CRS the change map is written in: the project's, when it can carry a pixel size
-        given in METRES, and Web Mercator when it cannot.
+    def _utm_crs(self):
+        """The UTM zone the drawn area sits in — where a metre really is a metre.
 
-        Detail is metres. Handed to a GEOGRAPHIC project CRS it becomes 10 DEGREES, the output
-        grid collapses to a single pixel, every tile then falls outside it and the job ends with
-        "No tiles produced a result" and nothing else to go on. Measured on a 1 km area at
-        50.46N: 158x159 px in EPSG:3857, 105x105 in the local UTM zone, and 1x1 in EPSG:4326,
-        EPSG:4269 and OGC:CRS84 alike — no tiles kept in any of the three. The panel meanwhile
-        reported "output 100 x 100 px", because the estimate is computed from kilometres and
-        never consulted the project CRS, so the UI and the run disagreed with no way to tell.
-
-        A CRS in feet is the same mistake more quietly: the map comes out at roughly a third of
-        the requested resolution rather than empty. So the test is not "is it geographic" but
-        "are its units metres", asked by comparing against a CRS known to be in metres rather
-        than by naming an enum that moved between QGIS versions.
+        None above 84 degrees, where UTM is not defined. A large area gets the zone of its
+        CENTRE and tiles from neighbouring zones are reprojected into it, which is what already
+        happened with Web Mercator; the difference is the error. UTM grows to about 0.6% at
+        10 degrees from the central meridian and 2.5% at 20, against Web Mercator's 56% at
+        50N — so even a continent-wide job is an order of magnitude better off.
         """
-        crs = QgsProject.instance().crs()
-        a = crs.authid()
-        if not a.startswith("EPSG:"):
-            return self._METRIC_FALLBACK
+        if self.bbox is None:
+            return None
+        lo, la, hi, ha = self.bbox
+        lon, lat = (lo + hi) / 2.0, (la + ha) / 2.0
+        if abs(lat) > 84.0:
+            return None
+        zone = min(60, max(1, int((lon + 180.0) // 6.0) + 1))
+        return f"EPSG:{(32600 if lat >= 0 else 32700) + zone}"
+
+    def _ground_metres(self, authid, span=1000.0):
+        """How much ground `span` units of this CRS actually cover, at the area's centre.
+
+        Units are the wrong question. Web Mercator is nominally metres and its metres are 36%
+        short at 50N — which is the whole bug: a "10 m" map was writing pixels 6.4 m across.
+        So measure instead of classifying: step `span` east in the CRS, come back to lon/lat,
+        and ask the ellipsoid how far that really was.
+
+        Returns None when it cannot be measured, which callers treat as "do not trust it".
+        """
+        if self.bbox is None:
+            return None
         try:
-            if crs.isGeographic():
-                return self._METRIC_FALLBACK
-            metric = QgsCoordinateReferenceSystem(self._METRIC_FALLBACK)
-            if crs.mapUnits() != metric.mapUnits():
-                return self._METRIC_FALLBACK
+            from qgis.core import QgsDistanceArea, QgsPointXY
+            crs = QgsCoordinateReferenceSystem(authid)
+            if not crs.isValid() or crs.isGeographic():
+                return None
+            wgs = QgsCoordinateReferenceSystem("EPSG:4326")
+            ctx = QgsProject.instance().transformContext()
+            lo, la, hi, ha = self.bbox
+            lon, lat = (lo + hi) / 2.0, (la + ha) / 2.0
+            here = QgsPointXY(lon, lat)
+            p = QgsCoordinateTransform(wgs, crs, ctx).transform(here)
+            there = QgsCoordinateTransform(crs, wgs, ctx).transform(
+                QgsPointXY(p.x() + span, p.y()))
+            da = QgsDistanceArea()
+            da.setSourceCrs(wgs, ctx)
+            da.setEllipsoid("WGS84")
+            d = float(da.measureLine(here, there))
+            return d if d > 0 else None
         except Exception:
-            return self._METRIC_FALLBACK        # unknown units: the safe answer is the metre one
-        return a
+            return None
+
+    def _target_crs(self):
+        """The CRS the change map is written in.
+
+        Detail is a figure in METRES, so this has to be a CRS where a metre is a metre. Two
+        different failures came from ignoring that:
+
+          * a GEOGRAPHIC project turned 10 m into 10 degrees, collapsed the grid to one pixel
+            and dropped every tile — the job then said only "No tiles produced a result".
+          * Web Mercator, the old default, is nominally metric but not true to scale: a 10 m
+            setting wrote 6.37 m pixels at 50.5N, 5.00 m at 60N and 3.75 m at 68N. Nothing was
+            wrong in the output, it was just silently oversampled — ~2.5x the disk and memory
+            at mid-latitudes for no extra information, under a label that said otherwise.
+
+        Order of preference:
+          1. the project's own CRS, when it is true to scale here — respects a deliberate
+             national-grid choice and skips a pointless reprojection
+          2. the area's UTM zone
+          3. Web Mercator, only when there is no area yet or UTM does not apply (beyond 84
+             degrees), where being approximately right beats refusing to run
+        """
+        a = QgsProject.instance().crs().authid()
+        if a.startswith("EPSG:"):
+            ground = self._ground_metres(a)
+            if ground is not None and abs(ground - 1000.0) <= 20.0:      # within 2%
+                return a
+        return self._utm_crs() or self._METRIC_FALLBACK
 
     def _cache_dir(self):
         from qgis.core import QgsApplication
