@@ -97,7 +97,18 @@ def main():
             cell_m=spec.get("cell_m"),
         )
         if not records:
-            print("ERR No tiles produced a result.", flush=True)
+            # Say WHAT was tried, not just that it failed. This message used to be the entire
+            # output of a failed run, and the commonest cause — an output CRS that cannot
+            # express the resolution in metres, so the grid collapses to a pixel or two and
+            # every tile falls outside it — was indistinguishable from a network problem.
+            why = ""
+            if min(g.width, g.height) < 4:
+                why = (f" The {g.width}x{g.height} px output grid is too small to hold any of "
+                       f"them, which happens when the output CRS ({spec['dst_crs']}) is not in "
+                       f"metres — Detail is metres, so in a degrees-based CRS it is read as "
+                       f"degrees.")
+            print(f"ERR No tiles produced a result. {len(all_tiles)} tile(s) cover this area "
+                  f"but none landed in the {g.width}x{g.height} px output grid.{why}", flush=True)
             return 2
         # The canonical name is written for the user (a stable file to reopen), but the LAYER
         # stays on the last revision — pointing it back at a path it has already opened this

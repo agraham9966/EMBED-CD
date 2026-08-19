@@ -1579,6 +1579,75 @@ def test_stepping_respects_the_selected_class_and_skips_what_you_answered():
     print("ok arrows scope to the selected class and skip what you already labelled")
 
 
+def test_the_output_crs_must_be_able_to_express_metres():
+    """A reported failure: every run in one project ended with "No tiles produced a result"
+    and nothing else, at any area size.
+
+    Detail is in METRES but was handed straight to the project's CRS. In a geographic project
+    10 m becomes 10 DEGREES, so the output grid collapses to a single pixel, every tile falls
+    outside it, and the job reports nothing usable. Measured on a 1 km area at 50.46N:
+
+        EPSG:3857   158x159 px   1/1 tiles kept
+        EPSG:32611  105x105 px   1/1 tiles kept
+        EPSG:4326       1x1 px   0/1 tiles kept   <- the bug
+        EPSG:4269       1x1 px   0/1 tiles kept
+        OGC:CRS84       1x1 px   0/1 tiles kept
+
+    The panel meanwhile said "output 100 x 100 px", because the estimate works from kilometres
+    and never consulted the project CRS — so the UI and the run disagreed silently.
+
+    A CRS in FEET is the same mistake, quieter: the map comes out at roughly a third of the
+    asked-for resolution instead of empty. Hence the check is on the units, not on whether the
+    CRS happens to be geographic.
+    """
+    from qgis.PyQt.QtWidgets import QMainWindow
+    from qgis.core import QgsCoordinateReferenceSystem, QgsProject
+    from qgis.gui import QgsMapCanvas
+    from embed_cd_qgis.dock import ChangeDock
+
+    class _Iface:
+        def __init__(self, win, canvas):
+            self._w, self._c = win, canvas
+
+        def mainWindow(self):
+            return self._w
+
+        def mapCanvas(self):
+            return self._c
+
+    dock = ChangeDock(_Iface(QMainWindow(), QgsMapCanvas()))
+    original = QgsProject.instance().crs()
+    try:
+        for authid, expect, why in (
+                ("EPSG:3857", "EPSG:3857", "metres, and the default"),
+                ("EPSG:32611", "EPSG:32611", "a metric projected CRS is used as-is"),
+                ("EPSG:3400", "EPSG:3400", "Alberta 10-TM, metres"),
+                ("EPSG:4326", "EPSG:3857", "degrees"),
+                ("EPSG:4269", "EPSG:3857", "degrees (NAD83)"),
+                ("EPSG:2263", "EPSG:3857", "US survey FEET, the quiet version"),
+        ):
+            crs = QgsCoordinateReferenceSystem(authid)
+            if not crs.isValid():
+                continue                      # CRS not in this build's database; skip, do not fail
+            QgsProject.instance().setCrs(crs)
+            got = dock._target_crs()
+            assert got == expect, f"project {authid} ({why}) -> {got}, expected {expect}"
+        # Close the loop: the CRS this returns must actually produce a usable grid. Checking
+        # only the authid would pass even if the fallback itself were degenerate.
+        from embed_cd import grid as G
+        QgsProject.instance().setCrs(QgsCoordinateReferenceSystem("EPSG:4326"))
+        bbox = (-114.78517, 50.45817, -114.77106, 50.46722)      # the reported 1 km area
+        good = G.make_grid(bbox, dock._target_crs(), 10.0)
+        bad = G.make_grid(bbox, "EPSG:4326", 10.0)
+        assert min(good.width, good.height) > 100,             f"the fallback CRS still gives a {good.width}x{good.height} grid"
+        assert min(bad.width, bad.height) == 1,             "the degenerate case no longer reproduces — has make_grid changed?"
+    finally:
+        QgsProject.instance().setCrs(original)
+    dock.deleteLater()
+    print(f"ok output CRS must be metric: 1 km area is {good.width}x{good.height} px via the "
+          f"fallback, {bad.width}x{bad.height} px if the project CRS were used raw")
+
+
 # NOT COVERED HERE: class-colour sync and the dashed outline for labelled objects.
 #
 # The feature is verified — a scratch script drives the panel end to end and confirms the
@@ -1621,4 +1690,5 @@ if __name__ == "__main__":
     test_the_two_classify_modes_reread_the_same_labels()
     test_a_transition_class_name_can_be_typed_as_one_field_or_two()
     test_stepping_respects_the_selected_class_and_skips_what_you_answered()
+    test_the_output_crs_must_be_able_to_express_metres()
     print("all ok")

@@ -1233,9 +1233,21 @@ class ChangeDock(QDockWidget):
         if os.path.exists(cancel_flag):
             os.remove(cancel_flag)
 
+        dst_crs = self._target_crs()
+        project_crs = QgsProject.instance().crs().authid()
+        if project_crs and project_crs != dst_crs:
+            # Never silent: the layer lands in a CRS the user did not choose, and the reason
+            # (their project cannot express a pixel size in metres) is not something they can
+            # infer from the result.
+            self.iface.messageBar().pushMessage(
+                "EMBED-CD",
+                f"Project CRS {project_crs} is not in metres, so Detail could not be applied "
+                f"in it. Writing the change map in {dst_crs}; QGIS will reproject it for "
+                f"display.",
+                level=_scoped(Qgis, "MessageLevel", "Info"), duration=8)
         spec = {
             "bbox": list(self.bbox), "year_a": ya, "year_b": yb,
-            "out_dir": self.out_dir, "dst_crs": self._target_crs(),
+            "out_dir": self.out_dir, "dst_crs": dst_crs,
             "res_m": _DETAIL[self.detail.currentText()],
             "cache_dir": self._cache_dir(), "name": f"change_{ya}_{yb}",
             # Pool the embeddings while the tiles are briefly in memory. Always on: it costs
@@ -1592,9 +1604,38 @@ class ChangeDock(QDockWidget):
             self.status.setText(f"Save failed: {exc}")
 
     # ---------------- helpers ----------------
+    _METRIC_FALLBACK = "EPSG:3857"
+
     def _target_crs(self):
-        a = QgsProject.instance().crs().authid()
-        return a if a.startswith("EPSG:") else "EPSG:3857"
+        """The CRS the change map is written in: the project's, when it can carry a pixel size
+        given in METRES, and Web Mercator when it cannot.
+
+        Detail is metres. Handed to a GEOGRAPHIC project CRS it becomes 10 DEGREES, the output
+        grid collapses to a single pixel, every tile then falls outside it and the job ends with
+        "No tiles produced a result" and nothing else to go on. Measured on a 1 km area at
+        50.46N: 158x159 px in EPSG:3857, 105x105 in the local UTM zone, and 1x1 in EPSG:4326,
+        EPSG:4269 and OGC:CRS84 alike — no tiles kept in any of the three. The panel meanwhile
+        reported "output 100 x 100 px", because the estimate is computed from kilometres and
+        never consulted the project CRS, so the UI and the run disagreed with no way to tell.
+
+        A CRS in feet is the same mistake more quietly: the map comes out at roughly a third of
+        the requested resolution rather than empty. So the test is not "is it geographic" but
+        "are its units metres", asked by comparing against a CRS known to be in metres rather
+        than by naming an enum that moved between QGIS versions.
+        """
+        crs = QgsProject.instance().crs()
+        a = crs.authid()
+        if not a.startswith("EPSG:"):
+            return self._METRIC_FALLBACK
+        try:
+            if crs.isGeographic():
+                return self._METRIC_FALLBACK
+            metric = QgsCoordinateReferenceSystem(self._METRIC_FALLBACK)
+            if crs.mapUnits() != metric.mapUnits():
+                return self._METRIC_FALLBACK
+        except Exception:
+            return self._METRIC_FALLBACK        # unknown units: the safe answer is the metre one
+        return a
 
     def _cache_dir(self):
         from qgis.core import QgsApplication
