@@ -1,0 +1,3 @@
+# Documentation only. Deliberately NOT in pyproject.toml: the plugin's whole claim is that it
+# installs into QGIS with no pip step, and a docs dependency there would muddy that.
+mkdocs-material==9.5.49

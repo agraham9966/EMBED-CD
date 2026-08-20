@@ -1,0 +1,67 @@
+site_name: EMBED-CD
+site_description: Year-over-year land change maps from satellite embeddings, in QGIS.
+site_url: https://agraham9966.github.io/EMBED-CD/
+repo_url: https://github.com/agraham9966/EMBED-CD
+repo_name: agraham9966/EMBED-CD
+copyright: >
+  Documentation CC BY 4.0 · EMBED-CD is AGPL-3.0 ·
+  Satellite embeddings © Google / Google DeepMind (CC BY 4.0)
+
+docs_dir: docs
+
+# Local design notes live under docs/ but are not part of the site. They are gitignored too,
+# so CI never sees them — this is what keeps a local build honest against what CI builds.
+exclude_docs: |
+  superpowers/
+
+theme:
+  name: material
+  logo: assets/embed-cd-logo.png
+  favicon: assets/embed-cd-logo.png
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.top
+    - toc.follow
+    - content.code.copy
+    - search.highlight
+  palette:
+    # The site follows the reader's own light/dark preference, same principle the plugin's
+    # own styling uses: never assume which one they are in.
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: deep orange
+      toggle: {icon: material/weather-night, name: Switch to dark mode}
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: deep orange
+      toggle: {icon: material/weather-sunny, name: Switch to light mode}
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc: {permalink: true}
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight: {anchor_linenums: true}
+
+# Explicit, never inferred: the order below IS the argument, and how-it-works only works
+# read top to bottom.
+nav:
+  - Home: index.md
+  - Getting started:
+      - Install: getting-started/install.md
+      - Quickstart: getting-started/quickstart.md
+      - Worked example: getting-started/worked-example.md
+  - How it works: how-it-works.md
+  - Using it:
+      - Detail and cost: using-it/detail-and-cost.md
+      - Thresholds and objects: using-it/thresholds-and-objects.md
+      - Classifying: using-it/classifying.md
+      - Saving and areas: using-it/saving-and-areas.md
+  - Limitations: limitations.md
+  - Reference: reference.md
