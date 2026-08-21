@@ -1,6 +1,6 @@
 # EMBED-CD
 
-Year-over-year land change maps from satellite embeddings, inside QGIS. Draw a rectangle, pick
+Generate annual land change maps from satellite imagery rapidly using QGIS. Draw a rectangle, pick
 two years, press one button — then teach it what the changes *are* by clicking a few of them.
 
 Nothing to `pip install`, no account, no API key, and no model to train.

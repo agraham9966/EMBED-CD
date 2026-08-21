@@ -1334,11 +1334,32 @@ class ClassifyPanel(QWidget):
 
         Hit-tests the polygon layer directly rather than relying on it being the active layer —
         the active layer is a QGIS concept the user should not have to think about here.
+
+        The click arrives in the CANVAS's CRS and `setFilterRect` wants the LAYER's, and until
+        0.36 those were always the same thing, so nothing converted between them. Then the
+        change map moved to the area's UTM zone while projects stay in Web Mercator, and the
+        search rectangle started landing 14,000 km from the polygon it was aimed at. Every
+        click found nothing and labelling silently stopped working.
         """
-        tol = self.iface.mapCanvas().mapUnitsPerPixel() * 3
+        canvas = self.iface.mapCanvas()
+        tol = canvas.mapUnitsPerPixel() * 3
         rect = QgsRectangle(point.x() - tol, point.y() - tol,
                             point.x() + tol, point.y() + tol)
-        geom_pt = QgsGeometry.fromPointXY(QgsPointXY(point))
+        point = QgsPointXY(point)
+        try:
+            src = canvas.mapSettings().destinationCrs()
+            dst = self.layer.crs()
+            if src.isValid() and dst.isValid() and src != dst:
+                from qgis.core import QgsCoordinateTransform
+                tr = QgsCoordinateTransform(src, dst, QgsProject.instance())
+                # The RECTANGLE is transformed, not rebuilt from a tolerance, so the click
+                # tolerance stays three screen pixels rather than three of whatever unit the
+                # target CRS happens to use.
+                rect = tr.transformBoundingBox(rect)
+                point = tr.transform(point)
+        except Exception:
+            pass                    # no canvas CRS to speak of (tests): treat them as the same
+        geom_pt = QgsGeometry.fromPointXY(point)
         for f in self.layer.getFeatures(QgsFeatureRequest().setFilterRect(rect)):
             if f.geometry().intersects(geom_pt) or f.geometry().intersects(
                     QgsGeometry.fromRect(rect)):

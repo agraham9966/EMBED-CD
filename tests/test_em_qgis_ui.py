@@ -1719,6 +1719,85 @@ def test_the_panel_and_the_job_agree_on_the_output_size():
     print("ok panel and job agree on output size, and 10 m means 10 m at every latitude")
 
 
+def test_clicking_labels_a_polygon_when_the_canvas_crs_differs_from_the_layer():
+    """The 0.36 regression: click a polygon, nothing happens.
+
+    `toMapCoordinates` returns the CANVAS's CRS; `setFilterRect` wants the LAYER's. Until 0.36
+    the change map was written in the project's CRS so those were always the same object and
+    nothing converted between them. Then the output moved to the area's UTM zone while projects
+    stay in Web Mercator, and the search rectangle started landing 14,000 km away. Every click
+    found nothing, in silence.
+
+    The stub canvas the other panel tests use has no CRS at all, so this crossing was never
+    exercised — hence a real QgsMapCanvas here, deliberately set to a different CRS from the
+    layer.
+    """
+    import tempfile
+    from qgis.core import (QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsPointXY,
+                           QgsRectangle)
+    from qgis.gui import QgsMapCanvas
+    from embed_cd_qgis.classify import ClassifyPanel
+
+    d = tempfile.mkdtemp(prefix="aeclick_")
+    vrt = _tiny_job(d)
+
+    canvas = QgsMapCanvas()
+    canvas.setDestinationCrs(QgsCoordinateReferenceSystem("EPSG:3857"))
+
+    class Combo:
+        def __init__(self, v):
+            self.v = v
+
+        def currentText(self):
+            return self.v
+
+    class Host:
+        out_dir, vrt_path = d, vrt
+        year_a, year_b = Combo("2019"), Combo("2024")
+
+        def _threshold(self):
+            return 0.10
+
+    class Iface:
+        def mapCanvas(self):
+            return canvas
+
+    p = ClassifyPanel(Host(), Iface())
+    p.make_polygons()
+    assert p.layer is not None and len(p.polys) >= 1, p.polys
+    assert p.layer.crs().authid() == "EPSG:32610", p.layer.crs().authid()
+
+    feat = next(p.layer.getFeatures())
+    here = feat.geometry().centroid().asPoint()               # layer CRS, UTM 10N
+    to_canvas = QgsCoordinateTransform(p.layer.crs(), canvas.mapSettings().destinationCrs(),
+                                       QgsProject.instance())
+    clicked = to_canvas.transform(here)                       # what toMapCoordinates gives us
+
+    # Give the canvas a real scale so mapUnitsPerPixel is meaningful.
+    canvas.setExtent(QgsRectangle(clicked.x() - 2000, clicked.y() - 2000,
+                                  clicked.x() + 2000, clicked.y() + 2000))
+    apart = abs(clicked.x() - here.x())
+    assert apart > 1e6,         f"setup is not exercising the bug: the two CRSs differ by only {apart:.0f} m"
+
+    p.classes.append("cutblock")
+    p.colors["cutblock"] = "#d85a30"
+    p._refresh_list()
+    p.list.setCurrentRow(0)
+
+    p.label_at(clicked)
+    assert p.labels, (
+        f"a click {apart / 1000:.0f} km from the layer's own coordinates labelled nothing — "
+        "the click was not transformed into the layer's CRS")
+
+    # And right-click still removes it, on the same path.
+    p.label_at(clicked, clear=True)
+    assert not p.labels, "right-click did not remove the label"
+
+    QgsProject.instance().removeMapLayer(p.layer.id())
+    print(f"ok a click in canvas CRS labels the right polygon ({apart / 1000:.0f} km apart "
+          "in raw coordinates)")
+
+
 # NOT COVERED HERE: class-colour sync and the dashed outline for labelled objects.
 #
 # The feature is verified — a scratch script drives the panel end to end and confirms the
@@ -1763,4 +1842,5 @@ if __name__ == "__main__":
     test_stepping_respects_the_selected_class_and_skips_what_you_answered()
     test_the_output_crs_must_be_able_to_express_metres()
     test_the_panel_and_the_job_agree_on_the_output_size()
+    test_clicking_labels_a_polygon_when_the_canvas_crs_differs_from_the_layer()
     print("all ok")
