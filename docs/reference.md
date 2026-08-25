@@ -17,7 +17,7 @@ grid, tiles, hist, partial = job.run(
 ```
 
 `dst_crs` must be a CRS in which a metre is a metre — see
-[Detail and cost](using-it/detail-and-cost.md).
+[Detail, resolution and cost](how-it-works.md#detail-and-cost).
 
 Other entry points: `embed_cd.objects.polygonize` and `attach_vectors` cut objects and give
 them embeddings; `embed_cd.head.fit_from_classes` is the classifier; `embed_cd.store` handles
@@ -32,16 +32,36 @@ saying which practice.
 
 ### Why the dot product for change
 
-The embeddings are **L2-normalised to the unit hypersphere** — the AlphaEarth paper states they
-are "constrained to distribute uniformly in S⁶³" — so the dot product *is* the cosine of the
-angle between two years. Google's own dataset documentation makes the recommendation explicit:
-embeddings from different years "can be used for condition change detection by considering the
-dot product or angle between two embedding vectors" ([Earth Engine catalog][ee]).
+**This is the AlphaEarth paper's own method, not an adaptation of it** — specifically its
+supplementary section S4.1, *Predictors* (PDF pp. 44-45), which describes how the authors
+evaluated AEF on unsupervised change detection. They L2-normalise each pair of embeddings, take the dot product,
+and remap it "s.t. 0 = embeddings were the same, 1 = embeddings were on opposite poles":
+
+```text
+d = (1 - e_before . e_after) / 2          eq. 8
+```
+
+then chooses "a global threshold s on (0,1) to binarize all d". That is `embed_cd/score.py`
+line for line — the normalisation, the remap, and the global threshold.
+
+One difference worth knowing: they search s over [0.1 … 0.9]. Their evaluation is disaster
+events, where change is far larger than the land-cover change this tool is usually pointed at.
+Measured on a real Vancouver Island run, the 99th percentile of the score was 0.108 — the
+bottom of their range. Do not carry their thresholds over.
+
+Note this is a rescaled **dot product**, not the angle. For unit vectors the dot product is
+cos(theta), and the angle would be its arccos. The two order pixels identically, so the same
+objects clear a given cutoff, but they are not the same scale: `(1 - cos)/2` is roughly
+`theta^2/4` for small angles, so most real scores are squeezed into the bottom tenth of (0,1).
+
+The dot product is the natural comparison here because the embeddings live on the unit
+hypersphere — the paper trains them "to distribute uniformly in S63" via a batch-uniformity
+objective, and the [dataset documentation][ee] states they are "unit-length" and "do not
+require any additional normalization". We normalise anyway, exactly as equation 8 does.
 
 Conceptually this is Change Vector Analysis carried into a learned feature space rather than a
-spectral one: measure the vector between two dates, threshold its magnitude. What the embedding
-adds is that each "band" summarises a year of multi-sensor observation rather than one
-cloud-free acquisition.
+spectral one. What the embedding adds is that each "band" summarises a year of multi-sensor
+observation rather than one cloud-free acquisition.
 
 ### Why an absolute score, never a percentile stretch
 
@@ -77,6 +97,15 @@ recognises, and adding a class leaves the others untouched. Rifkin & Klautau's *
 One-Vs-All Classification* is the standard argument that this is as accurate as more elaborate
 multiclass schemes given well-regularised binary classifiers.
 
+The AlphaEarth authors reach for the same structure in section S4.1: "a one-vs-rest approach
+with a pure-linear model per class". We arrived at it independently — this head is a port of a
+prototype that predates our use of these embeddings — so treat that as convergence rather than
+derivation. Their version differs in ways that matter here: they fit a scikit-learn
+`RidgeClassifier` by ordinary least squares with no regularisation, and because their classes
+are "mutually exclusive" they simply take the highest-scoring one. Ours has to be able to
+answer *unknown*, which needs a calibrated probability per class, which is why the next section
+is about logistic regression rather than ridge.
+
 Abstention is Chow's **reject option**: decline to classify when no class clears its confidence
 bar. We use a **per-class** threshold rather than a single global one, following Fumera, Roli &
 Giacinto, *Reject Option with Multiple Thresholds*. Thresholds are calibrated **out of fold**,
@@ -87,10 +116,15 @@ held-out predictions cannot clear.
 
 L2-regularised logistic regression with balanced class weights, fitted by L-BFGS on
 standardised features, is the canonical **linear probe** — the standard protocol for using a
-frozen foundation model's representation. It is also how the AlphaEarth authors evaluate their
-own embeddings ("k-nearest neighbors, and linear layers fit to the features"). It refits in
-well under a second on a few hundred vectors, which is what lets the map recolour as fast as
-you can click.
+frozen foundation model's representation, and the AlphaEarth authors likewise evaluate theirs
+with "a linear predictor (or 'linear probe') and kNN".
+
+We differ from them deliberately. Their linear probe is a ridge classifier fitted by ordinary
+least squares, which returns unbounded scores; the phrase "logistic regression" does not appear
+in their paper. We need a **probability** per class, because the abstention bar and its
+out-of-fold calibration are both expressed as confidences — a score that can be any real number
+gives you nothing to threshold consistently. Logistic regression also refits in well under a
+second on a few hundred vectors, which is what lets the map recolour as fast as you can click.
 
 ### Why score on the source's own grid
 

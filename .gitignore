@@ -218,6 +218,10 @@ __marimo__/
 .streamlit/secrets.toml
 
 # EMBED-CD project-specific
+# Docs videos stay LOCAL for now, pending a decision on compressing them. They are served by
+# `mkdocs serve` from disk, so local previews still show them; the PUBLISHED site will show an
+# empty player until they are either committed or hosted elsewhere.
+docs/assets/*.mp4
 releases/
 # NOT docs/ — that is the documentation site's source and has to be tracked. Only the
 # design specs stay local; they are working notes, not published pages.

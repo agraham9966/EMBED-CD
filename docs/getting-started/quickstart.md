@@ -9,7 +9,15 @@ header keeps the answer you gave it, so a folded step still tells you what it is
 
 ## 1 · Area, years and output
 
-**Draw area on map**, then drag a rectangle. A line under the button tells you what that area
+**Draw area on map**, then drag a rectangle. 
+<video controls autoplay loop muted playsinline
+       style="width: 100%; border-radius: 4px; margin: 1.2em 0;">
+  <source src="../../assets/embed-cd_drawROI.mp4" type="video/mp4">
+  Your browser cannot play this video —
+  <a href="../../assets/embed-cd_drawROI.mp4">download it instead</a>.
+</video>
+
+A line under the button tells you what that area
 will cost *before* you commit to it:
 
 ```
@@ -22,7 +30,7 @@ Give it a **Name** if you like; its layers go into a QGIS group of that name, so
 can sit in one project without becoming a pile of near-identical entries.
 
 Pick **From** and **To** years (2017–2025), and a **Detail**. Leave Detail at *10 m (full)* for
-a small area — see [Detail and cost](../using-it/detail-and-cost.md) for when to change it.
+a small area — see [Detail, resolution and cost](../how-it-works.md#detail-and-cost) for when to change it.
 
 Set **Save to:** if you want to keep the results. Leave it empty and the run is scratch,
 discarded when QGIS closes.
@@ -79,7 +87,7 @@ Use the **identify** button beside the colour chip to click an object and read i
 
 !!! note "Unknown is a real answer"
     An object the classifier will not commit to stays `unknown` rather than being forced into
-    the nearest class. That is deliberate — see [Classifying](../using-it/classifying.md).
+    the nearest class. That is deliberate — see [Classifying](../how-it-works.md#classifying).
 
 ---
 

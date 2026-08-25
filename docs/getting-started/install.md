@@ -16,9 +16,7 @@
    **Install Plugin**.
 3. A toolbar button and a **Raster → EMBED-CD** menu entry appear. Either opens the panel.
 
-To upgrade, install the newer zip over the old one — the engine is vendored inside the plugin
-folder, so an upgrade can never leave you running the previous version's engine against the
-new UI.
+To upgrade, install the newer zip over the old one.
 
 ## The first run
 
@@ -34,20 +32,9 @@ By default a run writes to a temporary folder that is deleted when QGIS closes. 
 **Save to:** and the run becomes permanent, resumable, and reopenable later with **Open…** —
 including its polygons, labels and classifier, not just the picture.
 
-See [Saving and areas](../using-it/saving-and-areas.md).
+## Common issues
 
-## If something goes wrong
-
-**"Could not start Python to run the job."** The change job runs in a separate process using
-QGIS's own interpreter. If you see this, please
+**Find any bugs?** Please
 [open an issue](https://github.com/agraham9966/EMBED-CD/issues) with your platform and QGIS
-version — it means the interpreter was not where the plugin expected it.
+version.
 
-**"pyarrow not installed in QGIS's Python."** Rare: pyarrow ships with the OSGeo4W builds but
-not with every distribution's QGIS package. It is needed once, to read the published tile
-index. The message tells you the exact command.
-
-**A message about your project CRS.** Detail is in ground metres, so the change map is written
-in a CRS where a metre is a metre — your project's own if it qualifies, otherwise the area's
-UTM zone. QGIS reprojects it for display and there is nothing to do. See
-[Detail and cost](../using-it/detail-and-cost.md).
