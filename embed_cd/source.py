@@ -99,7 +99,7 @@ def _gdal_env():
 
 class Index:
     """Which COG covers what. The published index is a 78 MB parquet; we download it once and
-    keep a ~10 MB .npz of just the columns we need, so later runs load in well under a second
+    keep a ~3.6 MB .npz of just the columns we need, so later runs load in well under a second
     and work offline."""
 
     def __init__(self, cache_dir=None, base=_BASE):

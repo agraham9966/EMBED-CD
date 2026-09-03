@@ -11,7 +11,7 @@ import os
 
 import numpy as np
 
-from qgis.PyQt.QtCore import Qt, QSize
+from qgis.PyQt.QtCore import Qt, QSize, QTimer
 from qgis.PyQt.QtGui import QColor, QIcon
 from qgis.PyQt.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QListWidget, QListWidgetItem,
@@ -1465,19 +1465,34 @@ class ClassifyPanel(QWidget):
         that the classifier is broken. Hidden entirely when nothing is selected.
         """
         if not self._layer_ok() or self.head is None or self.scores is None:
-            self.detail_lbl.setText("")
+            self._set_detail("")
             return
         row = self._selected_row()
         if row is None:
             sel = self.layer.selectedFeatures()
-            self.detail_lbl.setText(
+            self._set_detail(
                 f"<span style='color:gray'>{len(sel)} polygons selected</span>" if sel else "")
             return
         sel = [f for f in self.layer.getFeatures() if self._row_of(f) == row]
         if not sel:
-            self.detail_lbl.setText("")
+            self._set_detail("")
             return
-        self.detail_lbl.setText(self._scores_html(row, sel[0]))
+        self._set_detail(self._scores_html(row, sel[0]))
+
+    def _set_detail(self, html):
+        """Write the breakdown, then re-fit the step that holds it.
+
+        The breakdown grows a row per class, so with five classes it is three lines taller than
+        it was with two. The dock sizes each accordion step to the height its page needed when
+        the step was last fitted and turns the inner scrollbars OFF, so anything that grows
+        afterwards is simply clipped — the lowest-scoring classes vanish with nothing to say
+        they were there. Re-fit on the next event loop turn, once the label has laid itself out
+        at its new height.
+        """
+        self.detail_lbl.setText(html)
+        fit = getattr(self.host, "_fit_steps", None)
+        if fit is not None:
+            QTimer.singleShot(0, fit)
 
     def _scores_html(self, row, feat):
         col = self.scores[:, row]

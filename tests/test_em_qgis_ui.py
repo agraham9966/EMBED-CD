@@ -1435,9 +1435,36 @@ def test_no_step_hides_its_own_controls_and_the_header_tracks_the_settings():
             if j != i:
                 assert texts[j].startswith("▸"),                     f"folded step {j} should show a closed caret: {texts[j]!r}"
 
+    # The tab BUTTON has to be tall enough for its own text, and only the button can be told
+    # so: QToolBoxButton::sizeHint reads font metrics alone and consults the stylesheet for
+    # neither padding nor min-height. The padding was therefore taken OUT of a box that never
+    # grew, and the titles lost their descenders.
+    from qgis.PyQt.QtWidgets import QAbstractButton
+    tabs = [b for b in dock.steps.findChildren(QAbstractButton) if b.parent() is dock.steps]
+    assert len(tabs) == 3, f"expected 3 tab buttons, found {len(tabs)}"
+    need = dock.steps.fontMetrics().height() + 8
+    for b in tabs:
+        assert b.minimumHeight() >= need,             f"tab button is {b.minimumHeight()} px, needs >= {need} for its text plus padding"
+
+    # The per-object breakdown grows a row per class. The step it lives in is sized once and
+    # its inner scrollbars are OFF, so anything that grows afterwards is clipped away silently
+    # — the lowest-scoring classes just vanish.
+    dock.steps.setCurrentIndex(2)
+    for _ in range(3):
+        QApplication.processEvents()
+    dock.classify._set_detail("")
+    for _ in range(3):
+        QApplication.processEvents()
+    before = dock.steps.minimumHeight()
+    dock.classify._set_detail("<br>".join("class %d" % i for i in range(40)))
+    for _ in range(3):
+        QApplication.processEvents()
+    assert dock.steps.minimumHeight() > before,         f"step 3 stayed {before} px while the breakdown grew — extra classes would be clipped"
+    assert clipped(dock.classify_group) == 0,         f"step 3 hides {clipped(dock.classify_group)} px once the breakdown is full height"
+
     dock.deleteLater()
     win.deleteLater()
-    print("ok every step fits its own controls; Cancel is always reachable; header tracks")
+    print("ok every step fits its own controls and its own tab text; the breakdown can grow")
 
 
 def test_the_two_classify_modes_reread_the_same_labels():

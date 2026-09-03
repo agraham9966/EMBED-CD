@@ -1,0 +1,9 @@
+/* Markdown has no way to write a table without a header row, so tables that read fine as
+   plain two-column lists get wrapped in <div class="no-head"> and lose the header here.
+   Scoped rather than global: the modes table on How it works needs its header. */
+.no-head thead {
+  display: none;
+}
+.no-head table {
+  margin-top: 0;
+}

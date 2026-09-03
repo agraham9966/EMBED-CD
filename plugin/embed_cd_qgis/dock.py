@@ -643,6 +643,26 @@ class ChangeDock(QDockWidget):
         if chrome < 0:
             return                       # not laid out yet; the next call gets it
         self.steps.setMinimumHeight(page.sizeHint().height() + chrome)
+        self._fit_tabs()
+
+    def _fit_tabs(self):
+        """Stop the tab titles losing their descenders.
+
+        QToolBoxButton::sizeHint() is computed from font metrics alone — it consults the style
+        sheet for neither `padding` nor `min-height`. So the vertical padding we ask for is
+        taken OUT of a box that never grew to hold it, and the text is squeezed. Setting bold on
+        the font fixed half of this; the padding is the other half.
+
+        The supported way to give it the height is to ask the buttons themselves. They are
+        direct children of the toolbox — the pages live under a QScrollArea — so the parent
+        check keeps this off every button INSIDE a step.
+        """
+        from qgis.PyQt.QtWidgets import QAbstractButton
+        # font metrics + the padding, border and margin the stylesheet asks for
+        want = self.steps.fontMetrics().height() + 4 + 4 + 1 + 1 + 2
+        for b in self.steps.findChildren(QAbstractButton):
+            if b.parent() is self.steps and b.minimumHeight() != want:
+                b.setMinimumHeight(want)
 
     def _fold_once(self, key, page_index):
         """Move to the next page, once. An accordion shows exactly one phase, so "finishing a

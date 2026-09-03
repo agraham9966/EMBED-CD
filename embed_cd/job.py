@@ -194,7 +194,7 @@ def process_tile(src, tile, year_a, year_b, out_grid, out_dir, cell_px=None,
 def run(bbox, year_a, year_b, out_dir, dst_crs="EPSG:3857", res_m=10.0,
         cache_dir=None, on_tile=None, should_stop=None, src=None, cell_m=None):
     """Run the whole job, yielding progress. `on_tile(done, total, rec, hist_total)` is called
-    as each tile lands so the caller can refresh a map. Returns (grid, tiles, hist_total)."""
+    as each tile lands so the caller can refresh a map. Returns (grid, tiles, hist_total, partial)."""
     src = src or open_source(cache_dir, res_m)
     # Cells are a fixed size on the GROUND (160 m), so how many source pixels that is depends on
     # which overview we are reading. Deriving it here is what keeps the cell store valid across

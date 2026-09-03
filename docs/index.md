@@ -27,26 +27,32 @@ behaviour, not just colour on one clear day.
 ## Features
 
 - **Draw and run.** Draw a rectangle, pick two years, press one button.
-- **Any size of area.** Tiles are processed one at a time, so memory does not grow with the area; a whole island maps in minutes.
+- **Any size of area.** Tiles are read and scored one at a time, so a large area costs no more memory to map than a small one. Coarser Detail is what makes a very large one quick.
 - **Self-adjust threshold.** The score is continuous, so the cutoff is symbology - instant and reversible.
 - **Classify by clicking.** Label a few objects and the rest follow. Model updates its fit in real-time! Fun! 
 - **Check against imagery.** Self-validate outputs with Sentinel-2 mosaics, year by year. Be confident in the changes the model is producing. 
 
 ## Outputs
 
+<div class="no-head" markdown>
+
 | Output | What it is |
 |---|---|
-| **Change map** | A raster of continuous change score, 0–1, on an absolute scale — the same cutoff means the same thing in every scene and between runs. |
-| **Data coverage** | A companion layer saying *why* a pixel has no result: no tile, or a year missing. A gap is never drawn as "nothing changed". |
+| **Change map** | A raster of continuous change score, 0–1, on an absolute scale. |
+| **Data coverage** | A companion layer saying *why* a pixel has no result: no tile, or a year missing. |
 | **Change objects** | A GeoPackage of polygons, each carrying its area, change statistics and the embedding of what it covers. |
 | **Classes** | Your labels and predictions on those objects, saved with the run and portable to another area. |
 | **GeoTIFF export** | The whole mosaic as a single file, for anything downstream. |
+
+</div>
 
 ## Start here
 
 - **[Install](getting-started/install.md)** — one zip, no pip step.
 - **[Quickstart](getting-started/quickstart.md)** — a first change map.
 - **[How it works](how-it-works.md)** — the method, in order.
+- **[Limitations](limitations.md)** — what it cannot tell you.
+- **[Reference](reference.md)** — the engine without QGIS, and the citations.
 
 [aef]: https://arxiv.org/abs/2507.22291
 [ee]: https://developers.google.com/earth-engine/datasets/catalog/GOOGLE_SATELLITE_EMBEDDING_V1_ANNUAL

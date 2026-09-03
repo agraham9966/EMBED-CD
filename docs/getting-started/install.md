@@ -22,7 +22,8 @@ To upgrade, install the newer zip over the old one.
 
 The first job downloads the AlphaEarth tile index once: **78 MB**, reduced to a ≈3.6 MB cache
 that every later run loads in well under a second and works offline. It lives in your QGIS
-profile, under `cache/embed_cd`.
+home directory, at `~/.cache/alphaearth` — keyed to the dataset rather than to EMBED-CD, so
+reinstalling the plugin never costs you the download again.
 
 After that, nothing is stored except the tiles of the areas you actually run.
 
