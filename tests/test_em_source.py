@@ -320,6 +320,59 @@ def test_a_bad_hosted_index_falls_back_and_never_poisons_the_cache():
     print("ok a bad hosted index is refused and the cache is left clean for the parquet fallback")
 
 
+def test_the_worker_reaches_the_index_instead_of_refusing_up_front():
+    """Regression for the H8 miss. The worker had its OWN copy of the reader check and refused
+    before Index.load() ever ran, so the hosted-npz path could not help — the exact break on a
+    Linux QGIS with neither pyarrow nor a GDAL Parquet driver but working network. The reader
+    requirement must live in ONE place (the index), never be duplicated as a worker pre-flight.
+
+    Simulates that machine in-process: pyarrow unimportable and the GDAL Parquet driver absent.
+    The old gate would print "needs either pyarrow" and stop; the fixed worker must instead reach
+    the index load (proven by a marker exception planted there)."""
+    import contextlib, importlib.util, io as _io, json
+    import embed_cd.worker as W
+    import embed_cd.job as JOB
+    import embed_cd.gdalio as GD
+
+    # Report pyarrow ABSENT the way the old gate actually checked (find_spec), not via an
+    # __import__ shim it never used — that gap is why the first version of this test passed even
+    # with the gate restored and so guarded nothing.
+    real_find = importlib.util.find_spec
+    def no_pyarrow(name, *a, **k):
+        if name == "pyarrow" or name.startswith("pyarrow."):
+            return None
+        return real_find(name, *a, **k)
+
+    real_has = GD.ogr_has_driver
+    real_open = JOB.open_source
+    def reached(*a, **k):
+        raise RuntimeError("REACHED_INDEX_LOAD")
+
+    spec = {"bbox": [-125.3, 49.6, -125.2, 49.7], "year_a": 2019, "year_b": 2024,
+            "out_dir": tempfile.mkdtemp(prefix="tc_wk_out_"), "dst_crs": "EPSG:32610",
+            "res_m": 100.0, "cache_dir": tempfile.mkdtemp(prefix="tc_wk_cache_"),
+            "name": "c", "plan_only": True}
+    argv = sys.argv
+    try:
+        importlib.util.find_spec = no_pyarrow
+        GD.ogr_has_driver = lambda name: False
+        JOB.open_source = reached
+        sys.argv = ["worker", json.dumps(spec)]
+        out = _io.StringIO()
+        with contextlib.redirect_stdout(out):
+            W.main()
+        text = out.getvalue()
+    finally:
+        importlib.util.find_spec = real_find
+        GD.ogr_has_driver = real_has
+        JOB.open_source = real_open
+        sys.argv = argv
+
+    assert "needs either pyarrow" not in text, "the worker still refuses before reaching the index"
+    assert "REACHED_INDEX_LOAD" in text, f"the worker never reached the index load: {text!r}"
+    print("ok the worker reaches the index (no duplicate reader gate up front)")
+
+
 def test_the_missing_pyarrow_message_names_the_right_platform():
     """Reported from a real Linux QGIS 3.22: the plugin told the user to run OSGeo4W Setup and
     open the OSGeo4W Shell. Neither exists outside Windows, so the one message a blocked user
@@ -367,5 +420,6 @@ if __name__ == "__main__":
     test_basemap_carries_its_licence_terms()
     test_the_hosted_index_is_downloaded_and_read_without_pyarrow()
     test_a_bad_hosted_index_falls_back_and_never_poisons_the_cache()
+    test_the_worker_reaches_the_index_instead_of_refusing_up_front()
     test_the_missing_pyarrow_message_names_the_right_platform()
     print("all ok")

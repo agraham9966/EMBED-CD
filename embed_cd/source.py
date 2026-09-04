@@ -170,10 +170,12 @@ class Index:
     keep a ~3.6 MB .npz of just the columns we need, so later runs load in well under a second
     and work offline."""
 
-    def __init__(self, cache_dir=None, base=_BASE, npz_url=INDEX_NPZ_URL):
+    def __init__(self, cache_dir=None, base=_BASE, npz_url=None):
         self.cache_dir = cache_dir or default_cache_dir()
         self.base = base            # swap to point at a mirror (tests use a local dir)
-        self.npz_url = npz_url      # the hosted, pre-built index; tests point it at a file://
+        # The hosted, pre-built index. Overridable by env for a mirror or an air-gapped/firewalled
+        # site, and by tests pointing at a file://. Default is the published copy.
+        self.npz_url = npz_url or os.environ.get("EMBED_CD_INDEX_NPZ_URL") or INDEX_NPZ_URL
         self._d = None
 
     def row_at(self, d, i):

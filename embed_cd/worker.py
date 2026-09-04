@@ -26,31 +26,17 @@ def _enable_user_site():
             site.addsitedir(d)
 
 
-def _have(module):
-    import importlib.util
-    return importlib.util.find_spec(module) is not None
-
-
 def main():
     spec = json.loads(sys.argv[1])
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     _enable_user_site()
-    # pyarrow reads the one-time tile index. It is NOT refused outright when missing: GDAL's
-    # own Parquet driver can do the same job, and asking for a pip step the user may not need
-    # is exactly the friction dropping rasterio was meant to remove. Only stop when NEITHER
-    # reader exists — and say so in terms of the platform they are actually on, because the old
-    # message sent Linux users to OSGeo4W Setup, which does not exist there.
-    if not _have("pyarrow"):
-        from embed_cd import source as _SRC
-        from embed_cd import gdalio as _G
-        try:
-            has_gdal_parquet = _G.ogr_has_driver("Parquet")
-        except Exception:
-            has_gdal_parquet = False
-        if not has_gdal_parquet:
-            print("ERR the tile index needs either pyarrow or a GDAL built with the Parquet "
-                  "driver, and this QGIS has neither. " + _SRC.install_hint(), flush=True)
-            return 3
+    # No pre-flight reader check any more: the tile index is fetched pre-built as a .npz and read
+    # with numpy, so pyarrow and the GDAL Parquet driver are only a fallback for building it from
+    # the raw parquet if that hosted download is unreachable. If BOTH the download and that
+    # fallback fail, `list_tiles` -> Index.load() raises, and the catch-all below prints a clear
+    # message (it carries source.install_hint()). Refusing up front here instead just guaranteed
+    # the hosted path never ran — which is exactly what broke on a Linux QGIS that had neither
+    # reader but perfectly good network access to the index.
     from embed_cd import job, score, vrt
 
     out_dir = spec["out_dir"]
