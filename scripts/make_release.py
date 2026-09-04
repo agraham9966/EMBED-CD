@@ -131,6 +131,12 @@ def build(key):
     icons = ROOT / "icons"
     if icons.is_dir():
         shutil.copytree(icons, stage_plugin / "icons", ignore=ignore)
+    # plugins.qgis.org requires LICENSE (and wants README) INSIDE the package; both live at the
+    # repo root, so copy them into the plugin folder the zip is made from.
+    for fname in ("LICENSE", "README.md"):
+        src = ROOT / fname
+        if src.is_file():
+            shutil.copy2(src, stage_plugin / fname)
 
     RELEASES_DIR.mkdir(exist_ok=True)
     zip_path = RELEASES_DIR / f"{plugin_name}-{version}.zip"

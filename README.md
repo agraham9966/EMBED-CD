@@ -93,7 +93,7 @@ and a long job must never block the UI.
 - **Sentinel-2 cloudless** year photos — [EOX IT Services](https://s2maps.eu), contains
   modified Copernicus Sentinel data. **CC BY-NC-SA 4.0 — non-commercial** for 2018 onward
   (2016 is CC BY 4.0). If your output is commercial, do not ship these tiles in it.
-- This plugin is **AGPL-3.0**.
+- This plugin is **GPL-2.0-or-later**.
 
 Known limits, plainly:
 

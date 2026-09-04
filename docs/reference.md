@@ -63,7 +63,7 @@ modified Copernicus Sentinel data. **CC BY-NC-SA 4.0, non-commercial only** for 
 (2016 is CC BY 4.0). If your deliverable is commercial, do not ship these tiles in it.
 Commercial licences: [cloudless.eox.at](https://cloudless.eox.at).
 
-**EMBED-CD itself** — AGPL-3.0.
+**EMBED-CD itself** — GPL-2.0-or-later.
 
 [ee]: https://developers.google.com/earth-engine/datasets/catalog/GOOGLE_SATELLITE_EMBEDDING_V1_ANNUAL
 [burns]: https://medium.com/google-earth/rethinking-change-detection-and-attribution-how-you-compare-satellite-embeddings-matters-858f17f577d7
