@@ -549,7 +549,8 @@ def test_the_photo_strip_offers_every_year_and_stacks_them():
     assert years == sorted(int(y) for y in _YEARS), f"strip covers {years}, expected all _YEARS"
 
     # Streamed global tiles: usable before any area is drawn, unlike everything else here.
-    assert all(b.isEnabled() for b in dock.photo_btns.values()),         "streamed tiles need no drawn area"
+    assert all(b.isEnabled() for b in dock.photo_btns.values()), \
+        "streamed tiles need no drawn area"
 
     # A year EOX does not publish has to SAY so; showing a neighbour's imagery under the wrong
     # label would quietly invalidate the visual check the strip exists for.
@@ -1038,7 +1039,8 @@ def test_a_named_area_keeps_its_name_and_never_shares_a_group():
     # Switching areas DETACHES: the first area's group keeps its layer, and the dock stops
     # tracking it. Previously the raster was removed while the polygons were not, leaving the
     # old area as an orphan polygon layer belonging to nothing.
-    assert QgsProject.instance().mapLayer(map_a_id) is not None,         "the previous area's layer was removed instead of detached"
+    assert QgsProject.instance().mapLayer(map_a_id) is not None, \
+        "the previous area's layer was removed instead of detached"
 
     # and re-running the SAME area reuses its group rather than making a third
     before = len([c for c in root.children() if hasattr(c, "children")])
@@ -1119,7 +1121,8 @@ def test_undo_and_stepping_through_objects():
     # the default paints it yellow, an "invisible" selection symbol paints nothing at all. The
     # current object is ours, drawn as an overlay on top of the normal symbology.
     assert p._selected_row() is not None, "stepping did not set a current object"
-    assert len(p.layer.selectedFeatures()) == 0,         "stepping selected the feature, which repaints it and hides its class colour"
+    assert len(p.layer.selectedFeatures()) == 0, \
+        "stepping selected the feature, which repaints it and hides its class colour"
 
     # every filter returns something sane. Set by KEY, not by label: one entry is renamed
     # live to the selected class, so tests that matched on text would be testing the wording.
@@ -1159,7 +1162,8 @@ def test_undo_and_stepping_through_objects():
     assert p.labels.get(row) == "b", f"setting the combo did not relabel: {p.labels}"
     assert len(p._undo) == depth + 1, "a combo edit must be undoable"
     p.undo_label()
-    assert p.labels.get(row) == was,         f"undo of a combo edit gave {p.labels.get(row)!r}, expected {was!r}"
+    assert p.labels.get(row) == was, \
+        f"undo of a combo edit gave {p.labels.get(row)!r}, expected {was!r}"
 
     # a re-cut invalidates the stack: those rows are about to mean something else
     p.make_polygons()
@@ -1288,7 +1292,8 @@ def test_switching_between_areas_restores_each_one():
     dock.bbox = (-123.50, 48.35, -123.30, 48.55)
     dock.name_edit.setText("Area B")
     dock._save_meta()
-    assert dock.runs[0]["name"] != "Area B",         f"typing a name for the next area renamed the previous one: {dock.runs[0]['name']!r}"
+    assert dock.runs[0]["name"] != "Area B", \
+        f"typing a name for the next area renamed the previous one: {dock.runs[0]['name']!r}"
 
     make("Area B", (-123.50, 48.35, -123.30, 48.55))
     p.make_polygons()
@@ -1426,7 +1431,8 @@ def test_the_worker_interpreter_is_found_and_a_failed_start_is_reported():
     dock._on_proc_error(_scoped(QProcess, "ProcessError", "FailedToStart"))
     assert dock.proc is None, "a worker that never started must not leave the dock busy"
     assert not dock.progress.isVisible(), "the progress bar must stop"
-    assert "Could not start Python" in dock.status.text(),         f"the failure has to be stated; status was {dock.status.text()!r}"
+    assert "Could not start Python" in dock.status.text(), \
+        f"the failure has to be stated; status was {dock.status.text()!r}"
 
     # Crashes and I/O errors ARE followed by `finished`, so handling them here too would clear
     # self.proc out from under it.
@@ -1496,20 +1502,24 @@ def test_no_step_hides_its_own_controls_and_the_header_tracks_the_settings():
         dock.steps.setCurrentIndex(i)
         for _ in range(3):
             QApplication.processEvents()
-        assert dock.steps.currentIndex() == i,             f"step {i + 1} would not open — is it still disabled?"
-        assert clipped(page) == 0,             f"step {i + 1} hides {clipped(page)} px of its own content"
+        assert dock.steps.currentIndex() == i, \
+            f"step {i + 1} would not open — is it still disabled?"
+        assert clipped(page) == 0, f"step {i + 1} hides {clipped(page)} px of its own content"
 
     # Cancel belongs with the progress bar, outside the accordion — a running job has to be
     # stoppable from whichever step happens to be open, and step 1 folds itself once a result
     # exists.
-    assert dock.cancel_btn.parentWidget() is dock.progress.parentWidget(),         "Cancel must live with the progress bar, not inside a foldable step"
+    assert dock.cancel_btn.parentWidget() is dock.progress.parentWidget(), \
+        "Cancel must live with the progress bar, not inside a foldable step"
 
     # Everything quoted in step 1's header must refresh it. Detail used to update the cost
     # line and not the header, so the header claimed a resolution that was no longer set.
     dock.detail.setCurrentText("100 m")
-    assert "100 m" in dock.steps.itemText(0),         f"header did not follow Detail: {dock.steps.itemText(0)!r}"
+    assert "100 m" in dock.steps.itemText(0), \
+        f"header did not follow Detail: {dock.steps.itemText(0)!r}"
     dock.year_b.setCurrentText("2025")
-    assert "2025" in dock.steps.itemText(0),         f"header did not follow the year: {dock.steps.itemText(0)!r}"
+    assert "2025" in dock.steps.itemText(0), \
+        f"header did not follow the year: {dock.steps.itemText(0)!r}"
 
     # The headers have to LOOK pressable. A QToolBox tab is drawn as a thin rule with a label,
     # which reads as a divider, so folded steps looked like captions and went unclicked. The
@@ -1524,7 +1534,8 @@ def test_no_step_hides_its_own_controls_and_the_header_tracks_the_settings():
         assert texts[i].startswith("▾"), f"open step {i} should show an open caret: {texts[i]!r}"
         for j in range(3):
             if j != i:
-                assert texts[j].startswith("▸"),                     f"folded step {j} should show a closed caret: {texts[j]!r}"
+                assert texts[j].startswith("▸"), \
+                    f"folded step {j} should show a closed caret: {texts[j]!r}"
 
     # The tab BUTTON has to be tall enough for its own text, and only the button can be told
     # so: QToolBoxButton::sizeHint reads font metrics alone and consults the stylesheet for
@@ -1535,7 +1546,8 @@ def test_no_step_hides_its_own_controls_and_the_header_tracks_the_settings():
     assert len(tabs) == 3, f"expected 3 tab buttons, found {len(tabs)}"
     need = dock.steps.fontMetrics().height() + 8
     for b in tabs:
-        assert b.minimumHeight() >= need,             f"tab button is {b.minimumHeight()} px, needs >= {need} for its text plus padding"
+        assert b.minimumHeight() >= need, \
+            f"tab button is {b.minimumHeight()} px, needs >= {need} for its text plus padding"
 
     # The per-object breakdown grows a row per class. The step it lives in is sized once and
     # its inner scrollbars are OFF, so anything that grows afterwards is clipped away silently
@@ -1550,8 +1562,10 @@ def test_no_step_hides_its_own_controls_and_the_header_tracks_the_settings():
     dock.classify._set_detail("<br>".join("class %d" % i for i in range(40)))
     for _ in range(3):
         QApplication.processEvents()
-    assert dock.steps.minimumHeight() > before,         f"step 3 stayed {before} px while the breakdown grew — extra classes would be clipped"
-    assert clipped(dock.classify_group) == 0,         f"step 3 hides {clipped(dock.classify_group)} px once the breakdown is full height"
+    assert dock.steps.minimumHeight() > before, \
+        f"step 3 stayed {before} px while the breakdown grew — extra classes would be clipped"
+    assert clipped(dock.classify_group) == 0, \
+        f"step 3 hides {clipped(dock.classify_group)} px once the breakdown is full height"
 
     dock.deleteLater()
     win.deleteLater()
@@ -1681,7 +1695,8 @@ def test_stepping_respects_the_selected_class_and_skips_what_you_answered():
 
     # --- least-certain no longer re-offers what you already answered ---
     use("uncertain")
-    assert 0 not in p._cycle_rows(),         "'least certain first' is still offering an object the user has labelled"
+    assert 0 not in p._cycle_rows(), \
+        "'least certain first' is still offering an object the user has labelled"
     use("labelled")
     assert 0 in p._cycle_rows(), "a labelled object must stay reachable under 'Only labelled'"
 
@@ -1765,10 +1780,12 @@ def test_the_output_crs_must_be_able_to_express_metres():
         bbox = dock.bbox                                          # the reported 1 km area
         good = G.make_grid(bbox, dock._target_crs(), 10.0)
         bad = G.make_grid(bbox, "EPSG:4326", 10.0)
-        assert min(bad.width, bad.height) == 1,             "the degenerate case no longer reproduces — has make_grid changed?"
+        assert min(bad.width, bad.height) == 1, \
+            "the degenerate case no longer reproduces — has make_grid changed?"
         # ~1 km at 10 m ground metres is ~100 px a side. Web Mercator used to give ~158 here,
         # which is the oversampling this change removes.
-        assert 95 <= good.width <= 110 and 95 <= good.height <= 110,             f"expected ~100 px for a 1 km area at 10 m, got {good.width}x{good.height}"
+        assert 95 <= good.width <= 110 and 95 <= good.height <= 110, \
+            f"expected ~100 px for a 1 km area at 10 m, got {good.width}x{good.height}"
     finally:
         QgsProject.instance().setCrs(original)
     dock.deleteLater()
@@ -1895,7 +1912,8 @@ def test_clicking_labels_a_polygon_when_the_canvas_crs_differs_from_the_layer():
     canvas.setExtent(QgsRectangle(clicked.x() - 2000, clicked.y() - 2000,
                                   clicked.x() + 2000, clicked.y() + 2000))
     apart = abs(clicked.x() - here.x())
-    assert apart > 1e6,         f"setup is not exercising the bug: the two CRSs differ by only {apart:.0f} m"
+    assert apart > 1e6, \
+        f"setup is not exercising the bug: the two CRSs differ by only {apart:.0f} m"
 
     p.classes.append("cutblock")
     p.colors["cutblock"] = "#d85a30"

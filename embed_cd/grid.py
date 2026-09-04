@@ -58,7 +58,7 @@ def estimate(grid, n_tiles, bytes_per_tile_download=67e6):
     px = grid.width * grid.height
     return {
         "px": px,
-        "output_bytes": int(px * (4 + 1)),          # float32 score + uint8 coverage
+        "output_bytes": int(px * (4 + 1)), # float32 score + uint8 coverage
         "download_bytes": int(n_tiles * 2 * bytes_per_tile_download),
         "tiles": n_tiles,
     }

@@ -20,6 +20,7 @@ The UTM pixel grid is identical across years (verified: the same file bounds rec
 year), so a tile is defined by its bounds alone and both years land on the same grid — exactly
 the invariant `job.py` already relies on, so nothing downstream needs to align or resample.
 """
+import logging
 import os
 import shutil
 import sys
@@ -37,6 +38,8 @@ INDEX_URL = _BASE + "aef_index.parquet"
 # AlphaEarth year lands: python scripts/make_release.py --refresh-index.
 INDEX_NPZ_URL = "https://agraham9966.github.io/EMBED-CD/downloads/aef_index.npz"
 _S3_BASE = "s3://us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/"
+
+log = logging.getLogger(__name__)
 
 _UA = "embed-cd (QGIS plugin)"
 TILE_PX = 1024          # = the COG block size; see fact 3. 10.24 km at native 10 m.
@@ -87,7 +90,10 @@ def _vsicurl(path):
 
 
 def default_cache_dir():
-    return os.path.join(os.path.expanduser("~"), ".cache", "alphaearth")  # keyed to the DATASET, not the app — renaming it would force a 78 MB re-download
+    # Keyed to the DATASET, not to this app: renaming it would force every user to re-download
+    # the index. NOTE this is the STANDALONE default; inside QGIS the plugin passes its own
+    # profile cache instead (see ChangeDock._cache_dir).
+    return os.path.join(os.path.expanduser("~"), ".cache", "alphaearth")
 
 
 def _gdal_env():
@@ -234,6 +240,8 @@ class Index:
             os.replace(tmp, self.npz_path)
             return True
         except Exception:
+            log.info("hosted index unavailable (%s); falling back to the parquet index",
+                     self.npz_url, exc_info=True)
             try:
                 os.remove(tmp)
             except OSError:

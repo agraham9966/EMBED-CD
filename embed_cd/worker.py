@@ -58,7 +58,8 @@ def main():
         g = G.make_grid(bbox, spec["dst_crs"], spec["res_m"])
         est = G.estimate(g, len(both) or len(all_tiles))
         # partial tiles still produce a result (a nodata class), so report both counts
-        print(f"PLAN {len(all_tiles)} {est['download_bytes']} {g.width} {g.height} {len(partial)}", flush=True)
+        print(f"PLAN {len(all_tiles)} {est['download_bytes']} "
+              f"{g.width} {g.height} {len(partial)}", flush=True)
         if spec.get("plan_only"):
             return 0
 

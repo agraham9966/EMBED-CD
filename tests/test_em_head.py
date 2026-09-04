@@ -432,7 +432,8 @@ def test_review_order_honours_locked():
     assert not ({0, 1, 2} & set(rest)), f"locked rows came back anyway: {rest[:6]}"
     assert sorted(rest) == list(range(3, len(x))), "locking dropped rows it should have kept"
 
-    assert list(H.review_order(pred, scores, locked=np.ones(len(x), bool))) == [],         "everything locked must yield an empty work-list, not a full one"
+    assert list(H.review_order(pred, scores, locked=np.ones(len(x), bool))) == [], \
+        "everything locked must yield an empty work-list, not a full one"
     print("ok review_order excludes locked rows and keeps the rest")
 
 

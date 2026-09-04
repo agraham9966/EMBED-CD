@@ -25,6 +25,8 @@ from qgis.core import (
 )
 from qgis.gui import QgsMapTool
 
+from .compat import scoped as _scoped, qvariant as _qv
+
 UNKNOWN = "unknown"
 # (what the user sees, what the head is told). Order matters: the first is the default.
 _MODES = (("Transition — what changed", "delta"),
@@ -79,23 +81,6 @@ def row_of(*widgets):
     for x in widgets:
         l.addWidget(x)
     return w
-
-
-def _scoped(owner, category, name):
-    try:
-        return getattr(getattr(owner, category), name)
-    except AttributeError:
-        return getattr(owner, name)
-
-
-def _qv(kind):
-    try:
-        from qgis.PyQt.QtCore import QMetaType
-        return {"str": QMetaType.Type.QString, "float": QMetaType.Type.Double,
-                "int": QMetaType.Type.Int}[kind]
-    except (ImportError, AttributeError, KeyError):
-        from qgis.PyQt.QtCore import QVariant
-        return {"str": QVariant.String, "float": QVariant.Double, "int": QVariant.Int}[kind]
 
 
 class LabelTool(QgsMapTool):
@@ -819,7 +804,8 @@ class ClassifyPanel(QWidget):
             name, ok = QInputDialog.getText(self, title, "Name:", text=text)
             return (name or "").strip() if ok else None
 
-        before, _, after = text.partition(_ARROW.strip()) if _ARROW.strip() in text             else (text, "", "")
+        before, _, after = (text.partition(_ARROW.strip()) if _ARROW.strip() in text
+                            else (text, "", ""))
         dlg = QDialog(self)
         dlg.setWindowTitle(title)
         form = QFormLayout(dlg)

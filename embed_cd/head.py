@@ -25,8 +25,67 @@ import numpy as np
 
 UNKNOWN = "unknown"
 DEFAULT_Q = 0.05      # the strictness slider's resting position
-# What a class MEANS. See OvRHead.__init__ for what each one is worth.
+
+# What a class MEANS, from the stored [A, B] pair:
+#   "delta" = [A, B-A]   the TRANSITION: what this was, and what happened to it
+#   "after" = [B]        the END STATE: what it is now, baseline discarded
+#   "raw"   = [A, B]     both absolute states, exactly as the cell store holds them
+# See FEATURE_MODES below for what each is worth, measured.
 FEATURES = ("delta", "after", "raw")
+
+# ---------------------------------------------------------------------------------------------
+# FEATURE_MODES — the evidence behind the default, kept out of __init__ so the constructor
+# stays readable. Every number here was measured, not assumed; several were predictions that
+# turned out wrong and are recorded as such.
+#
+# Why "delta" (baseline + delta) is the default:
+#   A class is usually a KIND OF CHANGE, and naming the change explicitly beats making the model
+#   infer it from two absolute states. Google's comparison of embedding configurations found the
+#   same, as did an earlier prototype here independently — hence baseline AND delta, not delta
+#   alone.
+#
+#   Worth, over 12 seeds: for a class whose members reached the same end state from DIFFERENT
+#   starting land cover, mean accuracy 0.954 -> 0.978 (better on 8 seeds, worse on 3). On cleanly
+#   separated classes the two are indistinguishable. Real, modest, never materially worse.
+#
+# What "delta" does NOT do — asserted first, then disproved by the test that now guards it:
+#   transfer a class to a baseline it never saw. Both raw and delta score 0%, because A is still
+#   half the vector, so an unseen baseline is an unseen vector however the other half is written.
+#   Only DROPPING A changes that, which is what "after" is.
+#
+# On magnitude, since the single-class path takes cosine on UN-standardized vectors and a tiny
+#   delta half would simply be swamped: on 817 real polygons ||B-A|| is 47% of ||A||, and
+#   prototype similarity correlates 0.876 with baseline-only under [A, B-A] against 0.901 under
+#   [A, B]. Both lean on the baseline; delta leans slightly less.
+#
+# What "after" buys: naming a thing by what it BECAME, so a class is recognisable on a baseline
+#   it was never trained on. Training on one baseline and testing on another reaching the SAME
+#   end state, 12 seeds:
+#
+#       raw 0%      delta 0%      after 99%
+#
+#   It does not do this by evading the distance gate — the gate is ON in that measurement.
+#   Dropping A makes an unseen baseline genuinely IN distribution, so the gate correctly passes
+#   it. (With the gate off, raw and delta reach 92% and 87%: the information was always there,
+#   the familiarity test was the binding constraint.)
+#
+# Two things "after" does NOT buy, both measured rather than hoped:
+#   - It does not fix the single-class weakness (see the D7 test). From three examples it still
+#     accepts 100% of the OPPOSITE change, exactly as raw and delta do: with one class the score
+#     is cosine to a prototype, and B for "forest cleared" and B for "forest regrown" still share
+#     the forest component that dominates the cosine. Different half of the vector, same failure.
+#   - It does not help when a class spans two baselines reaching DIFFERENT end states. There it
+#     is delta's case, and after scores like raw (0.956 vs 0.954, delta 0.978).
+#
+# So "after" is a different question, not a better answer. With B alone the head can no longer
+# tell "became bare" from "was already bare-ish" — inside a change map that makes it land cover
+# rather than change. Both modes are useful; neither replaces the other.
+#
+# Switching is safe for saved work: save_classes stores the RAW stored vectors and the transform
+# is applied at fit/predict time, so a class set saved under one setting still loads under the
+# others. What the class NAMES mean does change, which is why the mode is recorded in both the
+# preset and the run.
+# ---------------------------------------------------------------------------------------------
 
 
 def _fit_logistic(x, y, C=1.0, max_iter=500):
@@ -93,59 +152,9 @@ class OvRHead:
         self.decision = decision                  # "threshold" (can abstain) or "argmax" (cannot)
         if features not in FEATURES:
             raise ValueError(f"features must be one of {sorted(FEATURES)}, got {features!r}")
-        # What the detectors see, from the stored [A, B] pair:
-        #   "delta" = [A, B-A]   the TRANSITION: what this was, and what happened to it
-        #   "after" = [B]        the END STATE: what it is now, baseline discarded
-        #   "raw"   = [A, B]     both absolute states, exactly as the cell store holds them
-        #
-        # Baseline+delta is the default because a class is usually a KIND OF CHANGE, and naming
-        # the change explicitly beats making the model infer it from two absolute states.
-        # Google's comparison of embedding configurations found the same, as did this codebase
-        # independently by an earlier prototype here — hence baseline AND delta, not delta alone.
-        #
-        # What it is actually worth, measured over 12 seeds rather than assumed: for a class
-        # whose members reached the same end state from DIFFERENT starting land cover, mean
-        # accuracy 0.954 -> 0.978 (better on 8 seeds, worse on 3). On cleanly separated classes
-        # the two are indistinguishable. Real, modest, never materially worse.
-        #
-        # What it does NOT do — asserted here first, then disproved by the test that now guards
-        # it: transfer a class to a baseline it never saw. Both forms score 0%, because A is
-        # still half the vector, so an unseen baseline is an unseen vector however the other
-        # half is written. Only DROPPING A changes that, which is what "after" is.
-        #
-        # On magnitude, since the single-class path takes cosine on UN-standardized vectors and
-        # a tiny delta half would simply be swamped: on 817 real polygons ||B-A|| is 47% of
-        # ||A||, and prototype similarity correlates 0.876 with baseline-only under [A, B-A]
-        # against 0.901 under [A, B]. Both lean on the baseline; delta leans slightly less.
-        #
-        # "after" answers the question delta cannot: name a thing by what it BECAME, so a class
-        # is recognisable on a baseline it was never trained on. Measured, training on one
-        # baseline and testing on another that reaches the SAME end state, 12 seeds:
-        #
-        #     raw 0%      delta 0%      after 99%
-        #
-        # Note it does not do this by evading the distance gate — the gate is ON in that
-        # measurement. Dropping A makes an unseen baseline genuinely IN distribution, so the
-        # gate correctly passes it. (With the gate off, raw and delta reach 92% and 87%: the
-        # information was always there, the familiarity test was the binding constraint.)
-        #
-        # Two things it does NOT buy, both measured rather than hoped:
-        #   - It does not fix the single-class weakness (see the D7 test). From three examples
-        #     it still accepts 100% of the OPPOSITE change, exactly as raw and delta do: with
-        #     one class the score is cosine to a prototype, and B for "forest cleared" and B
-        #     for "forest regrown" still share the forest component that dominates the cosine.
-        #     Different half of the vector, same failure.
-        #   - It does not help when a class spans two baselines reaching DIFFERENT end states.
-        #     There it is delta's case, and after scores like raw (0.956 vs 0.954, delta 0.978).
-        #
-        # So this is a different question, not a better answer. With B alone the head can no
-        # longer tell "became bare" from "was already bare-ish" — inside a change map that makes
-        # it land cover rather than change. Both modes are useful; neither replaces the other.
-        #
-        # Switchable, and presets are unaffected by the choice: save_classes stores the raw
-        # stored vectors and this transform is applied at fit/predict time, so a class set saved
-        # under one setting still loads under the others. What the class NAMES mean does change,
-        # which is why the mode is recorded in both the preset and the run.
+        # What the detectors see: see FEATURE_MODES at the top of this module for what each
+        # mode is worth and what it does not buy. "delta" is the default because a class is
+        # usually a kind of change, and naming the change beats inferring it from two states.
         self.features = features
         # A detector's score alone cannot recognise the unfamiliar. Logistic regression is
         # linear and unbounded, so an object far outside everything the user ever labelled still

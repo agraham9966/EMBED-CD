@@ -6,6 +6,7 @@ from qgis.PyQt.QtCore import Qt as _Qt
 from qgis.PyQt.QtGui import QIcon, QPixmap
 from qgis.PyQt.QtCore import Qt
 
+from .compat import scoped as _scoped
 from .dock import ChangeDock
 
 _MENU = "EMBED-CD"
@@ -23,13 +24,6 @@ def icon_path():
         if os.path.isfile(cand):
             return os.path.abspath(cand)
     return None
-
-
-def _scoped(owner, category, name):
-    try:
-        return getattr(getattr(owner, category), name)
-    except AttributeError:
-        return getattr(owner, name)
 
 
 def trim_pixmap(pm):

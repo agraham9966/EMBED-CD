@@ -28,6 +28,7 @@ from qgis.core import (
     QgsRasterTransparency, Qgis, QgsField,
 )
 
+from .compat import scoped as _scoped, qvariant as _qvariant
 from .maptool import RectangleTool
 
 try:
@@ -46,32 +47,6 @@ _TILE_KM = 10.24       # one COG block at 10 m — the unit everything is fetche
 # coarse job (and understate a small one).
 _SEC_PER_TILE = 4.5
 _SEC_PER_COARSE_TILE = 11.0
-
-
-def _scoped(owner, category, name):
-    """Enum that works on both PyQt5 (QGIS 3) and PyQt6 (QGIS 4)."""
-    try:
-        return getattr(getattr(owner, category), name)
-    except AttributeError:
-        return getattr(owner, name)
-
-
-def _qvariant_double():
-    try:
-        from qgis.PyQt.QtCore import QMetaType
-        return QMetaType.Type.Double
-    except (ImportError, AttributeError):
-        from qgis.PyQt.QtCore import QVariant
-        return QVariant.Double
-
-
-def _qvariant_string():
-    try:
-        from qgis.PyQt.QtCore import QMetaType
-        return QMetaType.Type.QString
-    except (ImportError, AttributeError):
-        from qgis.PyQt.QtCore import QVariant
-        return QVariant.String
 
 
 class ChangeDock(QDockWidget):
@@ -1118,7 +1093,8 @@ class ChangeDock(QDockWidget):
                     # nothing. Where it is on the planet tells them everything.
                     lo, la, _e, _n = GD.transform_bounds(GD.crs_string(ds), "EPSG:4326",
                                                          cx, cy, cx, cy)
-                    where = f"  near {abs(la):.2f}°{'N' if la >= 0 else 'S'} "                             f"{abs(lo):.2f}°{'E' if lo >= 0 else 'W'}"
+                    where = (f"  near {abs(la):.2f}°{'N' if la >= 0 else 'S'} "
+                             f"{abs(lo):.2f}°{'E' if lo >= 0 else 'W'}")
                 except Exception:
                     where = ""
                 ds = None
@@ -1641,8 +1617,8 @@ class ChangeDock(QDockWidget):
                 return
             layer = QgsVectorLayer(f"Polygon?crs={crs}", "changed (polygons)", "memory")
             pr = layer.dataProvider()
-            pr.addAttributes([QgsField("change", _qvariant_string()),
-                              QgsField("area_ha", _qvariant_double())])
+            pr.addAttributes([QgsField("change", _qvariant("str")),
+                              QgsField("area_ha", _qvariant("float"))])
             layer.updateFields()
             tag = f"{self.year_a.currentText()}->{self.year_b.currentText()}"
             feats = []

@@ -5,13 +5,15 @@ so no alignment needed) -> reproject ONLY the 1-band result into this job's outp
 write a small 2-band GeoTIFF -> free the embeddings. Peak memory is one tile pair regardless
 of how large the area is.
 
-Reads run on a small thread pool (pure I/O) while the main thread does the numpy/GDAL
-work — that keeps PROJ off worker threads, which is what crashes inside QGIS.
+Tiles run strictly one at a time — see the note in `run()` for why a thread pool here would
+buy nothing. The whole job runs out-of-process (see `worker.py`), which is what keeps PROJ and
+GDAL off QGIS's own threads.
 
 The source is AlphaEarth (see `source.py`). A tile is a block-aligned window of one of its
 COGs, identified by UTM bounds; both years share that grid, which is the invariant the whole
 "score on the native grid, reproject only the result" design rests on.
 """
+import logging
 import os
 
 import numpy as np
@@ -19,6 +21,13 @@ import numpy as np
 from . import grid as G
 from . import score as S
 from .cells import CELL_M as CE_CELL_M
+
+# A tile is allowed to fail without killing the job, but "allowed to fail" must not mean
+# "fails invisibly": three swallowed exceptions here once made a whole platform's breakage
+# indistinguishable from an empty area. Nothing is raised that was not raised before — the
+# reason is simply recorded. Callers that want it can attach a handler to "embed_cd".
+log = logging.getLogger(__name__)
+
 
 def open_source(cache_dir=None, res_m=None):
     """`res_m` is the OUTPUT resolution being asked for. It picks which built-in overview to
@@ -50,7 +59,9 @@ def _try_fetch(src, tile, year):
             return None, None, None                # no COG for this year here
         return np.asarray(arr, np.float32), crs, transform
     except Exception:
-        return None, None, None                    # unreadable — treated as a missing year
+        log.warning("tile %s year %s unreadable, treating as a missing year",
+                    getattr(tile, "crs", "?"), year, exc_info=True)
+        return None, None, None
 
 
 def _record_for_existing(path, out_grid):
@@ -108,7 +119,8 @@ def _write_cells(a, b, sc, cov, crs, transform, tile, year_a, year_b, out_dir,
         ma, mb, n, smean, smax = CE.pool(a, b, sc, cov == S.COV_OK, cell_px)
         CE.write_cells(path, ma, mb, n, smean, smax, crs, transform, cell_px)
     except Exception:
-        pass
+        log.warning("cell store failed for tile %s (%s-%s); the change map itself is unaffected",
+                    getattr(tile, "crs", "?"), year_a, year_b, exc_info=True)
 
 
 def process_tile(src, tile, year_a, year_b, out_grid, out_dir, cell_px=None,
@@ -194,7 +206,10 @@ def process_tile(src, tile, year_a, year_b, out_grid, out_dir, cell_px=None,
 def run(bbox, year_a, year_b, out_dir, dst_crs="EPSG:3857", res_m=10.0,
         cache_dir=None, on_tile=None, should_stop=None, src=None, cell_m=None):
     """Run the whole job, yielding progress. `on_tile(done, total, rec, hist_total)` is called
-    as each tile lands so the caller can refresh a map. Returns (grid, tiles, hist_total, partial)."""
+    as each tile lands so the caller can refresh a map.
+
+    Returns (grid, tiles, hist_total, partial).
+    """
     src = src or open_source(cache_dir, res_m)
     # Cells are a fixed size on the GROUND (160 m), so how many source pixels that is depends on
     # which overview we are reading. Deriving it here is what keeps the cell store valid across
@@ -218,6 +233,7 @@ def run(bbox, year_a, year_b, out_dir, dst_crs="EPSG:3857", res_m=10.0,
             rec = process_tile(src, tile, year_a, year_b, out_grid, out_dir,
                                cell_px, cell_m)
         except Exception:
+            log.warning("tile %s failed and was skipped", tile, exc_info=True)
             rec = None                               # a bad tile must not kill the job
         done += 1
         if rec is not None:

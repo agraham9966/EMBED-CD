@@ -198,13 +198,16 @@ def test_every_unscored_pixel_is_explained_by_the_coverage_band():
     vp = vrt.write_vrt(os.path.join(d, "m.vrt"), g, recs)
     sc, cov = _read(vp, 1, 2)
 
-    assert (cov[sc == S.NODATA] != S.COV_OK).all(),         "an unscored pixel is never labelled 'data in both years'"
-    assert (sc[cov == S.COV_OK] != S.NODATA).all(),         "a pixel labelled OK always carries a real score"
+    assert (cov[sc == S.NODATA] != S.COV_OK).all(), \
+        "an unscored pixel is never labelled 'data in both years'"
+    assert (sc[cov == S.COV_OK] != S.NODATA).all(), \
+        "a pixel labelled OK always carries a real score"
     # Tile windows OVERLAP (a UTM rectangle warps to a curved quad, and the window is its
     # bbox), so each tile's reprojection edge-fill lands on top of a neighbour's real data. If
     # the coverage band's VRT sources don't declare that fill transparent, the fill wins and
     # paints "no tile" straight through good data — a grey grid over the whole mosaic.
-    assert (cov[sc != S.NODATA] != S.COV_NO_TILE).all(),         "a pixel WITH a score is never labelled 'not covered'"
+    assert (cov[sc != S.NODATA] != S.COV_NO_TILE).all(), \
+        "a pixel WITH a score is never labelled 'not covered'"
     assert (cov == S.COV_NO_TILE).any(), "area outside the tiles reads as 'no tile'"
     assert (cov == S.COV_MISSING_B).any(), "the missing year is named"
     assert set(np.unique(cov)) <= {S.COV_NO_TILE, S.COV_OK, S.COV_MISSING_A,

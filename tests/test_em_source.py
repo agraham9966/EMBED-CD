@@ -222,7 +222,8 @@ def test_basemap_uri_keeps_qgis_placeholders_and_wmts_row_order():
     # "max retry", while the same URL added by hand worked. Do NOT unquote before asserting, or
     # the very bug this guards against becomes invisible again (the previous test did, and did
     # not catch it).
-    assert raw.startswith("https://tiles.maps.eox.at/"),         f"scheme/host must not be percent-encoded: {raw[:40]}"
+    assert raw.startswith("https://tiles.maps.eox.at/"), \
+        f"scheme/host must not be percent-encoded: {raw[:40]}"
     assert "%2F" not in raw and "%3A" not in raw, f"path separators got encoded: {raw}"
 
     # Only the {z}/{y}/{x} placeholders are encoded, exactly as QGIS serializes them.
@@ -395,7 +396,8 @@ def test_the_missing_pyarrow_message_names_the_right_platform():
             hint = SRC.install_hint()
             assert must in hint, f"{plat}: expected {must!r} in {hint!r}"
             if must_not:
-                assert must_not not in hint,                     f"{plat}: {must_not!r} does not exist on this platform: {hint!r}"
+                assert must_not not in hint, \
+                    f"{plat}: {must_not!r} does not exist on this platform: {hint!r}"
             assert "pyarrow" in hint, f"{plat}: the hint never names the package: {hint!r}"
     finally:
         sys.platform = real
