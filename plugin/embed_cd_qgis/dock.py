@@ -267,7 +267,10 @@ class ChangeDock(QDockWidget):
         self.name_edit.setToolTip(
             "What to call this area. Its layers go in a group of this name, so several areas "
             "can sit in the project at once without becoming a pile of 'change 2019→2024' "
-            "entries. Leave it empty and the area's location is used instead.")
+            "entries. Leave it empty and the area's location is used instead."
+            + chr(10) * 2 +
+            "This always names the area currently drawn. To rename a run you have already made, "
+            "switch to it under Area: first.")
         self.name_edit.textChanged.connect(lambda _t: self._sync_name_placeholder())
         self.name_edit.editingFinished.connect(self._save_meta)
         nrow.addWidget(self.name_edit, 1)
@@ -783,6 +786,15 @@ class ChangeDock(QDockWidget):
         if self.tool is not None:
             self.canvas.unsetMapTool(self.tool)
         self._show_area_band(rect)          # replaces any previous outline
+        # The name belonged to the area you just left. Leaving it in the box implies it will be
+        # kept, when in fact it now names the run about to be made — the ambiguity that let a
+        # name land on the wrong run in the first place. An empty box with a location
+        # placeholder says which run is being named without needing a sentence.
+        if self._dir_area_key(self.out_dir) not in (None, self._area_key()):
+            self.name_edit.blockSignals(True)
+            self.name_edit.clear()
+            self.name_edit.blockSignals(False)
+            self._sync_name_placeholder()
         self._folded_once.discard("step1")  # drawing a new area makes step 1 live again
         self.steps.setCurrentIndex(0)
         self._describe_area()
@@ -962,14 +974,25 @@ class ChangeDock(QDockWidget):
         name for it, and `out_dir` still points at the run you just left — so matching on that
         alone renamed the previous area instead, and both then showed the same name in the Area
         list. Typing a name before running belongs to the run about to be made.
+
+        The check reads the FOLDER, not `self.runs`. An earlier version consulted our own
+        bookkeeping and only refused when it held an entry for `out_dir` — so any path that left
+        `self.runs` without one disarmed it completely. That is not hypothetical: it destroyed a
+        real run's name, rewriting nanaimo's `run.json` to "sechelt" twenty-three seconds before
+        the sechelt folder existed. A folder's own name is always there and cannot get out of
+        step with itself.
         """
         if not self.out_dir or not os.path.isdir(self.out_dir):
             return
         name = self.name_edit.text().strip()
         key = self._area_key() if self.bbox is not None else None
         current = next((r for r in self.runs if r["out_dir"] == self.out_dir), None)
-        if current is not None and current.get("key") not in (None, key):
-            return                      # the drawn area has moved on; this name is for the next run
+        owner = self._dir_area_key(self.out_dir)
+        if owner is not None:
+            if owner != key:
+                return              # another area's folder; this name is for the run about to be made
+        elif current is not None and current.get("key") not in (None, key):
+            return                  # legacy folder with no key in its name: all we have is memory
         try:
             from .engine import store as ST
             ST.save_meta(self.out_dir, name=name)
@@ -1023,6 +1046,24 @@ class ChangeDock(QDockWidget):
         re-running the same bbox resumes instead of starting over."""
         import hashlib
         return hashlib.sha1(("%.4f_%.4f_%.4f_%.4f" % tuple(self.bbox)).encode()).hexdigest()[:6]
+
+    _RUN_DIR = re.compile(r"^change_\d{4}_\d{4}_([0-9a-f]{6})$")
+
+    def _dir_area_key(self, out_dir):
+        """The area a run folder belongs to, read straight off its own name.
+
+        `_run` names every folder `change_<from>_<to>_<area key>`, so the identity is already
+        on disk and needs no second derivation. That matters: the key an OPENED run carries in
+        memory is computed from the VRT's raster extent, which is the snapped, reprojected grid
+        rather than the rectangle the user dragged — a different number for the same area.
+
+        None for a legacy folder written before runs were keyed, which is the one case that
+        still has to fall back to in-memory state.
+        """
+        if not out_dir:
+            return None
+        m = self._RUN_DIR.match(os.path.basename(os.path.normpath(out_dir)))
+        return m.group(1) if m else None
 
     def _find_runs(self, folder):
         """Every saved run at `folder` or one level below, newest first.

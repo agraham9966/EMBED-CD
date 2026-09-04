@@ -8,6 +8,7 @@ nothing in a normal test would ever see it.
 Run:  "C:\\Program Files\\QGIS 4.0.1\\bin\\python-qgis.bat" tests/test_em_qgis_ui.py
 """
 import os
+import shutil
 import sys
 import tempfile
 
@@ -886,6 +887,96 @@ def test_the_dock_always_says_where_results_will_go():
     assert dock.out_edit.text() == ""
     dock.cleanup()
     print("ok the destination line is correct in every state and tracks the area")
+
+
+def test_naming_a_new_area_never_renames_the_one_you_opened():
+    """Reported from a real session, and it destroyed data rather than just mislabelling it.
+
+    Open the nanaimo run, draw a new area, type "sechelt" for it: nanaimo's own run.json was
+    rewritten to {"name": "sechelt"} 23 seconds before the sechelt folder even existed. Both
+    entries then read "sechelt" in the Area list, and nanaimo's name was gone for good, because
+    the folder is the only place it was ever written down.
+
+    The write comes from `editingFinished` while `out_dir` still points at the run being left.
+    A guard for this has existed since 0.25.1 and did not hold, so this test drives the two
+    states it cannot cover: a run that IS registered, and the same run when `self.runs` happens
+    to be empty — the second skips the guard's `current is not None` test entirely.
+    """
+    import json
+    from qgis.PyQt.QtWidgets import QMainWindow
+    from qgis.gui import QgsMapCanvas
+    from qgis.core import QgsProject
+    from embed_cd_qgis.dock import ChangeDock
+    from embed_cd import store as ST
+
+    class _Iface:
+        def __init__(self, win, canvas):
+            self._w, self._c = win, canvas
+
+        def mainWindow(self):
+            return self._w
+
+        def mapCanvas(self):
+            return self._c
+
+    AREA_A = (-124.05, 49.10, -123.90, 49.20)          # "nanaimo"
+    AREA_B = (-123.80, 49.45, -123.65, 49.55)          # "sechelt"
+
+    QgsProject.instance().clear()
+    dock = ChangeDock(_Iface(QMainWindow(), QgsMapCanvas()))
+
+    # A run folder named the way _run names one, so its own name carries the area identity.
+    root = tempfile.mkdtemp(prefix="tc_rename_")
+    dock.bbox = AREA_A
+    run_a = os.path.join(root, "change_2019_2024_%s" % dock._area_key())
+    os.makedirs(run_a)
+    ST.save_meta(run_a, name="nanaimo")
+    dock.out_dir = run_a
+    dock.vrt_path = os.path.join(run_a, "change_2019_2024.vrt")
+    dock.name_edit.setText("nanaimo")
+    dock._register_run()
+    assert any(r["out_dir"] == run_a for r in dock.runs), "the opened run was never registered"
+
+    def _rename_from_another_area(label):
+        # Draw a DIFFERENT area, then type a name for it. out_dir still points at run A.
+        dock.bbox = AREA_B
+        dock.name_edit.setText("sechelt")
+        dock._save_meta()
+        on_disk = ST.load_meta(run_a).get("name")
+        assert on_disk == "nanaimo", (
+            f"{label}: naming the new area rewrote run A's name on disk to {on_disk!r}. "
+            "That folder is the only record of it, so the original is gone.")
+        named = [r for r in dock.runs if r.get("name") == "sechelt"]
+        assert not named, f"{label}: run A's Area entry was renamed to 'sechelt'"
+
+    _rename_from_another_area("registered")
+    saved_runs, dock.runs = dock.runs, []          # the guard's `current is None` hole
+    _rename_from_another_area("unregistered")
+    dock.runs = saved_runs
+
+    # Drawing a new area HANDS the field to it: a box still reading "nanaimo" implies the name
+    # will be kept, when it now belongs to the run about to be made. Refusing the write is the
+    # backstop; clearing the box is what stops anyone forming the wrong idea in the first place.
+    from qgis.core import QgsRectangle
+    dock.name_edit.setText("nanaimo")
+    dock._on_area(QgsRectangle(AREA_B[0], AREA_B[1], AREA_B[2], AREA_B[3]))
+    assert dock.name_edit.text() == "", (
+        "drawing a different area left the previous area's name in the box: "
+        f"{dock.name_edit.text()!r}")
+    assert dock.name_edit.placeholderText(), "an empty name box must offer the location instead"
+
+    # And the repair path has to work: come back to run A and its name IS yours to change.
+    dock.bbox = AREA_A
+    dock.name_edit.setText("nanaimo again")
+    dock._save_meta()
+    assert ST.load_meta(run_a).get("name") == "nanaimo again", (
+        "returning to a run must let you rename it, or a wrong name can never be repaired: "
+        + json.dumps(ST.load_meta(run_a)))
+
+    dock.cleanup()
+    QgsProject.instance().clear()
+    shutil.rmtree(root, ignore_errors=True)
+    print("ok naming a new area leaves the opened one alone, and renaming still works")
 
 
 def test_a_named_area_keeps_its_name_and_never_shares_a_group():
@@ -1858,6 +1949,7 @@ if __name__ == "__main__":
     test_two_areas_over_the_same_years_cannot_share_a_run_folder()
     test_the_dock_always_says_where_results_will_go()
     test_a_named_area_keeps_its_name_and_never_shares_a_group()
+    test_naming_a_new_area_never_renames_the_one_you_opened()
     test_undo_and_stepping_through_objects()
     test_steps_fold_once_and_keep_their_answer_in_the_title()
     test_switching_between_areas_restores_each_one()

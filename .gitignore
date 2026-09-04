@@ -218,6 +218,13 @@ __marimo__/
 .streamlit/secrets.toml
 
 # EMBED-CD project-specific
+# The plugin repository the Pages site serves. A generic `downloads/` rule above catches this,
+# and the whole point of docs/plugins.xml is that the zip it points at is actually published —
+# an ignored zip means every install from the repository 404s. Git cannot un-ignore a file
+# inside an ignored DIRECTORY, so the directory has to be un-ignored first.
+!docs/downloads/
+!docs/downloads/*.zip
+
 # Docs videos ARE tracked: compressed to H.264 720p/CRF 30 with no audio, all four together
 # come to 2 MB, so the site self-hosts them rather than leaning on a third party. Re-encode a
 # replacement the same way before committing it (see A14 in TODO.md for the exact command).

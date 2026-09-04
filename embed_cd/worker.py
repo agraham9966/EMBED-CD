@@ -35,15 +35,22 @@ def main():
     spec = json.loads(sys.argv[1])
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     _enable_user_site()
-    missing = [m for m in ("pyarrow",) if not _have(m)]
-    if missing:
-        # Only pyarrow, and only for the one-time tile index. Everything else this needs —
-        # numpy, scipy and GDAL — ships with QGIS, which is the point of having dropped
-        # rasterio: the plugin should install and work with no pip step at all.
-        print(f"ERR {' and '.join(missing)} not installed in QGIS's Python. Install via OSGeo4W "
-              f"Setup (Advanced Install -> python3-{missing[0]}), or open the OSGeo4W Shell and "
-              f"run:  python -m pip install {' '.join(missing)}", flush=True)
-        return 3
+    # pyarrow reads the one-time tile index. It is NOT refused outright when missing: GDAL's
+    # own Parquet driver can do the same job, and asking for a pip step the user may not need
+    # is exactly the friction dropping rasterio was meant to remove. Only stop when NEITHER
+    # reader exists — and say so in terms of the platform they are actually on, because the old
+    # message sent Linux users to OSGeo4W Setup, which does not exist there.
+    if not _have("pyarrow"):
+        from embed_cd import source as _SRC
+        from embed_cd import gdalio as _G
+        try:
+            has_gdal_parquet = _G.ogr_has_driver("Parquet")
+        except Exception:
+            has_gdal_parquet = False
+        if not has_gdal_parquet:
+            print("ERR the tile index needs either pyarrow or a GDAL built with the Parquet "
+                  "driver, and this QGIS has neither. " + _SRC.install_hint(), flush=True)
+            return 3
     from embed_cd import job, score, vrt
 
     out_dir = spec["out_dir"]

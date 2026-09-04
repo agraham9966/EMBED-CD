@@ -8,6 +8,7 @@ Set AEF_LIVE=1 to additionally hit the real bucket (network, ~100 MB).
 Run: python tests/test_tc_alphaearth.py
 """
 import os
+import sys
 import tempfile
 
 import numpy as np
@@ -243,6 +244,35 @@ def test_basemap_carries_its_licence_terms():
     assert "2019" in BM.layer_name(2019) and "EOX" in BM.layer_name(2019)
 
 
+def test_the_missing_pyarrow_message_names_the_right_platform():
+    """Reported from a real Linux QGIS 3.22: the plugin told the user to run OSGeo4W Setup and
+    open the OSGeo4W Shell. Neither exists outside Windows, so the one message a blocked user
+    ever sees pointed them at nothing.
+
+    Worth stating plainly, because the old text assumed otherwise: pyarrow is NOT a QGIS
+    dependency on any platform. It is in the Windows OSGeo4W bundle; on Linux QGIS uses the
+    system Python and it is simply absent — on 3.44 exactly as on 3.22. Upgrading QGIS does not
+    fix this, which is why the message has to be right rather than rare.
+    """
+    import embed_cd.source as SRC
+
+    real = sys.platform
+    try:
+        for plat, must, must_not in (
+                ("win32", "OSGeo4W", None),
+                ("linux", "pip install", "OSGeo4W"),
+                ("darwin", "QGIS.app", "OSGeo4W")):
+            sys.platform = plat
+            hint = SRC.install_hint()
+            assert must in hint, f"{plat}: expected {must!r} in {hint!r}"
+            if must_not:
+                assert must_not not in hint,                     f"{plat}: {must_not!r} does not exist on this platform: {hint!r}"
+            assert "pyarrow" in hint, f"{plat}: the hint never names the package: {hint!r}"
+    finally:
+        sys.platform = real
+    print("ok the missing-pyarrow message is written for the platform the user is on")
+
+
 if __name__ == "__main__":
     test_dequantize()
     test_fetch_flips_and_places()
@@ -259,4 +289,5 @@ if __name__ == "__main__":
     test_basemap_uri_keeps_qgis_placeholders_and_wmts_row_order()
     test_basemap_snaps_to_a_year_eox_actually_has()
     test_basemap_carries_its_licence_terms()
+    test_the_missing_pyarrow_message_names_the_right_platform()
     print("all ok")

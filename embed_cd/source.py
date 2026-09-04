@@ -22,6 +22,7 @@ the invariant `job.py` already relies on, so nothing downstream needs to align o
 """
 import os
 import shutil
+import sys
 import urllib.request
 from collections import namedtuple
 
@@ -97,6 +98,56 @@ def _gdal_env():
                     CPL_VSIL_CURL_ALLOWED_EXTENSIONS=".tiff")
 
 
+def _read_parquet(path, progress=None):
+    """{column: numpy array} for `_PARQUET_COLS`, by whichever reader this install has.
+
+    pyarrow is NOT a QGIS dependency. It happens to be in the Windows OSGeo4W bundle, which is
+    what made "it ships with QGIS" look true; on Linux QGIS uses the system Python and it is
+    simply absent, on 3.44 exactly as on 3.22. So try it, then fall back to GDAL's own Parquet
+    driver — which is opt-in at build time (it needs libarrow) but is present in the OSGeo4W
+    build and in most current Linux packages.
+
+    The fallback reads row by row and takes tens of seconds on 300k rows. That is fine: this
+    runs once, ever, and the result is the .npz cache.
+    """
+    try:
+        import pyarrow.parquet as pq
+    except ImportError:
+        pass
+    else:
+        t = pq.read_table(path, columns=_PARQUET_COLS)
+        return {c: t[c].to_numpy(zero_copy_only=False) for c in _PARQUET_COLS}
+
+    from . import gdalio as G
+    ds = G.open_vector(path)
+    if ds is None:
+        raise ImportError(
+            "cannot read the AlphaEarth tile index: this QGIS has neither pyarrow nor a GDAL "
+            "built with the Parquet driver. " + install_hint())
+    if progress:
+        progress("reading the tile index with GDAL (no pyarrow here — slower, one time only)")
+    layer = ds.GetLayer(0)
+    out = {c: [] for c in _PARQUET_COLS}
+    for feat in layer:
+        for c in _PARQUET_COLS:
+            out[c].append(feat.GetField(c))
+    ds = None
+    return {c: np.array(v) for c, v in out.items()}
+
+
+def install_hint():
+    """How to add pyarrow, named for the platform the user is actually on. The old message
+    said "OSGeo4W Setup" to everyone, including Linux users who have no such thing."""
+    if sys.platform.startswith("win"):
+        return ("Install it with OSGeo4W Setup (Advanced Install -> python3-pyarrow), or open "
+                "the OSGeo4W Shell and run:  python -m pip install pyarrow")
+    if sys.platform == "darwin":
+        return ("Install it into the Python QGIS uses, e.g.:  "
+                "/Applications/QGIS.app/Contents/MacOS/bin/python3 -m pip install pyarrow")
+    return ("Install it for the Python QGIS uses, e.g.:  python3 -m pip install --user pyarrow  "
+            "(or your distribution's python3-pyarrow package)")
+
+
 class Index:
     """Which COG covers what. The published index is a 78 MB parquet; we download it once and
     keep a ~3.6 MB .npz of just the columns we need, so later runs load in well under a second
@@ -121,10 +172,6 @@ class Index:
         return os.path.join(self.cache_dir, "aef_index.npz")
 
     def _build(self, progress=None):
-        # ponytail: pyarrow only, no fallback — it ships with QGIS's Python and the dev venv.
-        # If some install lacks it, GDAL's Parquet driver is the escape hatch.
-        import pyarrow.parquet as pq
-
         os.makedirs(self.cache_dir, exist_ok=True)
         raw = os.path.join(self.cache_dir, "aef_index.parquet")
         if not os.path.exists(raw):
@@ -136,8 +183,7 @@ class Index:
             with urllib.request.urlopen(req) as r, open(tmp, "wb") as f:
                 shutil.copyfileobj(r, f)
             os.replace(tmp, raw)
-        t = pq.read_table(raw, columns=_PARQUET_COLS)
-        col = {c: t[c].to_numpy(zero_copy_only=False) for c in _PARQUET_COLS}
+        col = _read_parquet(raw, progress)
         d = {c: col[c].astype(np.float64) for c in _BOUND_COLS}
         d["year"] = col["year"].astype(np.int32)
         d["crs"] = np.array([str(c) for c in col["crs"]], dtype="S")

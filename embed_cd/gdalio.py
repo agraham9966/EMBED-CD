@@ -104,6 +104,23 @@ def transform_bounds(src_crs, dst_crs, west, south, east, north, densify=21):
     return tuple(ct.TransformBounds(west, south, east, north, densify))
 
 
+def ogr_has_driver(name):
+    """Whether this GDAL build carries a given OGR driver. Parquet is opt-in at build time
+    (it needs libarrow), so its absence is a normal state to test for, not a failure."""
+    ogr = _ogr()
+    return ogr.GetDriverByName(name) is not None
+
+
+def open_vector(path):
+    """A vector/tabular dataset, or None if this GDAL has no driver for it. Used for the
+    AlphaEarth tile index when pyarrow is absent: GDAL's Parquet driver is opt-in at build
+    time, so "no driver" is a real outcome and not an error worth raising here."""
+    try:
+        return _ogr().Open(path)
+    except Exception:
+        return None
+
+
 def open_ds(path, factor=1):
     """`factor` > 1 opens one of the file's built-in overviews instead of the full-res image,
     so the dataset reports the reduced size and reads only the reduced bytes.

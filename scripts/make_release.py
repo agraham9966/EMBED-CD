@@ -1,8 +1,14 @@
-"""Build a self-contained, versioned QGIS plugin zip for 'Install from ZIP'.
+"""Build a self-contained, versioned QGIS plugin zip, and publish it as a QGIS repository.
 
 Vendors the plugin's engine package into a staging copy of the plugin folder (so the zip
 needs nothing from outside itself), then zips it to releases/<plugin>-<version>.zip. The
 version is read from that plugin's metadata.txt.
+
+It then writes the same zip and a `plugins.xml` into `docs/`, which the Pages site already
+publishes. That turns https://agraham9966.github.io/EMBED-CD/plugins.xml into a QGIS plugin
+repository: add it once under Plugins -> Manage and Install -> Settings, and every later
+version installs and upgrades in-app. Which matters for the Linux box reachable only over RDP,
+where copying a zip across for each build is the slow part of testing.
 
 Usage:
     python scripts/make_release.py
@@ -11,15 +17,83 @@ import re
 import shutil
 import sys
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 ROOT = Path(__file__).resolve().parent.parent
 RELEASES_DIR = ROOT / "releases"
+DOCS_DIR = ROOT / "docs"
+DOWNLOAD_DIR = DOCS_DIR / "downloads"
+SITE_URL = "https://agraham9966.github.io/EMBED-CD"
 
 # short name -> (plugin folder, engine package vendored inside it)
 PLUGINS = {
     "change": ("embed_cd_qgis", "embed_cd"),
 }
+
+
+def read_metadata(plugin_dir):
+    """metadata.txt as a dict. Its [general] section is flat key=value, and `about` runs to one
+    very long line, so a plain per-line split is enough and configparser is not needed."""
+    out = {}
+    for line in (plugin_dir / "metadata.txt").read_text(encoding="utf-8").splitlines():
+        if "=" in line and not line.startswith(("[", "#")):
+            k, v = line.split("=", 1)
+            out[k.strip()] = v.strip()
+    return out
+
+
+def write_repository_xml(meta, zip_path):
+    """A one-plugin QGIS repository, generated from metadata.txt so the two can never disagree.
+
+    `download_url` points at the copy under docs/, because that is what the Pages workflow
+    publishes. Only the current version is listed and only its zip is kept: this is a private
+    channel for testing builds, not an archive, and every stale zip is another megabyte in the
+    repo forever.
+    """
+    DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    for old in DOWNLOAD_DIR.glob("*.zip"):
+        if old.name != zip_path.name:
+            old.unlink()
+    shutil.copy2(zip_path, DOWNLOAD_DIR / zip_path.name)
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    root = ET.Element("plugins")
+    p = ET.SubElement(root, "pyqgis_plugin",
+                      name=meta["name"], version=meta["version"], plugin_id="1")
+    fields = {
+        "description": meta.get("description", ""),
+        "about": meta.get("about", ""),
+        "version": meta["version"],
+        "qgis_minimum_version": meta.get("qgisMinimumVersion", "3.28"),
+        "qgis_maximum_version": meta.get("qgisMaximumVersion", "3.99"),
+        "homepage": meta.get("homepage", ""),
+        "file_name": zip_path.name,
+        "icon": meta.get("icon", ""),
+        "author_name": meta.get("author", ""),
+        "download_url": f"{SITE_URL}/downloads/{zip_path.name}",
+        "uploaded_by": meta.get("author", ""),
+        "create_date": now,
+        "update_date": now,
+        # Carried through verbatim: an experimental plugin is hidden unless the user ticks
+        # "Show also experimental plugins", and silently flipping that here would mean the
+        # repository advertised something metadata.txt does not say.
+        "experimental": meta.get("experimental", "False"),
+        "deprecated": meta.get("deprecated", "False"),
+        "tracker": meta.get("tracker", ""),
+        "repository": meta.get("repository", ""),
+        "tags": meta.get("tags", ""),
+    }
+    for k, v in fields.items():
+        ET.SubElement(p, k).text = v
+    ET.indent(root, space="  ")
+    out = DOCS_DIR / "plugins.xml"
+    out.write_bytes(b'<?xml version="1.0" encoding="UTF-8"?>\n'
+                    + ET.tostring(root, encoding="utf-8"))
+    print(f"wrote {out}")
+    print(f"      repository URL: {SITE_URL}/plugins.xml")
+    return out
 
 
 def read_version(plugin_dir):
@@ -61,6 +135,7 @@ def build(key):
 
     shutil.rmtree(staging)
     print(f"built {zip_path}")
+    write_repository_xml(read_metadata(plugin_dir), zip_path)
     return zip_path
 
 
