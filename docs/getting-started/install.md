@@ -3,6 +3,10 @@
 ## Requirements
 
 - **QGIS 3.28 or newer.** Developed and tested on 4.0.1; 3.28+ should work but is untested.
+- **Platform: Windows and macOS.** Windows is tested. macOS is expected to work — the code is
+  portable — but is unverified. **Linux is a work in progress and currently non-functional:**
+  the plugin installs and reads data, but a change map produces no output on the Linux builds
+  tested so far. Track it in the repo before relying on it there.
 - Nothing else. GDAL, numpy and scipy all ship with QGIS, which is the whole reason the plugin
   dropped `rasterio` — there is no `pip install` step and no OSGeo4W shell.
 - No account, no API key, no Earth Engine. The data is read straight from public
