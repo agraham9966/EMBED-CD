@@ -30,6 +30,12 @@ import numpy as np
 
 _BASE = "https://data.source.coop/tge-labs/aef/v1/annual/"
 INDEX_URL = _BASE + "aef_index.parquet"
+# The same index, pre-converted to the .npz we cache anyway and hosted on our own site. numpy
+# reads it on every QGIS; the raw parquet needs pyarrow or a GDAL Parquet driver, which some
+# Linux QGIS builds have NEITHER of. So the hosted npz is the DEFAULT path and parquet the
+# fallback — 3.6 MB instead of 78, and no dependency beyond numpy. Regenerate it when a new
+# AlphaEarth year lands: python scripts/make_release.py --refresh-index.
+INDEX_NPZ_URL = "https://agraham9966.github.io/EMBED-CD/downloads/aef_index.npz"
 _S3_BASE = "s3://us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/"
 
 _UA = "embed-cd (QGIS plugin)"
@@ -148,14 +154,26 @@ def install_hint():
             "(or your distribution's python3-pyarrow package)")
 
 
+def _check_index_npz(path):
+    """Raise unless `path` is an index .npz with every column present and non-empty. Cheap: npz
+    is lazy, so this reads headers, not the whole 300k-row arrays."""
+    with np.load(path, allow_pickle=False) as z:
+        missing = [c for c in _INDEX_COLS if c not in z.files]
+        if missing:
+            raise ValueError("index npz missing columns: %s" % ", ".join(missing))
+        if z["year"].shape[0] == 0:
+            raise ValueError("index npz is empty")
+
+
 class Index:
     """Which COG covers what. The published index is a 78 MB parquet; we download it once and
     keep a ~3.6 MB .npz of just the columns we need, so later runs load in well under a second
     and work offline."""
 
-    def __init__(self, cache_dir=None, base=_BASE):
+    def __init__(self, cache_dir=None, base=_BASE, npz_url=INDEX_NPZ_URL):
         self.cache_dir = cache_dir or default_cache_dir()
         self.base = base            # swap to point at a mirror (tests use a local dir)
+        self.npz_url = npz_url      # the hosted, pre-built index; tests point it at a file://
         self._d = None
 
     def row_at(self, d, i):
@@ -192,13 +210,41 @@ class Index:
         os.remove(raw)
         return d
 
+    def _fetch_hosted(self, progress=None):
+        """Download the pre-built .npz to the cache. True on success; False (silently) on any
+        failure, so the caller falls back to building from parquet.
+
+        Validated into place: a truncated or wrong-shaped download must never become the cache,
+        or every run afterwards reads a broken index and there is no obvious way back. Written to
+        a .part, checked, then atomically renamed — the same discipline the parquet path uses.
+        """
+        if not self.npz_url:
+            return False
+        os.makedirs(self.cache_dir, exist_ok=True)
+        tmp = self.npz_path + ".part"
+        try:
+            if progress:
+                progress("downloading AlphaEarth tile index (4 MB, one time)")
+            req = urllib.request.Request(self.npz_url, headers={"User-Agent": _UA})
+            with urllib.request.urlopen(req, timeout=120) as r, open(tmp, "wb") as f:
+                shutil.copyfileobj(r, f)
+            _check_index_npz(tmp)                 # raises if columns/rows are wrong
+            os.replace(tmp, self.npz_path)
+            return True
+        except Exception:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            return False
+
     def load(self, progress=None):
         if self._d is None:
-            if os.path.exists(self.npz_path):
-                with np.load(self.npz_path, allow_pickle=False) as z:
-                    self._d = {k: z[k] for k in z.files}
-            else:
-                self._d = self._build(progress)
+            if not os.path.exists(self.npz_path):
+                if not self._fetch_hosted(progress):
+                    self._build(progress)         # writes npz_path from parquet
+            with np.load(self.npz_path, allow_pickle=False) as z:
+                self._d = {k: z[k] for k in z.files}
         return self._d
 
     def years(self):

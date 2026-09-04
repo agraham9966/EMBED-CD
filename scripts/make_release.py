@@ -22,6 +22,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 RELEASES_DIR = ROOT / "releases"
 DOCS_DIR = ROOT / "docs"
 DOWNLOAD_DIR = DOCS_DIR / "downloads"
@@ -146,12 +147,46 @@ def build(key):
     return zip_path
 
 
+def publish_index():
+    """Put the pre-built tile index next to the plugin zip, so the site serves it and the plugin
+    downloads a 4 MB numpy file instead of an 78 MB parquet that needs pyarrow.
+
+    The index barely changes (only when AlphaEarth publishes a new year), so it is NOT rebuilt on
+    every release: kept if already published, unless --refresh-index is passed. A rebuild reuses
+    the exact code the client uses (`Index._build`), so the published file and a client-built one
+    are byte-for-byte the same artifact.
+    """
+    from embed_cd import source as SRC
+
+    DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    dst = DOWNLOAD_DIR / "aef_index.npz"
+    if dst.exists() and "--refresh-index" not in sys.argv:
+        print(f"kept  {dst}  (pass --refresh-index to rebuild from parquet)")
+        return
+
+    cached = Path(SRC.default_cache_dir()) / "aef_index.npz"
+    if cached.exists() and "--refresh-index" not in sys.argv:
+        shutil.copy2(cached, dst)          # the validated artifact every local run has used
+        print(f"published {dst}  (from local cache)")
+        return
+
+    tmp = RELEASES_DIR / "_index_build"
+    if tmp.exists():
+        shutil.rmtree(tmp)
+    tmp.mkdir(parents=True)
+    SRC.Index(cache_dir=str(tmp))._build(progress=lambda m: print("  ", m))
+    shutil.copy2(tmp / "aef_index.npz", dst)
+    shutil.rmtree(tmp, ignore_errors=True)
+    print(f"published {dst}  (rebuilt from parquet)")
+
+
 def main():
     keys = sys.argv[1:] or list(PLUGINS)
     for k in keys:
         if k not in PLUGINS:
             raise SystemExit(f"unknown plugin '{k}'; choose from {', '.join(PLUGINS)}")
         build(k)
+    publish_index()
 
 
 if __name__ == "__main__":

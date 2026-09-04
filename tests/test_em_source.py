@@ -8,6 +8,7 @@ Set AEF_LIVE=1 to additionally hit the real bucket (network, ~100 MB).
 Run: python tests/test_tc_alphaearth.py
 """
 import os
+import shutil
 import sys
 import tempfile
 
@@ -253,6 +254,72 @@ def test_basemap_carries_its_licence_terms():
     assert "2019" in BM.layer_name(2019) and "EOX" in BM.layer_name(2019)
 
 
+def _tiny_index_npz(path, rows=3):
+    """A minimal but correctly-shaped index .npz, so the hosted-fetch path can be tested without
+    the network or the 78 MB parquet."""
+    import numpy as np
+    from embed_cd import source as SRC
+    d = {c: np.zeros(rows, np.float64) for c in SRC._BOUND_COLS}
+    d["year"] = np.full(rows, 2020, np.int32)
+    d["crs"] = np.array([b"EPSG:32610"] * rows, dtype="S")
+    d["key"] = np.array([b"2020/x.tiff"] * rows, dtype="S")
+    np.savez_compressed(path, **d)
+
+
+def test_the_hosted_index_is_downloaded_and_read_without_pyarrow():
+    """The whole reason the hosted npz exists: read the tile index with numpy alone, so a QGIS
+    with neither pyarrow nor a GDAL Parquet driver (some Linux builds) still works. No network
+    and no parquet here — a local file:// stands in for the published URL."""
+    from pathlib import Path
+    from embed_cd import source as SRC
+
+    served = tempfile.mkdtemp(prefix="tc_idx_served_")
+    npz = os.path.join(served, "aef_index.npz")
+    _tiny_index_npz(npz, rows=5)
+
+    cache = tempfile.mkdtemp(prefix="tc_idx_cache_")
+    idx = SRC.Index(cache_dir=cache, npz_url=Path(npz).as_uri())
+    # _build downloads the real parquet; if the hosted path is taken it is never called.
+    idx._build = lambda *a, **k: (_ for _ in ()).throw(AssertionError("fell back to parquet"))
+    d = idx.load()
+
+    assert d["year"].shape[0] == 5, "the hosted index did not load"
+    assert os.path.exists(os.path.join(cache, "aef_index.npz")), "it was not cached for reuse"
+    shutil.rmtree(served, ignore_errors=True)
+    shutil.rmtree(cache, ignore_errors=True)
+    print("ok the hosted index loads with numpy alone, no parquet, no pyarrow")
+
+
+def test_a_bad_hosted_index_falls_back_and_never_poisons_the_cache():
+    """A 404 or a truncated download must not become the cache — every later run would then read
+    a broken index with no obvious way back. On any failure the fetch returns False (so the
+    caller builds from parquet) and leaves no file behind."""
+    from pathlib import Path
+    from embed_cd import source as SRC
+
+    cache = tempfile.mkdtemp(prefix="tc_idx_bad_")
+    npz_path = os.path.join(cache, "aef_index.npz")
+
+    # (a) missing URL -> False, nothing written
+    idx = SRC.Index(cache_dir=cache, npz_url=Path(cache, "does-not-exist.npz").as_uri())
+    assert idx._fetch_hosted() is False, "a missing hosted file should report failure"
+    assert not os.path.exists(npz_path), "a failed fetch left a cache file"
+
+    # (b) a file that downloads fine but is not a valid index -> rejected, nothing written
+    served = tempfile.mkdtemp(prefix="tc_idx_junk_")
+    junk = os.path.join(served, "aef_index.npz")
+    with open(junk, "wb") as f:
+        f.write(b"not actually an npz")
+    idx = SRC.Index(cache_dir=cache, npz_url=Path(junk).as_uri())
+    assert idx._fetch_hosted() is False, "a corrupt download should be rejected"
+    assert not os.path.exists(npz_path), "a corrupt download poisoned the cache"
+    assert not os.path.exists(npz_path + ".part"), "a partial file was left behind"
+
+    shutil.rmtree(cache, ignore_errors=True)
+    shutil.rmtree(served, ignore_errors=True)
+    print("ok a bad hosted index is refused and the cache is left clean for the parquet fallback")
+
+
 def test_the_missing_pyarrow_message_names_the_right_platform():
     """Reported from a real Linux QGIS 3.22: the plugin told the user to run OSGeo4W Setup and
     open the OSGeo4W Shell. Neither exists outside Windows, so the one message a blocked user
@@ -298,5 +365,7 @@ if __name__ == "__main__":
     test_basemap_uri_keeps_qgis_placeholders_and_wmts_row_order()
     test_basemap_snaps_to_a_year_eox_actually_has()
     test_basemap_carries_its_licence_terms()
+    test_the_hosted_index_is_downloaded_and_read_without_pyarrow()
+    test_a_bad_hosted_index_falls_back_and_never_poisons_the_cache()
     test_the_missing_pyarrow_message_names_the_right_platform()
     print("all ok")

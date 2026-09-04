@@ -40,8 +40,8 @@ To upgrade, install the newer zip over the old one.
 
 The first job downloads the AlphaEarth tile index once: **78 MB**, reduced to a ≈3.6 MB cache
 that every later run loads in well under a second and works offline. It lives in your QGIS
-home directory, at `~/.cache/alphaearth` — keyed to the dataset rather than to EMBED-CD, so
-reinstalling the plugin never costs you the download again.
+QGIS profile, under `cache/embed_cd`. Reinstalling the plugin keeps it as long as the
+profile survives, so you never re-download it.
 
 After that, nothing is stored except the tiles of the areas you actually run.
 
@@ -53,16 +53,11 @@ including its polygons, labels and classifier, not just the picture.
 
 ## Common issues
 
-**"needs either pyarrow or a GDAL built with the Parquet driver"** — the one-time tile index is
-a Parquet file, and EMBED-CD reads it with whichever of the two your QGIS has. The Windows
-installer bundles both. Some Linux builds have neither, in which case install pyarrow into the
-Python QGIS itself uses:
-
-```
-python3 -m pip install --user pyarrow
-```
-
-It is needed once, to build the cache. Nothing else in the plugin uses it.
+**"needs either pyarrow or a GDAL built with the Parquet driver"** — you should not see this:
+the tile index is downloaded pre-built and read with numpy, which every QGIS has. It only
+appears if that download is blocked *and* your QGIS also lacks both Parquet readers. If it does,
+either unblock `agraham9966.github.io`, or install pyarrow into the Python QGIS uses
+(`sudo apt install python3-pyarrow` on Debian/Ubuntu).
 
 **Find any bugs?** Please
 [open an issue](https://github.com/agraham9966/EMBED-CD/issues) with your platform and QGIS
