@@ -16,7 +16,6 @@ NON-COMMERCIAL, share-alike, attribution required. Only 2016 is plain CC BY 4.0.
 `ATTRIBUTION` exists and why the UI shows it rather than tucking it in a tooltip; a commercial
 user needs to know before they put this in a deliverable. Commercial licences: cloudless.eox.at
 """
-from urllib.parse import quote
 
 # What EOX actually publishes. AlphaEarth runs 2017-2025; there is no 2017 mosaic.
 EOX_YEARS = (2016, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025)
@@ -43,9 +42,17 @@ def xyz_uri(year, zmax=ZMAX):
     they are QGIS's placeholders, not ours. Note the path order is z/y/x: these are WMTS rows
     and columns, not the z/x/y most XYZ services use, and swapping them silently returns the
     wrong part of the world rather than an error.
+
+    Only the {z}/{y}/{x} braces are percent-encoded — NOT the scheme or the slashes. That is
+    exactly how QGIS serializes a manual XYZ connection, and it has to match: `quote(url,
+    safe="")` encoded the "://" and every "/" too, so the provider requested a literally
+    mangled host (https%3A%2F%2Ftiles.maps.eox.at%2F...), which failed every tile with a
+    "max retry" while the identical URL added by hand worked. The URL carries no "&" or "="
+    of its own, so it needs no other escaping to sit safely in the datasource string.
     """
     url = _TEMPLATE.format(year=int(year))
-    return f"type=xyz&url={quote(url, safe='')}&zmax={zmax}&zmin=0"
+    url = url.replace("{", "%7B").replace("}", "%7D")
+    return f"type=xyz&url={url}&zmax={zmax}&zmin=0"
 
 
 def layer_name(year):

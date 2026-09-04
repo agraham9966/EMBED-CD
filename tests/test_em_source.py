@@ -211,14 +211,23 @@ def test_basemap_uri_keeps_qgis_placeholders_and_wmts_row_order():
     path order is z/y/x because these are WMTS rows — the z/x/y most XYZ services use returns
     the wrong part of the world rather than an error."""
     from embed_cd import basemap as BM
-    from urllib.parse import unquote
 
     uri = BM.xyz_uri(2019)
     assert uri.startswith("type=xyz&url=")
-    url = unquote(uri.split("url=")[1].split("&")[0])
-    assert "s2cloudless-2019_3857" in url, "the year has to reach the URL"
-    assert url.endswith("/{z}/{y}/{x}.jpg"), f"wrong placeholder order: {url[-20:]}"
-    assert "{year}" not in url, "the year placeholder must be substituted, not passed through"
+    raw = uri.split("url=")[1].split("&")[0]      # exactly what QGIS's XYZ provider receives
+
+    # The scheme and path separators must be RAW. Encoding them (quote(url, safe="")) made the
+    # provider request https%3A%2F%2Ftiles... — a mangled host that failed every tile with
+    # "max retry", while the same URL added by hand worked. Do NOT unquote before asserting, or
+    # the very bug this guards against becomes invisible again (the previous test did, and did
+    # not catch it).
+    assert raw.startswith("https://tiles.maps.eox.at/"),         f"scheme/host must not be percent-encoded: {raw[:40]}"
+    assert "%2F" not in raw and "%3A" not in raw, f"path separators got encoded: {raw}"
+
+    # Only the {z}/{y}/{x} placeholders are encoded, exactly as QGIS serializes them.
+    assert raw.endswith("/%7Bz%7D/%7By%7D/%7Bx%7D.jpg"), f"wrong placeholder order/encoding: {raw[-40:]}"
+    assert "s2cloudless-2019_3857" in raw, "the year has to reach the URL"
+    assert "{year}" not in raw and "%7Byear%7D" not in raw, "the year must be substituted"
 
 
 def test_basemap_snaps_to_a_year_eox_actually_has():
