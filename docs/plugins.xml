@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <plugins>
-  <pyqgis_plugin name="EMBED-CD" version="0.40.1" plugin_id="1">
+  <pyqgis_plugin name="EMBED-CD" version="0.40.2" plugin_id="1">
     <description>Change maps from satellite embeddings. Draw an area, pick two years, classify what changed.</description>
     <about>Generates year-over-year land change maps from AlphaEarth satellite embeddings (Google Satellite Embedding V1), which cover the whole globe for every year 2017-2025 at 10 m. Works tile by tile and fills the canvas as each tile completes, so memory stays flat and large areas are possible. Missing data is shown as its own class, never as "no change". CPU-only, nothing to train, no account or API key — data is read directly from public cloud-optimized GeoTIFFs. No installation steps on Windows: GDAL, numpy and scipy ship with QGIS. The one-time tile index is Parquet, read with pyarrow or with GDAL's Parquet driver, whichever your QGIS has; some Linux builds have neither and need 'pip install pyarrow' once. Tested on QGIS 4.0.1; 3.28+ should work but is untested. The AlphaEarth Foundations Satellite Embedding dataset is produced by Google and Google DeepMind (CC-BY 4.0).</about>
-    <version>0.40.1</version>
+    <version>0.40.2</version>
     <qgis_minimum_version>3.28</qgis_minimum_version>
     <qgis_maximum_version>4.99</qgis_maximum_version>
     <homepage>https://agraham9966.github.io/EMBED-CD/</homepage>
-    <file_name>embed_cd_qgis-0.40.1.zip</file_name>
+    <file_name>embed_cd_qgis.zip</file_name>
     <icon>icons/embed-cd-logo.png</icon>
     <author_name>Alex Graham</author_name>
-    <download_url>https://agraham9966.github.io/EMBED-CD/downloads/embed_cd_qgis-0.40.1.zip</download_url>
+    <download_url>https://agraham9966.github.io/EMBED-CD/downloads/embed_cd_qgis.zip</download_url>
     <uploaded_by>Alex Graham</uploaded_by>
-    <create_date>2026-09-03T22:19:24.909420Z</create_date>
-    <update_date>2026-09-03T22:19:24.909420Z</update_date>
+    <create_date>2026-09-04T02:16:55.422535Z</create_date>
+    <update_date>2026-09-04T02:16:55.422535Z</update_date>
     <experimental>True</experimental>
     <deprecated>False</deprecated>
     <tracker>https://github.com/agraham9966/EMBED-CD/issues</tracker>

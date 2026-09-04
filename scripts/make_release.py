@@ -44,19 +44,26 @@ def read_metadata(plugin_dir):
     return out
 
 
-def write_repository_xml(meta, zip_path):
+def write_repository_xml(meta, zip_path, plugin_name):
     """A one-plugin QGIS repository, generated from metadata.txt so the two can never disagree.
 
     `download_url` points at the copy under docs/, because that is what the Pages workflow
-    publishes. Only the current version is listed and only its zip is kept: this is a private
-    channel for testing builds, not an archive, and every stale zip is another megabyte in the
-    repo forever.
+    publishes. Only the current version is kept: this is a private channel for testing builds,
+    not an archive, and every stale zip is another megabyte in the repo forever.
+
+    The published file is named `<plugin_name>.zip`, WITHOUT the version, and that is not
+    cosmetic. QGIS derives the folder it installs into as `file_name.partition(".")[0]` — the
+    text up to the first dot. A versioned `embed_cd_qgis-0.40.1.zip` becomes `embed_cd_qgis-0`,
+    which does not match the `embed_cd_qgis` folder inside the zip, and the install fails with
+    "Plugin has disappeared". A dotless stem sidesteps the whole thing; the version lives in the
+    <version> element, which is what QGIS actually reads to offer upgrades.
     """
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    repo_name = f"{plugin_name}.zip"
     for old in DOWNLOAD_DIR.glob("*.zip"):
-        if old.name != zip_path.name:
+        if old.name != repo_name:
             old.unlink()
-    shutil.copy2(zip_path, DOWNLOAD_DIR / zip_path.name)
+    shutil.copy2(zip_path, DOWNLOAD_DIR / repo_name)
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     root = ET.Element("plugins")
@@ -69,10 +76,10 @@ def write_repository_xml(meta, zip_path):
         "qgis_minimum_version": meta.get("qgisMinimumVersion", "3.28"),
         "qgis_maximum_version": meta.get("qgisMaximumVersion", "3.99"),
         "homepage": meta.get("homepage", ""),
-        "file_name": zip_path.name,
+        "file_name": repo_name,
         "icon": meta.get("icon", ""),
         "author_name": meta.get("author", ""),
-        "download_url": f"{SITE_URL}/downloads/{zip_path.name}",
+        "download_url": f"{SITE_URL}/downloads/{repo_name}",
         "uploaded_by": meta.get("author", ""),
         "create_date": now,
         "update_date": now,
@@ -135,7 +142,7 @@ def build(key):
 
     shutil.rmtree(staging)
     print(f"built {zip_path}")
-    write_repository_xml(read_metadata(plugin_dir), zip_path)
+    write_repository_xml(read_metadata(plugin_dir), zip_path, plugin_name)
     return zip_path
 
 
