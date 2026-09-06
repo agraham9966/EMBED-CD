@@ -24,15 +24,26 @@ or Qt, so the whole pipeline runs from a script or a notebook.
 **Which Python to run this with**
 
 - Parts 1 and 2 need only **numpy + scipy** — any environment.
-- Parts 3 and 4 also need **GDAL** (`osgeo`) and network access. The simplest way to get those
-  is QGIS's own interpreter:
+- Parts 3 and 4 also need **GDAL** (`osgeo`) and network access.
+
+**QGIS's own interpreter already has all of it** — numpy, scipy, GDAL and pyarrow — which makes
+it the least-effort choice. Add JupyterLab to it once:
 
 ```
 # Windows
-"C:\\Program Files\\QGIS 4.0.1\\bin\\python-qgis.bat" -m jupyter notebook
+"C:\\Program Files\\QGIS <version>\\bin\\python-qgis.bat" -m pip install --user jupyterlab
+"C:\\Program Files\\QGIS <version>\\bin\\python-qgis.bat" -m jupyterlab
+
 # Linux / macOS
-python3 -m jupyter notebook
+python3 -m pip install --user jupyterlab
+python3 -m jupyterlab
 ```
+
+> **A conda environment may not work.** Measured on one Windows machine: conda-forge's scipy
+> crashed the interpreter inside L-BFGS-B on the *second* iteration (`0xC06D007F`, DLL not
+> found), which kills the classifier in Part 2. It reproduces with plain scipy and no EMBED-CD
+> involved — `maxiter=1` succeeds, `maxiter=2` dies. If you hit it, use QGIS's interpreter or a
+> pip-built scipy.
 """),
 
     code('''import os
