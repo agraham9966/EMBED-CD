@@ -1,106 +1,116 @@
 # EMBED-CD
 
-A QGIS plugin that makes year-over-year land change maps from satellite embeddings, and lets
-you classify what changed by clicking a few examples.
+A QGIS plugin for mapping year-over-year land change from satellite embeddings. Draw a box, pick
+two years, and it makes a change map. Click a few of the changes to teach it what they are, and
+it labels the rest.
 
-Draw a rectangle, pick two years, press one button. There is nothing to install beyond the
-plugin itself, no account, no API key, and no model to train.
+There is no pip install, no account, and no API key. Nothing to train.
 
-## How it works, briefly
+## What it's doing
 
-Every 10 m pixel on Earth carries an [AlphaEarth](https://arxiv.org/abs/2507.22291) embedding —
-a 64-number summary of a whole year of satellite observation, published by Google and Google
-DeepMind for every year from 2017 to 2025. Change is the cosine distance between a pixel's two
-years, so it catches changes in *behaviour* over a year, not just changes in colour on one date.
+Google and Google DeepMind publish [AlphaEarth](https://arxiv.org/abs/2507.22291): for every
+10 m pixel on Earth, and every year from 2017 to 2025, a list of 64 numbers that summarise a
+whole year of satellite data. Two years of the same pixel that look alike got 64 similar numbers;
+two years that differ got different ones. The change score is how far apart those two lists are.
 
-Three things follow from that, and they are the reason this exists:
+Because it summarises a year rather than a single clear day, it picks up changes in how the land
+behaved, not just how it looked on one date.
 
-- **The scale is absolute.** The score is never percentile-stretched, so a cutoff means the
-  same thing in every tile and between runs. Mosaics have no seams and no per-tile rescaling.
-- **"No data" is its own answer.** A separate coverage layer says *why* a pixel has no result
-  (no tile, or a year missing). A gap is never rendered as "nothing changed".
-- **The embeddings are kept.** While each tile is briefly in memory it is pooled into 160 m
-  cells and written beside the tile. That is what lets you cut the map into objects afterwards,
-  at any threshold, and give every object the embedding of what it covers — which is what the
-  classifier learns from.
+A few things fall out of that, and they are the point of the tool:
 
-Label a handful of objects and a one-vs-rest head fits in under a second and colours the rest.
-It is allowed to answer **unknown**, which matters: your classes will never cover a landscape
-exhaustively, and a classifier that must choose will file genuinely new things under whatever
-they resemble most.
+- The score is on a fixed scale, never stretched to the scene, so a cutoff of 0.15 means the same
+  thing everywhere and between runs. Tiles mosaic together with no seams.
+- Where there's no answer, a second layer says why — no tile, or one of the two years missing —
+  instead of drawing a gap as "nothing changed".
+- The embeddings are kept, pooled into 160 m cells, so you can cut the map into objects at any
+  cutoff afterwards and give each object the embedding of what it covers. That's what the
+  classifier reads.
+
+The classifier is one small detector per class, fit in under a second from the objects you
+labelled. It can answer "unknown" — your classes never cover a whole landscape, and a classifier
+forced to pick would file new things under whatever they resemble most.
 
 ## Install
 
-1. Download `embed_cd_qgis-<version>.zip` from
-   [Releases](https://github.com/agraham9966/EMBED-CD/releases).
-2. QGIS → **Plugins → Manage and Install Plugins → Install from ZIP**.
-3. A toolbar button and a **Raster → EMBED-CD** menu entry appear.
+The easy way is to add EMBED-CD's own plugin repository, so it installs and updates from inside
+QGIS. In **Plugins → Manage and Install Plugins → Settings**, tick *Show also experimental
+plugins*, then under *Plugin Repositories* add:
 
-No `pip install` step. Everything the plugin needs — GDAL, numpy, scipy, pyarrow — already
-ships with QGIS. Requires QGIS 3.28 or newer; developed and tested on 4.0.1.
+```
+https://agraham9966.github.io/EMBED-CD/plugins.xml
+```
 
-The first run downloads a one-time 78 MB tile index (cached, ~10 MB afterwards). Data is read
-directly from public cloud-optimized GeoTIFFs, so nothing else is stored.
+Then find EMBED-CD under *All* and install it. Or, if you'd rather, download the zip from
+[Releases](https://github.com/agraham9966/EMBED-CD/releases) and use *Install from ZIP*.
+
+Either way there's no pip step — GDAL, numpy and scipy all ship with QGIS. It needs QGIS 3.28 or
+newer, and is tested on 3.44 and 4.0.1. The first run fetches a small (~4 MB) index of where the
+data tiles are, caches it, and reads everything else straight from public cloud GeoTIFFs.
 
 ## Using it
 
-1. **Draw an area**, name it, pick two years and a Detail.
-2. **Make change map.** Tiles fill the canvas as they land; memory stays flat (~0.6 GB) however
-   large the area is. Set *Save to:* and the run is resumable and reopenable.
-3. **Move the cutoff**, or press Auto for an Otsu split of the whole mosaic. This is pure
-   symbology — the raster holds the continuous score, so it is instant and reversible.
-4. **Generate Embedded Vector Set** to cut the changed area into objects carrying embeddings.
-5. **Add a class, click a few objects.** Everything else is classified as you go. Use the
-   arrows to step through whatever the model is least sure about.
+1. Draw an area, name it, pick two years and a Detail.
+2. Press **Make change map**. Tiles fill in as they download. Set *Save to:* if you want to keep
+   the run and reopen it later.
+3. Drag the cutoff, or press **Auto**. The raster holds the raw score, so this is just symbology —
+   instant and reversible.
+4. Press **Generate Embedded Vector Set** to turn the changed area into objects.
+5. Add a class and click a few objects. The rest are labelled as you go. The arrows walk you
+   through whatever the model is least sure about.
 
-**Detail** is what makes large areas possible. Above 10 m the plugin reads the data's own
-built-in reduced-resolution copies, so a tile covers proportionally more ground for the same
-bytes: all of Vancouver Island at 100 m takes about three minutes. The 160 m embedding cells
-behind the classifier are identical either way, so a coarse run still gives you objects and
-classes.
+**Detail** is what makes big areas practical. Above 10 m the plugin reads the data's own
+lower-resolution copies, so each tile covers more ground for the same download — you can scout a
+whole region coarsely, then rerun a smaller area at full resolution. The 160 m cells the
+classifier uses are the same either way.
 
 ## Development
 
+Build the installable zip (and refresh the hosted repository files under `docs/`):
+
 ```bash
-python scripts/make_release.py        # -> releases/embed_cd_qgis-<version>.zip
+python scripts/make_release.py
 ```
 
-The zip is self-contained: `scripts/make_release.py` vendors the `embed_cd/` engine and the
-logo inside the plugin folder, so an installed copy needs nothing from this repo.
+The zip is self-contained: the build copies the `embed_cd/` engine and the logo inside the plugin
+folder, so an installed copy needs nothing from this repo.
 
-Tests need QGIS's own Python, because the engine uses `osgeo.gdal`:
+The tests need QGIS's own Python, because the engine calls `osgeo.gdal`:
 
 ```bash
 "C:\Program Files\QGIS 4.0.1\bin\python-qgis.bat" run_tests.py
 ```
 
-To work on it live, symlink the plugin folder into your QGIS profile instead of installing a
-zip — the plugin detects that layout and imports the engine from the repo root.
+To develop against a live QGIS, symlink `plugin/embed_cd_qgis` into your QGIS profile instead of
+installing a zip. The plugin notices that layout and imports the engine from the repo.
 
 ## Layout
 
-- `embed_cd/` — the engine. Pure numpy/scipy/GDAL, imports no QGIS, runs and tests standalone.
-- `plugin/embed_cd_qgis/` — the QGIS plugin: the dock, the classifier panel, the map tool.
-- `tests/` — run them with `run_tests.py`.
+- `embed_cd/` — the engine. Plain numpy/scipy/GDAL, no QGIS, runs and tests on its own.
+- `plugin/embed_cd_qgis/` — the QGIS side: the dock, the classifier panel, the map tool.
+- `examples/embed_cd_demo.ipynb` — the whole pipeline in a notebook, on real data.
+- `tests/` — run with `run_tests.py`.
 
-The change job runs in a subprocess, because PROJ and GDAL are not safe on QGIS's own threads
-and a long job must never block the UI.
+The change job runs in its own process, so a long download never freezes QGIS and GDAL stays off
+the UI thread.
 
-## Data, licences and limits
+## Data and licences
 
-- **AlphaEarth Foundations Satellite Embedding V1** — Google and Google DeepMind,
-  **CC-BY 4.0**. Global, every year 2017–2025, read from public COGs on source.coop.
-- **Sentinel-2 cloudless** year photos — [EOX IT Services](https://s2maps.eu), contains
-  modified Copernicus Sentinel data. **CC BY-NC-SA 4.0 — non-commercial** for 2018 onward
-  (2016 is CC BY 4.0). If your output is commercial, do not ship these tiles in it.
-- This plugin is **GPL-2.0-or-later**.
+- **AlphaEarth Foundations Satellite Embedding V1** — Google / Google DeepMind, CC BY 4.0. Global,
+  2017–2025, read from public COGs on source.coop.
+- **Sentinel-2 cloudless** reference imagery — [EOX IT Services](https://s2maps.eu), containing
+  modified Copernicus Sentinel data. CC BY-NC-SA 4.0, non-commercial, for 2018 on (2016 is
+  CC BY 4.0). Don't ship these tiles in a commercial product.
+- EMBED-CD itself is GPL-2.0-or-later.
 
-Known limits, plainly:
+## What it can't do
 
-- **Annual only.** One embedding per calendar year, so there is no sub-annual or event-timed
-  detection. A 2019→2024 map includes changes during 2024, but a November change is diluted by
-  ten months of pre-change observation in the same embedding.
-- **Coarse Detail reads slightly conservative** near the cutoff (measured: 7.6% of the area
-  flagged versus 9.2% at cutoff 0.15, correlation 0.983).
-- **The year photos are composites**, not acquisitions. They answer "what was here that year",
-  never "what date did this change".
+- It's annual. There's one embedding per calendar year, so it can't time a change within the
+  year. A change late in the second year is muted, because most of that year still looks like the
+  old state — if you suspect a late change, compare against the following year.
+- A high score isn't proof the land changed. A drought or an odd season moves the embedding too.
+  Deciding which changes are real is what the labelling is for.
+- The reference photos are yearly composites, not dated images. They answer "what was here that
+  year", not "what day did it change".
+
+There's a fuller writeup, with worked figures, at
+[agraham9966.github.io/EMBED-CD](https://agraham9966.github.io/EMBED-CD/).
