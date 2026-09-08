@@ -63,26 +63,6 @@ lower-resolution copies, so each tile covers more ground for the same download â
 whole region coarsely, then rerun a smaller area at full resolution. The 160 m cells the
 classifier uses are the same either way.
 
-## Development
-
-Build the installable zip (and refresh the hosted repository files under `docs/`):
-
-```bash
-python scripts/make_release.py
-```
-
-The zip is self-contained: the build copies the `embed_cd/` engine and the logo inside the plugin
-folder, so an installed copy needs nothing from this repo.
-
-The tests need QGIS's own Python, because the engine calls `osgeo.gdal`:
-
-```bash
-"C:\Program Files\QGIS 4.0.1\bin\python-qgis.bat" run_tests.py
-```
-
-To develop against a live QGIS, symlink `plugin/embed_cd_qgis` into your QGIS profile instead of
-installing a zip. The plugin notices that layout and imports the engine from the repo.
-
 ## Layout
 
 - `embed_cd/` â€” the engine. Plain numpy/scipy/GDAL, no QGIS, runs and tests on its own.
