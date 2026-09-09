@@ -1232,6 +1232,46 @@ def test_steps_fold_once_and_keep_their_answer_in_the_title():
     print("ok steps fold once, reopen stays open, titles carry the summary")
 
 
+def test_drawing_a_new_area_does_not_jump_to_the_change_map():
+    """Reported: after a run, drawing a new ROI jumped to the change-map step before the user had
+    set the new area's years or Detail. The cause was `_on_area` resetting the fold guard while
+    `layer_id` still pointed at the PREVIOUS run, so `_sync` saw a result and advanced. Drawing a
+    new area must leave you on step 1 with the later steps disabled until you actually run it.
+    """
+    from qgis.PyQt.QtWidgets import QMainWindow
+    from qgis.gui import QgsMapCanvas
+    from qgis.core import QgsRectangle
+    from embed_cd_qgis.dock import ChangeDock
+
+    class _Iface:
+        def __init__(self, win, canvas):
+            self._w, self._c = win, canvas
+
+        def mainWindow(self):
+            return self._w
+
+        def mapCanvas(self):
+            return self._c
+
+    dock = ChangeDock(_Iface(QMainWindow(), QgsMapCanvas()))
+
+    # Pretend a run finished for a first area: a result exists and step 1 has folded to step 2.
+    dock.bbox = (-126.05, 50.28, -125.90, 50.37)
+    dock.layer_id = "pretend-a-change-map-exists"
+    dock._sync()
+    assert dock.steps.currentIndex() != 0, "setup: a finished run should have advanced past step 1"
+
+    # Now draw a DIFFERENT area. It has no result yet, so we must stay on step 1.
+    dock._on_area(QgsRectangle(-123.80, 49.45, -123.65, 49.55))
+    assert dock.layer_id is None, "drawing a new area must detach the previous result"
+    assert dock.steps.currentIndex() == 0, \
+        f"drawing a new area jumped to step {dock.steps.currentIndex() + 1}, not step 1"
+    assert not dock.steps.isItemEnabled(1), "the change-map step must be disabled until this area is run"
+
+    dock.cleanup()
+    print("ok drawing a new area stays on step 1 (no jump to the change map)")
+
+
 def test_switching_between_areas_restores_each_one():
     """Several areas in one session, and the dock must be honest about which one it acts on.
 
@@ -1970,6 +2010,7 @@ if __name__ == "__main__":
     test_naming_a_new_area_never_renames_the_one_you_opened()
     test_undo_and_stepping_through_objects()
     test_steps_fold_once_and_keep_their_answer_in_the_title()
+    test_drawing_a_new_area_does_not_jump_to_the_change_map()
     test_switching_between_areas_restores_each_one()
     test_the_tile_estimate_asks_the_tiler_when_it_can()
     test_the_worker_interpreter_is_found_and_a_failed_start_is_reported()

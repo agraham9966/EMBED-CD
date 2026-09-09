@@ -9,6 +9,12 @@ header keeps the answer you gave it, so a folded step still tells you what it is
 
 ## 1 · Area, years and output
 
+!!! tip "Try this area"
+    New to it? Zoom to around **49.67°N, 125.29°W** on Vancouver Island — paste that into QGIS's
+    coordinate box at the bottom, or search a nearby place — then draw a box a few kilometres
+    across, pick **2019** and **2024**, and press **Make change map**. It's active forestry, so
+    there's real cutblock change to see. A rough box is fine.
+
 **Draw area on map**, then drag a rectangle. 
 <video controls autoplay loop muted playsinline
        style="width: 100%; border-radius: 4px; margin: 1.2em 0;">

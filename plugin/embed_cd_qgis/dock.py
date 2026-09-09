@@ -38,7 +38,7 @@ except ImportError:
 
 _YEARS = [str(y) for y in range(2017, 2026)]
 _NODATA = -1.0
-_DETAIL = {"10 m (full)": 10.0, "20 m": 20.0, "50 m": 50.0, "100 m": 100.0}
+_DETAIL = {"10 m (full)": 10.0, "20 m": 20.0, "50 m": 50.0, "75 m": 75.0, "100 m": 100.0}
 _CELL_M = 160.0        # embedding cell size in GROUND metres; see embed_cd/cells.py
 _TILE_KM = 10.24       # one COG block at 10 m — the unit everything is fetched in
 # Both years of one tile, measured on a home connection. A coarse tile is the same 1024 px but
@@ -770,6 +770,13 @@ class ChangeDock(QDockWidget):
             self.name_edit.clear()
             self.name_edit.blockSignals(False)
             self._sync_name_placeholder()
+        # A freshly drawn area has no result of its own yet. Without this, `layer_id` still
+        # points at the PREVIOUS area's map, so the `_sync()` below sees a result and — because
+        # the fold guard was just reset — jumps straight to the change-map step, before the user
+        # has even set the new area's years or Detail. Detach, do not remove: the old area's
+        # layers stay in the tree and `_switch_run` restores them when it is picked again (same
+        # as dock.py's area-switch path).
+        self.layer_id = self.cov_layer_id = None
         self._folded_once.discard("step1")  # drawing a new area makes step 1 live again
         self.steps.setCurrentIndex(0)
         self._describe_area()
