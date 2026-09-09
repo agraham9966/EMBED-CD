@@ -130,7 +130,10 @@ def build(key):
     # has no icon to load and silently falls back to text.
     icons = ROOT / "icons"
     if icons.is_dir():
-        shutil.copytree(icons, stage_plugin / "icons", ignore=ignore)
+        # Ship only the square listing/toolbar icon. The wide logo is used by the docs site, not
+        # the plugin, and at ~0.8 MB it was most of the package.
+        shutil.copytree(icons, stage_plugin / "icons",
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*logo*"))
     # plugins.qgis.org requires LICENSE (and wants README) INSIDE the package; both live at the
     # repo root, so copy them into the plugin folder the zip is made from.
     for fname in ("LICENSE", "README.md"):

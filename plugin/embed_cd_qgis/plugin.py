@@ -19,8 +19,8 @@ def icon_path():
     up from this file's package; in dev the plugin folder is a sibling of the repo's icons/.
     """
     here = os.path.dirname(os.path.abspath(__file__))
-    for cand in (os.path.join(here, "icons", "embed-cd-logo.png"),
-                 os.path.join(here, "..", "..", "icons", "embed-cd-logo.png")):
+    for cand in (os.path.join(here, "icons", "embed-cd-icon.png"),
+                 os.path.join(here, "..", "..", "icons", "embed-cd-icon.png")):
         if os.path.isfile(cand):
             return os.path.abspath(cand)
     return None
