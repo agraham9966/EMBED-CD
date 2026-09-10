@@ -6,6 +6,9 @@ it labels the rest.
 
 There is no pip install, no account, and no API key. Nothing to train.
 
+![EMBED-CD running in QGIS: a 2019→2024 change map over Vancouver Island, with the objects
+classified — cutblocks in orange — and the panel showing the per-class breakdown.](docs/assets/map_example_vanisle.png)
+
 ## What it's doing
 
 Google and Google DeepMind publish [AlphaEarth](https://arxiv.org/abs/2507.22291): for every
