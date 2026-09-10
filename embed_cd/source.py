@@ -42,6 +42,19 @@ _S3_BASE = "s3://us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/"
 log = logging.getLogger(__name__)
 
 _UA = "embed-cd (QGIS plugin)"
+_ALLOWED_SCHEMES = ("http://", "https://", "file:")
+
+
+def _urlopen(url, timeout=None):
+    """Open a URL for the tile index, after checking its scheme.
+
+    The URLs here are trusted — a hard-coded https constant, our own published site, or the
+    file:// a test or an offline mirror sets via EMBED_CD_INDEX_NPZ_URL — never attacker input.
+    The scheme check makes that explicit and keeps urlopen from being handed something odd."""
+    if not str(url).lower().startswith(_ALLOWED_SCHEMES):
+        raise ValueError("refusing to open a non-http(s)/file URL: %r" % (url,))
+    req = urllib.request.Request(url, headers={"User-Agent": _UA})
+    return urllib.request.urlopen(req, timeout=timeout)  # nosec B310 - scheme checked above
 TILE_PX = 1024          # = the COG block size; see fact 3. 10.24 km at native 10 m.
 NATIVE_RES = 10.0
 MAX_FACTOR = 16         # 160 m — one whole embedding cell per source pixel, the useful floor
@@ -204,9 +217,8 @@ class Index:
             if progress:
                 progress("downloading AlphaEarth tile index (78 MB, one time)")
             tmp = raw + ".part"
-            # source.coop 403s the default Python-urllib user-agent
-            req = urllib.request.Request(INDEX_URL, headers={"User-Agent": _UA})
-            with urllib.request.urlopen(req) as r, open(tmp, "wb") as f:
+            # source.coop 403s the default Python-urllib user-agent (set in _urlopen)
+            with _urlopen(INDEX_URL) as r, open(tmp, "wb") as f:
                 shutil.copyfileobj(r, f)
             os.replace(tmp, raw)
         col = _read_parquet(raw, progress)
@@ -233,8 +245,7 @@ class Index:
         try:
             if progress:
                 progress("downloading AlphaEarth tile index (4 MB, one time)")
-            req = urllib.request.Request(self.npz_url, headers={"User-Agent": _UA})
-            with urllib.request.urlopen(req, timeout=120) as r, open(tmp, "wb") as f:
+            with _urlopen(self.npz_url, timeout=120) as r, open(tmp, "wb") as f:
                 shutil.copyfileobj(r, f)
             _check_index_npz(tmp)                 # raises if columns/rows are wrong
             os.replace(tmp, self.npz_path)

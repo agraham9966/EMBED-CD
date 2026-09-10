@@ -9,7 +9,13 @@ mid-write is not — that's why the job writes one file per tile.
 """
 import os
 import time
-from xml.sax.saxutils import escape
+
+
+def escape(s):
+    """XML-escape a value for WRITING into the VRT — &, <, > only, exactly what
+    xml.sax.saxutils.escape did. A local function so nothing imports xml.sax, which security
+    scanners flag on sight (its parsers have real XML-attack history; escaping output does not)."""
+    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 # (index, dtype, description, band_nodata, source_nodata, override)
 #

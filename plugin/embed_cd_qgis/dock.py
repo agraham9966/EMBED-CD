@@ -9,6 +9,7 @@ change score, so moving the slider is pure symbology: instant, works mid-run, an
 reopening the layer.
 """
 import json
+import logging
 import os
 import re
 import shutil
@@ -30,6 +31,8 @@ from qgis.core import (
 
 from .compat import scoped as _scoped, qvariant as _qvariant
 from .maptool import RectangleTool
+
+log = logging.getLogger(__name__)
 
 try:
     from qgis.gui import QgsCollapsibleGroupBox as _GroupBox
@@ -488,7 +491,7 @@ class ChangeDock(QDockWidget):
             try:
                 QgsProject.instance().removeMapLayer(lid)
             except Exception:
-                pass
+                log.debug("layer %s was already removed", lid, exc_info=True)
 
     def _register_run(self):
         """Remember the run the dock is currently pointing at, keyed by its layer group."""
@@ -917,7 +920,7 @@ class ChangeDock(QDockWidget):
             from qgis.core import QgsSettings
             QgsSettings().setValue(self._SETTING_DIR, path)
         except Exception:
-            pass
+            log.debug("could not remember the last-used folder", exc_info=True)
 
     def _browse(self):
         d = QFileDialog.getExistingDirectory(self, "Folder for the change map", self._last_dir())
@@ -979,7 +982,7 @@ class ChangeDock(QDockWidget):
             from .engine import store as ST
             ST.save_meta(self.out_dir, name=name)
         except Exception:
-            pass
+            log.debug("could not write run.json name", exc_info=True)
         if current is not None:
             current["name"] = name
         self._refresh_run_combo()
@@ -1025,9 +1028,13 @@ class ChangeDock(QDockWidget):
     def _area_key(self):
         """Short digest of the drawn area, so a run folder names WHERE as well as WHEN.
         4 decimal places is ~11 m, fine enough to separate two areas and exact enough that
-        re-running the same bbox resumes instead of starting over."""
+        re-running the same bbox resumes instead of starting over.
+
+        `usedforsecurity=False`: this is a short folder-naming digest, not a security hash —
+        the flag says so and keeps the value identical (so existing run folders still match)."""
         import hashlib
-        return hashlib.sha1(("%.4f_%.4f_%.4f_%.4f" % tuple(self.bbox)).encode()).hexdigest()[:6]
+        raw = ("%.4f_%.4f_%.4f_%.4f" % tuple(self.bbox)).encode()
+        return hashlib.sha1(raw, usedforsecurity=False).hexdigest()[:6]
 
     _RUN_DIR = re.compile(r"^change_\d{4}_\d{4}_([0-9a-f]{6})$")
 

@@ -7,6 +7,7 @@ Labelling is click-a-polygon-on-the-map, via LabelTool. An earlier version made 
 QGIS's own selection first; that was a bad call — it silently depends on the polygon layer being
 the active one, and gives no feedback when it isn't. Selection is still there as a bulk path.
 """
+import logging
 import os
 
 import numpy as np
@@ -26,6 +27,8 @@ from qgis.core import (
 from qgis.gui import QgsMapTool
 
 from .compat import scoped as _scoped, qvariant as _qv
+
+log = logging.getLogger(__name__)
 
 UNKNOWN = "unknown"
 # (what the user sees, what the head is told). Order matters: the first is the default.
@@ -75,11 +78,11 @@ class _ClassList(QListWidget):
 def row_of(*widgets):
     """Small helper: a horizontal strip, since the options panel needs a couple of them."""
     w = QWidget()
-    l = QHBoxLayout(w)
-    l.setContentsMargins(0, 0, 0, 0)
-    l.setSpacing(4)
+    lay = QHBoxLayout(w)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(4)
     for x in widgets:
-        l.addWidget(x)
+        lay.addWidget(x)
     return w
 
 
@@ -612,7 +615,7 @@ class ClassifyPanel(QWidget):
         try:
             layer.styleChanged.connect(self._colors_from_layer)
         except Exception:
-            pass
+            log.debug("could not connect styleChanged", exc_info=True)
         self._style()
 
     def _highlight(self, geom=None):
@@ -731,7 +734,7 @@ class ClassifyPanel(QWidget):
             try:
                 QgsProject.instance().removeMapLayer(self.layer.id())
             except Exception:
-                pass
+                log.debug("layer was already removed", exc_info=True)
         self.layer = None
         self._fid_row = {}
 
@@ -763,7 +766,7 @@ class ClassifyPanel(QWidget):
             from qgis.core import QgsSettings
             QgsSettings().setValue(_MODE_SETTING, self.features())
         except Exception:
-            pass
+            log.debug("could not persist the classify mode", exc_info=True)
 
     def _set_features(self, key):
         """Point the combo at a mode without treating it as a user edit."""
@@ -1111,7 +1114,7 @@ class ClassifyPanel(QWidget):
                                         QgsProject.instance())
             box = tr.transformBoundingBox(box)
         except Exception:
-            pass
+            log.debug("could not transform bbox to the layer CRS", exc_info=True)
         cur = canvas.extent()
         if box.width() > cur.width() or box.height() > cur.height():
             box.scale(1.4)
@@ -1344,7 +1347,8 @@ class ClassifyPanel(QWidget):
                 rect = tr.transformBoundingBox(rect)
                 point = tr.transform(point)
         except Exception:
-            pass                    # no canvas CRS to speak of (tests): treat them as the same
+            # no canvas CRS to speak of (tests): treat canvas and layer as the same
+            log.debug("no canvas CRS; treating as the layer CRS", exc_info=True)
         geom_pt = QgsGeometry.fromPointXY(point)
         for f in self.layer.getFeatures(QgsFeatureRequest().setFilterRect(rect)):
             if f.geometry().intersects(geom_pt) or f.geometry().intersects(
@@ -1666,7 +1670,8 @@ class ClassifyPanel(QWidget):
                            self.host._threshold() if thr is None else thr, names=self.classes,
                            features=self.features())
         except Exception:
-            pass                     # never let a failed autosave interrupt labelling
+            # never let a failed autosave interrupt labelling
+            log.debug("label autosave failed; continuing", exc_info=True)
 
     def _bank_labels(self):
         """Move the current set's labels into the banked examples, before the rows they point
@@ -1780,7 +1785,7 @@ class ClassifyPanel(QWidget):
                     "CASE WHEN \"label\" IS NOT NULL AND \"label\" <> '' "
                     "THEN 'dash' ELSE 'solid' END"))
         except Exception:
-            pass
+            log.debug("could not set the data-defined outline style", exc_info=True)
         return sym
 
     def _style(self):
@@ -1814,7 +1819,7 @@ class ClassifyPanel(QWidget):
             self.layer.setRenderer(QgsCategorizedSymbolRenderer("predicted", cats))
             self.layer.triggerRepaint()
         except Exception:
-            pass
+            log.debug("could not restyle the predictions layer", exc_info=True)
         finally:
             self._styling = False
 
