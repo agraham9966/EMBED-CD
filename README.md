@@ -58,3 +58,10 @@ with videos.
 EMBED-CD is GPL-2.0-or-later. The Sentinel-2 reference imagery is non-commercial — see the
 [docs](https://agraham9966.github.io/EMBED-CD/reference/) before shipping it in a commercial
 product.
+
+## AI Transparency 
+
+AI was used to assist in the development of the plugin! 
+Background Literature Review and Methodology Design: Me 
+Front-end Design: Me 
+Backend Coding and Implementation: Claude-AI
