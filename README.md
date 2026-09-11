@@ -62,6 +62,6 @@ product.
 ## AI Transparency 
 
 AI was used to assist in the development of the plugin! 
-Background Literature Review and Methodology Design: Me 
-Front-end Design: Me 
-Backend Coding and Implementation: Claude-AI
+- Background Literature Review and Methodology Design: Me 
+- Front-end Design: Me 
+- Backend Coding and Implementation: Claude-AI
