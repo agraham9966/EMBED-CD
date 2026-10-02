@@ -499,7 +499,37 @@ def test_strictness_still_works_with_a_single_class():
     print(f"ok single-class strictness still responds: unknowns {counts}")
 
 
+
+def test_classifier_without_scipy_makes_the_same_calls():
+    """Ubuntu's QGIS packages do not ship scipy, so the classifier must fit without it. Newton's
+    method on the identical convex objective must reach the same optimum as scipy's L-BFGS-B:
+    probabilities equal to well under any decision margin, and every prediction the same."""
+    import builtins
+    x, y, _ = _planted()
+    classes = {c: x[y == c] for c in set(y.tolist())}
+    with_scipy = H.fit_from_classes(classes)
+    p1, s1 = with_scipy.predict(x)
+
+    real = builtins.__import__
+
+    def no_scipy(name, *a, **k):
+        if name.startswith("scipy"):
+            raise ImportError("simulated: no scipy (Ubuntu's QGIS)")
+        return real(name, *a, **k)
+    builtins.__import__ = no_scipy
+    try:
+        without = H.fit_from_classes(classes)
+        p2, s2 = without.predict(x)
+    finally:
+        builtins.__import__ = real
+    assert list(p1) == list(p2), "a prediction changed without scipy"
+    assert np.max(np.abs(s1 - s2)) < 1e-5, np.max(np.abs(s1 - s2))
+    print("ok classifier without scipy makes the same calls (max |dprob| %.1e)"
+          % np.max(np.abs(s1 - s2)))
+
+
 if __name__ == "__main__":
+    test_classifier_without_scipy_makes_the_same_calls()
     test_recovers_planted_classes()
     test_out_of_distribution_returns_unknown()
     test_an_unlabelled_change_type_mostly_abstains()

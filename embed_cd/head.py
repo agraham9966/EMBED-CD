@@ -93,9 +93,11 @@ def _fit_logistic(x, y, C=1.0, max_iter=500):
 
     Minimises `0.5*w'w + C * sum_i s_i * logloss_i` with the intercept unregularised — sklearn's
     own objective, so results are interchangeable with the prototype's.
-    """
-    from scipy.optimize import minimize
 
+    scipy's L-BFGS-B where scipy is installed (the Windows QGIS ships it — nothing changes
+    there); Newton's method in plain numpy where it is not (Ubuntu's QGIS packages do not ship
+    scipy). The objective is strictly convex in w, so both stop at the same unique optimum.
+    """
     n, d = x.shape
     y = np.asarray(y, np.float64)
     counts = np.bincount(y.astype(int), minlength=2).astype(np.float64)
@@ -113,9 +115,44 @@ def _fit_logistic(x, y, C=1.0, max_iter=500):
         g[1:] = C * (x.T @ gz) + w
         return 0.5 * w @ w + C * loss, g
 
+    try:
+        from scipy.optimize import minimize
+    except ImportError:
+        return _newton(obj, x, s, C, max_iter)
     r = minimize(obj, np.zeros(d + 1), jac=True, method="L-BFGS-B",
                  options={"maxiter": max_iter, "ftol": 1e-12, "gtol": 1e-9})
     return float(r.x[0]), r.x[1:]
+
+
+def _newton(obj, x, s, C, max_iter):
+    """Minimise `obj` (from _fit_logistic) by Newton's method with a backtracking line search.
+
+    The Hessian of that objective is C·Aᵀdiag(s·p·(1-p))A + diag(0, I) with A = [1 | x]: a
+    (d+1)-square solve, trivial at these sizes, and it converges quadratically — typically in
+    a dozen steps to the gradient tolerance L-BFGS-B is given."""
+    n, d = x.shape
+    a = np.hstack([np.ones((n, 1)), x])
+    theta = np.zeros(d + 1)
+    f, g = obj(theta)
+    for _ in range(max_iter):
+        if np.max(np.abs(g)) < 1e-9:
+            break
+        p = 0.5 * (1.0 + np.tanh(0.5 * (a @ theta)))          # sigmoid, overflow-free
+        h = a.T @ (a * (C * s * p * (1.0 - p))[:, None])
+        h[1:, 1:] += np.eye(d)
+        step = np.linalg.solve(h + 1e-12 * np.eye(d + 1), g)   # jitter only guards the solve
+        t = 1.0
+        while True:
+            f_new, g_new = obj(theta - t * step)
+            if f_new <= f - 1e-4 * t * (g @ step) or t < 1e-10:
+                break
+            t *= 0.5
+        theta = theta - t * step
+        done = abs(f - f_new) <= 1e-15 * max(1.0, abs(f))
+        f, g = f_new, g_new
+        if done:
+            break
+    return float(theta[0]), theta[1:]
 
 
 def _stratified_folds(y, k, seed=0):

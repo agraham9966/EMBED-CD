@@ -12,9 +12,36 @@ long job must never block the UI. Speaks a line protocol on stdout:
 Usage: python -m embed_cd.worker '<json spec>'
 """
 import json
+import logging
 import os
 import site
 import sys
+
+
+class _FirstProblem(logging.Handler):
+    """Remembers the first warning raised during the job, so a run that produces nothing can say
+    WHY. A tile that fails is logged and skipped — right for one bad tile, but when EVERY tile
+    fails the only clue was in those logs, on a stderr nobody read. That is how a missing GDAL
+    function on Linux surfaced as nothing more than "none landed in the output grid"."""
+
+    def __init__(self):
+        super().__init__(logging.WARNING)
+        self.first = None
+
+    def emit(self, record):
+        if self.first is None:
+            exc = record.exc_info[1] if record.exc_info else None
+            self.first = ("%s: %s" % (type(exc).__name__, exc)) if exc else record.getMessage()
+
+
+def _setup_logging():
+    """Warnings and tracebacks to stderr, which the dock forwards to QGIS's Log Messages panel;
+    plus the first one kept for the user-facing failure message."""
+    first = _FirstProblem()
+    logging.basicConfig(level=logging.WARNING, stream=sys.stderr,
+                        format="%(levelname)s %(name)s: %(message)s")
+    logging.getLogger().addHandler(first)
+    return first
 
 
 def _enable_user_site():
@@ -30,6 +57,7 @@ def main():
     spec = json.loads(sys.argv[1])
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     _enable_user_site()
+    first_problem = _setup_logging()
     # No pre-flight reader check any more: the tile index is fetched pre-built as a .npz and read
     # with numpy, so pyarrow and the GDAL Parquet driver are only a fallback for building it from
     # the raw parquet if that hosted download is unreachable. If BOTH the download and that
@@ -101,6 +129,8 @@ def main():
                        f"them, which happens when the output CRS ({spec['dst_crs']}) is not in "
                        f"metres — Detail is metres, so in a degrees-based CRS it is read as "
                        f"degrees.")
+            elif first_problem.first:
+                why = f" First error: {first_problem.first} (full detail: Log Messages > EMBED-CD)"
             print(f"ERR No tiles produced a result. {len(all_tiles)} tile(s) cover this area "
                   f"but none landed in the {g.width}x{g.height} px output grid.{why}", flush=True)
             return 2

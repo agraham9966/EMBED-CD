@@ -26,7 +26,7 @@ from qgis.PyQt.QtWidgets import (
 from qgis.core import (
     QgsProject, QgsRasterLayer, QgsCoordinateReferenceSystem, QgsCoordinateTransform,
     QgsColorRampShader, QgsRasterShader, QgsSingleBandPseudoColorRenderer,
-    QgsRasterTransparency, Qgis, QgsField,
+    QgsRasterTransparency, Qgis, QgsField, QgsMessageLog,
 )
 
 from .compat import scoped as _scoped, qvariant as _qvariant
@@ -1240,7 +1240,11 @@ class ChangeDock(QDockWidget):
                  os.path.join(os.environ.get("PYTHONHOME", ""), "python.exe"),
                  os.path.join(sys.exec_prefix, "bin", "python3"),
                  os.path.join(sys.exec_prefix, "bin", "python"),
-                 os.path.join(os.environ.get("PYTHONHOME", ""), "bin", "python3")]
+                 os.path.join(os.environ.get("PYTHONHOME", ""), "bin", "python3"),
+                 # macOS: QGIS.app keeps its interpreter beside the app binary, in
+                 # Contents/MacOS/bin. Last, so it can only add a hit where every candidate above
+                 # missed — which otherwise falls through to the system python3, one with no GDAL.
+                 os.path.join(os.path.dirname(sys.executable or ""), "bin", "python3")]
         for c in cands:
             if c and os.path.isfile(c):
                 return c
@@ -1345,6 +1349,12 @@ class ChangeDock(QDockWidget):
         env.remove("PYTHONNOUSERSITE")     # QGIS sets this; it would hide the user-site deps
         self.proc.setProcessEnvironment(env)
         self.proc.readyReadStandardOutput.connect(self._on_output)
+        # stderr carries the worker's warnings and tracebacks. It used to be read by nobody, which
+        # is why a Linux run that failed every tile showed only "none landed" — the reason was
+        # printed and discarded. Forward it to Log Messages, and keep the last line for _on_finished.
+        self._stderr_tail = ""
+        self._got_err = False
+        self.proc.readyReadStandardError.connect(self._on_stderr)
         self.proc.finished.connect(self._on_finished)
         # `finished` is NOT emitted when the process never starts — measured: a bad executable
         # emits errorOccurred(FailedToStart) and nothing else. Listening only for `finished`
@@ -1366,6 +1376,17 @@ class ChangeDock(QDockWidget):
         if self.out_dir:
             open(os.path.join(self.out_dir, ".cancel"), "w").close()   # stop after this tile
         self.status.setText("Finishing the current tile, then stopping…")
+
+    def _on_stderr(self):
+        if self.proc is None:
+            return
+        text = bytes(self.proc.readAllStandardError()).decode("utf-8", "replace").rstrip()
+        if not text:
+            return
+        QgsMessageLog.logMessage(text, "EMBED-CD", _scoped(Qgis, "MessageLevel", "Warning"))
+        lines = [ln for ln in text.splitlines() if ln.strip()]
+        if lines:
+            self._stderr_tail = lines[-1].strip()
 
     def _on_output(self):
         text = bytes(self.proc.readAllStandardOutput()).decode("utf-8", "replace")
@@ -1398,6 +1419,7 @@ class ChangeDock(QDockWidget):
                 self.status.setText(f"Done. Auto cutoff {t:.2f} — {frac*100:.1f}% of the "
                                     "area changed.")
             elif line.startswith("ERR "):
+                self._got_err = True
                 self.status.setText(line[4:])
 
     def _on_proc_error(self, error):
@@ -1426,12 +1448,18 @@ class ChangeDock(QDockWidget):
 
     def _on_finished(self, exit_code, _status):
         self._on_output()
+        self._on_stderr()
         self.proc.deleteLater()
         self.proc = None
         self.progress.setVisible(False)
         if self._canceled:
             self.status.setText(self.status.text() + "  (cancelled — rerun to resume)")
         elif exit_code != 0 and self.layer_id is None:
+            if not getattr(self, "_got_err", False) and getattr(self, "_stderr_tail", ""):
+                # The worker died without explaining itself (an import error, say, on a Mac
+                # whose Python lacks something). Its last stderr line is the explanation.
+                self.status.setText("The job failed: %s  (full detail: Log Messages > EMBED-CD)"
+                                    % self._stderr_tail)
             self.iface.messageBar().pushMessage(
                 "EMBED-CD", self.status.text() or "The job failed.",
                 level=_scoped(Qgis, "MessageLevel", "Warning"), duration=6)

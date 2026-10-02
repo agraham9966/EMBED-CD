@@ -238,7 +238,31 @@ def test_no_tiles_at_all_is_the_only_hard_failure():
     assert recs == [] and not partial
 
 
+
+def test_worker_keeps_the_first_error_for_the_failure_message():
+    """When every tile fails, the worker's failure message must name the actual error. It used to
+    say only "none landed in the output grid" — the real AttributeError was logged to a stderr
+    nobody read."""
+    import logging
+    from embed_cd import worker as W
+    h = W._FirstProblem()
+    lg = logging.getLogger("embed_cd.test_first_problem")
+    lg.addHandler(h)
+    lg.propagate = False
+    try:
+        for msg in ("module 'osgeo.gdal' has no attribute 'config_options'", "a later one"):
+            try:
+                raise AttributeError(msg)
+            except AttributeError:
+                lg.warning("tile failed", exc_info=True)
+    finally:
+        lg.removeHandler(h)
+    assert h.first == "AttributeError: module 'osgeo.gdal' has no attribute 'config_options'", h.first
+    print("ok the worker keeps the first real error for its failure message")
+
+
 if __name__ == "__main__":
+    test_worker_keeps_the_first_error_for_the_failure_message()
     test_tiles_stream_into_one_seamless_mosaic()
     test_rerun_is_resumable()
     test_changing_detail_does_not_reuse_stale_tiles()

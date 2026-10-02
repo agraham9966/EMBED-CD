@@ -15,7 +15,7 @@ Two rules earn their keep:
   `sum(mean_i * n_i) / sum(n_i)` — exactly the mean over its pixels. An unweighted average of
   cell means would over-weight partial edge cells.
 
-numpy + scipy + GDAL only. Writing the GeoPackage is the plugin's job, using QGIS's own
+numpy + GDAL (scipy where installed). Writing the GeoPackage is the plugin's job, using QGIS's own
 vector API — the engine never imports QGIS.
 """
 import os
@@ -30,13 +30,69 @@ _M2_PER_HA = 10000.0
 _CONNECTIVITY = 8            # matches the 3x3 structure used when the thresholds were measured
 
 
+def _components(arr, mask, crs, transform):
+    """(labels, n, means, maxes) for the 8-connected components of `mask`, numbered 1..n in
+    raster-scan order of each component's first pixel, with per-component mean and max of `arr`.
+
+    scipy.ndimage does this where it is installed — the Windows QGIS ships it, so there nothing
+    changes. Ubuntu's QGIS packages do NOT ship scipy, and needing a pip install is exactly what
+    this plugin promises not to do; so without it, GDAL finds the components instead and numpy
+    takes the statistics. `test_em_objects` checks the two produce identical output.
+    """
+    try:
+        from scipy import ndimage
+    except ImportError:
+        return _components_without_scipy(arr, mask, crs, transform)
+    labels, n = ndimage.label(mask, structure=np.ones((3, 3)))
+    if n == 0:
+        return labels, 0, None, None
+    idx = np.arange(1, n + 1)
+    return labels, n, ndimage.mean(arr, labels, idx), ndimage.maximum(arr, labels, idx)
+
+
+def _components_without_scipy(arr, mask, crs, transform):
+    """ndimage.label + mean + maximum from GDAL and numpy alone, same output.
+
+    GDAL's Polygonize with 8-connectivity traces exactly one polygon per 8-connected component
+    (holes included, diagonal-only joins included). Burning those polygons back with the
+    pixel-CENTRE rule recovers each component's pixels exactly, because every edge lies on a pixel
+    boundary. That gives one label per component, numbered in GDAL's trace order — so they are
+    then renumbered to scipy's order (first pixel in raster scan), which keeps the objects, their
+    order and their row indices the same whichever path ran.
+    """
+    from . import gdalio as GD
+
+    traced = GD.polygonize(mask.astype(np.int32), mask, crs, transform, _CONNECTIVITY)
+    if not traced:
+        return np.zeros(mask.shape, np.int32), 0, None, None
+    labels = GD.rasterize_index([wkt for wkt, _ in traced], crs, mask.shape, transform,
+                                all_touched=False).astype(np.int32)
+
+    flat = labels.ravel()
+    at = np.flatnonzero(flat)                       # ascending = raster-scan order
+    found, first = np.unique(flat[at], return_index=True)
+    remap = np.zeros(len(traced) + 1, np.int32)
+    remap[found[np.argsort(first)]] = np.arange(1, len(found) + 1, dtype=np.int32)
+    labels = remap[labels]
+    n = len(found)
+
+    lab = labels.ravel()
+    counts = np.bincount(lab, minlength=n + 1)[1:]
+    # ndimage.mean is itself a weighted bincount, so this is the same sum in the same order
+    means = np.bincount(lab, weights=arr.ravel(), minlength=n + 1)[1:] / counts
+    inside = np.flatnonzero(lab)
+    order = inside[np.argsort(lab[inside], kind="stable")]
+    starts = np.r_[0, np.flatnonzero(np.diff(lab[order])) + 1]
+    maxes = np.maximum.reduceat(arr.ravel()[order], starts)
+    return labels, n, means, maxes
+
+
 def polygonize(vrt_path, threshold, min_area_ha=1.0):
     """[{wkt, area_ha, chg_mean, chg_max, n_px}] for connected change at or above `threshold`.
 
     Components are labelled first and their statistics taken from the pixels directly, so area
     and mean are exact rather than derived from the traced outline.
     """
-    from scipy import ndimage
     from . import gdalio as GD
 
     arr, crs, transform = GD.read(vrt_path, band=1)
@@ -45,14 +101,12 @@ def polygonize(vrt_path, threshold, min_area_ha=1.0):
     mask = np.isfinite(arr) & (arr != S.NODATA) & (arr >= threshold)
     if not mask.any():
         return [], crs
-    labels, n = ndimage.label(mask, structure=np.ones((3, 3)))
+    labels, n, means, maxes = _components(arr, mask, crs, transform)
     if n == 0:
         return [], crs
 
     idx = np.arange(1, n + 1)
     counts = np.bincount(labels.ravel(), minlength=n + 1)[1:]
-    means = ndimage.mean(arr, labels, idx)
-    maxes = ndimage.maximum(arr, labels, idx)
     keep = counts * px_ha >= min_area_ha
     if not keep.any():
         return [], crs

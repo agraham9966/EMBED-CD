@@ -153,7 +153,41 @@ def test_vector_blob_roundtrips_exactly():
     print("ok vector packs to 512 bytes and round-trips bit-exact")
 
 
+
+def test_objects_without_scipy_are_identical():
+    """Ubuntu's QGIS packages do not ship scipy, so cutting objects must not need it. Without it,
+    GDAL traces the components and numpy takes the statistics; the result must be IDENTICAL to
+    scipy's — same labels in the same order, same means, same maxima — including the awkward
+    shapes: a diagonal-only chain, a ring with a hole, an island inside that hole, edge pixels."""
+    t = GD.Transform.from_origin(400000.0, 5500000.0, RES, RES)
+    rng = np.random.default_rng(0)
+    tricky = np.zeros((12, 14), bool)
+    tricky[1, 1] = tricky[2, 2] = tricky[3, 3] = True
+    tricky[1:6, 6:11] = True
+    tricky[2:5, 7:10] = False
+    tricky[3, 8] = True
+    tricky[0, 13] = tricky[11, 0] = tricky[11, 13] = True
+    tricky[8:11, 3:6] = True
+    tricky[7, 6] = True
+    blobs = np.zeros((300, 300), np.float32)
+    for _ in range(60):
+        r, c, rad = rng.integers(0, 300), rng.integers(0, 300), rng.integers(2, 20)
+        y, x = np.ogrid[-r:300 - r, -c:300 - c]
+        blobs[x * x + y * y <= rad * rad] += rng.random()
+    for name, mask, arr in (("tricky", tricky, rng.random(tricky.shape).astype(np.float32)),
+                            ("blobs", blobs >= 0.5, blobs)):
+        a = OB._components(arr, mask, CRS, t)
+        b = OB._components_without_scipy(arr, mask, CRS, t)
+        assert a[1] == b[1] > 0, (name, a[1], b[1])
+        assert np.array_equal(a[0], b[0]), name + ": labels differ"
+        assert np.array_equal(np.asarray(a[2]), b[2]), name + ": means differ"
+        assert np.array_equal(np.asarray(a[3], np.float64), np.asarray(b[3], np.float64)), \
+            name + ": maxima differ"
+    print("ok objects cut without scipy are identical to scipy's")
+
+
 if __name__ == "__main__":
+    test_objects_without_scipy_are_identical()
     test_polygonize_finds_regions_and_respects_min_area()
     test_raising_the_threshold_splits_one_object_into_several()
     test_vector_is_the_count_weighted_mean_of_covered_cells()

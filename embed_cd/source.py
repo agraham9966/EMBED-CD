@@ -361,6 +361,13 @@ class AlphaEarthSource:
                 return None, None, None
             raw = G.read_window(ds, col_off, row_off, width, height)   # [64,H,W] int8, south-up
             ds = None
+        # GDAL only gained a signed 8-bit type in 3.7. Older GDAL (Ubuntu 22.04 ships 3.4) hands
+        # these int8 COGs back as UNSIGNED bytes, so -128..-1 arrive as 128..255: every negative
+        # component of every embedding flipped positive, and a map that renders but is wrong. The
+        # bits are right, only the type is not — reinterpret them in place (no copy). On GDAL
+        # 3.7+ the array is already int8 and this does nothing.
+        if raw.dtype == np.uint8:
+            raw = raw.view(np.int8)
 
         raw = raw[:, ::-1, :]                                          # flip to north-up
         cube = _dequantize(np.moveaxis(raw, 0, -1))                    # -> [H,W,64] float32

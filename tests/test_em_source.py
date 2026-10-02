@@ -404,7 +404,73 @@ def test_the_missing_pyarrow_message_names_the_right_platform():
     print("ok the missing-pyarrow message is written for the platform the user is on")
 
 
+
+def test_old_gdal_without_config_options_still_fetches():
+    """Ubuntu 22.04's QGIS ships GDAL 3.4, whose bindings have no `gdal.config_options`. Every tile
+    fetch raised AttributeError there, the error was swallowed, and a Linux run reported "none
+    landed". Simulate that GDAL: the options must be applied inside the block, the previous
+    value restored after it, and a real fetch must return exactly the same cube."""
+    from osgeo import gdal
+    import embed_cd.gdalio as GDIO
+
+    class OldGdal:                                   # GDAL 3.4: everything but config_options
+        def __getattr__(self, name):
+            if name == "config_options":
+                raise AttributeError(name)
+            return getattr(gdal, name)
+
+    key = "GDAL_HTTP_MULTIRANGE"
+    before = gdal.GetConfigOption(key)
+    gdal.SetConfigOption(key, "NO")
+    with tempfile.TemporaryDirectory() as d:
+        _write_south_up(os.path.join(d, "a.tiff"), 1)
+        src = AlphaEarthSource(index=FakeIndex(d + os.sep, [("a.tiff", 2024)]), tile_px=32)
+        tile = Tile(CRS, X0, Y0, X0 + 320.0, Y0 + 320.0)
+        expect, _, _ = src.fetch(tile, 2024)
+        real = GDIO._gdal
+        GDIO._gdal = lambda: OldGdal()
+        try:
+            assert not hasattr(GDIO._gdal(), "config_options")
+            with GDIO.config(**{key: "YES"}):
+                assert gdal.GetConfigOption(key) == "YES", "option not applied inside the block"
+            assert gdal.GetConfigOption(key) == "NO", "the previous value was not restored"
+            got, _, _ = src.fetch(tile, 2024)
+        finally:
+            GDIO._gdal = real
+            gdal.SetConfigOption(key, before)
+    assert np.array_equal(got, expect), "old-GDAL fetch returned a different cube"
+    print("ok GDAL without config_options (Ubuntu 22.04's 3.4) fetches the identical cube")
+
+
+def test_old_gdal_reading_int8_as_unsigned_gives_the_same_cube():
+    """GDAL only gained a signed 8-bit type in 3.7. Older GDAL hands these int8 COGs back as
+    UNSIGNED bytes, so -128..-1 arrive as 128..255 — every negative component flipped, and a
+    change map that renders but is wrong. fetch must reinterpret the bytes."""
+    import embed_cd.gdalio as GDIO
+    with tempfile.TemporaryDirectory() as d:
+        _write_south_up(os.path.join(d, "a.tiff"), 1)
+        src = AlphaEarthSource(index=FakeIndex(d + os.sep, [("a.tiff", 2024)]), tile_px=32)
+        tile = Tile(CRS, X0, Y0, X0 + 320.0, Y0 + 320.0)
+        new, _, _ = src.fetch(tile, 2024)
+        real = GDIO.read_window
+
+        def as_old_gdal(*a, **k):
+            r = real(*a, **k)
+            assert r.dtype == np.int8, r.dtype
+            return r.view(np.uint8)                  # exactly what GDAL < 3.7 returns
+        GDIO.read_window = as_old_gdal
+        try:
+            old, _, _ = src.fetch(tile, 2024)
+        finally:
+            GDIO.read_window = real
+    assert (new < 0).any(), "fixture has no negative components; the test would prove nothing"
+    assert np.array_equal(new, old), "int8 read as uint8 gave a different (sign-flipped) cube"
+    print("ok int8 read as unsigned bytes (GDAL < 3.7) gives the identical cube")
+
+
 if __name__ == "__main__":
+    test_old_gdal_without_config_options_still_fetches()
+    test_old_gdal_reading_int8_as_unsigned_gives_the_same_cube()
     test_dequantize()
     test_fetch_flips_and_places()
     test_tiles_are_block_aligned_and_seamless()

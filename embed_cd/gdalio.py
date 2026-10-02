@@ -1,9 +1,13 @@
 """The slice of GDAL this project needs, in roughly rasterio's shape.
 
-Why not rasterio: it is the ONLY dependency QGIS does not ship. numpy, scipy, pyarrow, shapely
-and GDAL itself all come with every install, so dropping rasterio makes the plugin need no
-`pip install` at all — which for a plugin aimed at general QGIS users is the difference between
-"install and it works" and "install, hit an error, find the OSGeo4W shell".
+Why not rasterio: no QGIS install ships it, so dropping it is what lets the plugin need no
+`pip install` at all — for a plugin aimed at general QGIS users, the difference between "install
+and it works" and "install, hit an error, find the OSGeo4W shell".
+
+What every QGIS install DOES ship is GDAL and numpy, and that is the whole guaranteed floor.
+scipy and pyarrow come with the Windows installer but not with Ubuntu's QGIS packages, so they
+are used only where present, with GDAL/numpy fallbacks. And the GDAL can be old: Ubuntu 22.04
+ships 3.4, which lacks `config_options` and native int8 — see `config` and `source.fetch`.
 
 It also removes a real hazard: rasterio bundles its OWN copy of GDAL, so using it inside QGIS
 means two GDAL builds loaded in one process. That has never bitten here, but it is the kind of
@@ -19,6 +23,7 @@ Measured before committing to it, on this machine inside QGIS's Python:
 The two places GDAL is slower cost under a millisecond against a per-tile budget of seconds.
 """
 from collections import namedtuple
+from contextlib import contextmanager
 
 import numpy as np
 
@@ -70,8 +75,31 @@ def config(**opts):
 
     Scoped matters: SetConfigOption is process-global, and inside QGIS that would silently
     change how QGIS's own GDAL behaves for everything else.
+
+    `gdal.config_options` only exists in newer GDAL bindings. Ubuntu 22.04's QGIS ships GDAL
+    3.4, which has no such thing — so every tile fetch raised AttributeError there, the error was
+    swallowed, and a Linux run reported "N tiles cover this area but none landed". Where it is
+    missing, set the options by hand and put the previous values back on the way out. Same
+    effect; it is only ever entered by the tile fetch, which runs in the worker process, not in
+    QGIS's own.
     """
-    return _gdal().config_options({k: str(v) for k, v in opts.items()})
+    gdal = _gdal()
+    opts = {k: str(v) for k, v in opts.items()}
+    if hasattr(gdal, "config_options"):
+        return gdal.config_options(opts)
+    return _config_fallback(gdal, opts)
+
+
+@contextmanager
+def _config_fallback(gdal, opts):
+    old = {k: gdal.GetConfigOption(k) for k in opts}
+    for k, v in opts.items():
+        gdal.SetConfigOption(k, v)
+    try:
+        yield
+    finally:
+        for k, v in old.items():
+            gdal.SetConfigOption(k, v)          # None restores "unset"
 
 
 def srs(crs):
@@ -192,12 +220,23 @@ def _ogr():
     return ogr
 
 
+def _mem_vector(name):
+    """An in-memory vector datasource. GDAL 3.11 folded the old "Memory" vector driver into
+    "MEM" and deprecated the old name (it will eventually go); before 3.11, "MEM" is raster-only.
+    So use "MEM" where it can hold vectors, "Memory" otherwise — right on GDAL 3.4 and on 3.12+."""
+    ogr = _ogr()
+    drv = ogr.GetDriverByName("MEM")
+    if drv is None or drv.GetMetadataItem("DCAP_VECTOR") != "YES":
+        drv = ogr.GetDriverByName("Memory")
+    return drv.CreateDataSource(name)
+
+
 def polygonize(values, mask, crs, transform, connectivity=8):
     """[(wkt, value)] — one polygon per connected run of equal values where `mask` is true."""
     gdal, ogr = _gdal(), _ogr()
     src = mem_ds(values.astype("int32"), crs, transform)
     msk = mem_ds(mask.astype("uint8"), crs, transform)
-    vec = ogr.GetDriverByName("Memory").CreateDataSource("poly")
+    vec = _mem_vector("poly")
     layer = vec.CreateLayer("poly", srs=srs(crs), geom_type=ogr.wkbPolygon)
     layer.CreateField(ogr.FieldDefn("v", ogr.OFTInteger))
     gdal.Polygonize(src.GetRasterBand(1), msk.GetRasterBand(1), layer, 0,
@@ -217,7 +256,7 @@ def rasterize_index(wkts, crs, shape, transform, all_touched=True):
     target = gdal.GetDriverByName("MEM").Create("", shape[1], shape[0], 1, gdal.GDT_Int32)
     target.SetGeoTransform(transform.to_gt())
     target.SetProjection(srs(crs).ExportToWkt())
-    vec = ogr.GetDriverByName("Memory").CreateDataSource("r")
+    vec = _mem_vector("r")
     layer = vec.CreateLayer("r", srs=srs(crs), geom_type=ogr.wkbPolygon)
     layer.CreateField(ogr.FieldDefn("i", ogr.OFTInteger))
     defn = layer.GetLayerDefn()
