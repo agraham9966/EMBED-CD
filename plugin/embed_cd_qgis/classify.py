@@ -27,6 +27,7 @@ from qgis.core import (
 from qgis.gui import QgsMapTool
 
 from .compat import scoped as _scoped, qvariant as _qv
+from .maptool import polygon_geomtype
 
 log = logging.getLogger(__name__)
 
@@ -627,7 +628,6 @@ class ClassifyPanel(QWidget):
         through and the yellow only ever adds an outline.
         """
         from qgis.gui import QgsRubberBand, QgsMapCanvas
-        from qgis.core import QgsWkbTypes
 
         canvas = self.iface.mapCanvas()
         # QgsRubberBand takes a QgsMapCanvas*, and sip hands anything else straight to C++ —
@@ -636,17 +636,12 @@ class ClassifyPanel(QWidget):
         if not isinstance(canvas, QgsMapCanvas):
             return
         if getattr(self, "_band", None) is None:
-            try:
-                self._band = QgsRubberBand(canvas, QgsWkbTypes.GeometryType.PolygonGeometry)
-            except Exception:
-                self._band = QgsRubberBand(canvas, QgsWkbTypes.PolygonGeometry)
+            self._band = QgsRubberBand(canvas, polygon_geomtype())
             self._band.setColor(QColor(255, 215, 0))
             self._band.setFillColor(QColor(0, 0, 0, 0))       # outline only
             self._band.setWidth(3)
         if geom is None:
-            self._band.reset(_scoped(QgsWkbTypes, "GeometryType", "PolygonGeometry")
-                             if hasattr(QgsWkbTypes, "GeometryType") else
-                             QgsWkbTypes.PolygonGeometry)
+            self._band.reset(polygon_geomtype())
             return
         self._band.setToGeometry(geom, self.layer)
 

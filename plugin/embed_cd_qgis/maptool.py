@@ -14,7 +14,7 @@ def polygon_geomtype():
         return Qgis.GeometryType.Polygon
     except AttributeError:
         from qgis.core import QgsWkbTypes
-        return QgsWkbTypes.PolygonGeometry
+        return QgsWkbTypes.GeometryType.PolygonGeometry      # QGIS 3.28 (before Qgis.GeometryType)
 
 
 class RectangleTool(QgsMapTool):
