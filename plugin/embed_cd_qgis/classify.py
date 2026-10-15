@@ -17,7 +17,7 @@ from qgis.PyQt.QtGui import QColor, QIcon
 from qgis.PyQt.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QListWidget, QListWidgetItem,
     QDoubleSpinBox, QInputDialog, QFileDialog, QMessageBox, QSlider, QCheckBox,
-    QProgressDialog, QApplication, QComboBox, QToolButton, QMenu, QWidgetAction,
+    QProgressDialog, QApplication, QComboBox, QToolButton, QMenu, QWidgetAction, QSpinBox,
 )
 from qgis.core import (
     QgsProject, QgsVectorLayer, QgsFeature, QgsGeometry, QgsField,
@@ -32,6 +32,8 @@ from .maptool import polygon_geomtype
 log = logging.getLogger(__name__)
 
 UNKNOWN = "unknown"
+_LENS_ON = "embed_cd/lens_on"
+_LENS_SIZE = "embed_cd/lens_size"
 # (what the user sees, what the head is told). Order matters: the first is the default.
 _MODES = (("Transition — what changed", "delta"),
           ("End state — what it is now", "after"))
@@ -150,6 +152,7 @@ class ClassifyPanel(QWidget):
         self.scores = None
         self.tool = None
         self.paused = False
+        self._lens = None              # the before/after lens, made on first use
         self._build()
 
     # ---------------- ui ----------------
@@ -245,6 +248,7 @@ class ClassifyPanel(QWidget):
         self.inspect_btn.setFixedSize(QSize(28, 26))
         self.inspect_btn.clicked.connect(self._toggle_inspect)
         crow.addWidget(self.inspect_btn)
+        self._build_lens_btn(crow)
         crow.addStretch(1)
         self.opts_btn = QToolButton()
         self.opts_btn.setText("⚙")
@@ -482,13 +486,16 @@ class ClassifyPanel(QWidget):
                   self.mode_combo, self.inspect_btn):
             w.setEnabled(has_polys)
         self._sync_review()
+        self._sync_lens()
         # A restored run already HAS objects, so telling the user to run one is stale advice —
         # the label has to reflect what is loaded, not only what this session did.
         if not ready:
             self.count_lbl.setText("Run a change map first.")
         elif has_polys and self.polys:
-            n_lab = len(self.labels) + sum(len(v) for v in self.class_vectors.values())
-            self.count_lbl.setText(f"{len(self.polys)} objects · {n_lab} labelled")
+            n_c = sum(self._carried_counts().values())
+            self.count_lbl.setText(
+                f"{len(self.polys)} objects · {len(self.labels)} labelled here"
+                + (f" · {n_c} examples carried over from earlier runs" if n_c else ""))
         elif ready:
             self.count_lbl.setText("Press 'Generate Embedded Vector Set' to cut the changed area into objects, "
                 "each carrying its own embedding.")
@@ -570,6 +577,12 @@ class ClassifyPanel(QWidget):
         self.status.setText("")
         self.sync()
         self._refit()
+        n_c = sum(self._carried_counts().values())
+        if n_c and self.classes:
+            self.status.setText(
+                f"Classified using {n_c} examples carried over from earlier runs — nothing "
+                f"labelled here yet. Check a few and label any it got wrong.  "
+                f"({self.status.text()})")
 
     def _build_layer(self, crs):
         self._remove_layer()
@@ -932,12 +945,21 @@ class ClassifyPanel(QWidget):
         for v in self.labels.values():
             counts[v] = counts.get(v, 0) + 1
         pred = self._predicted_counts()
+        carried = self._carried_counts()
         for name in self.classes:
-            item = QListWidgetItem(
-                f" {name} — {counts.get(name, 0)} labelled, {pred.get(name, 0)} predicted")
+            here, c = counts.get(name, 0), carried.get(name, 0)
+            # Examples from an earlier run, area or loaded class set train the classifier here
+            # too. "0 labelled, 765 predicted" read as predictions from nothing; say where the
+            # training actually came from.
+            taught = (f"{here} labelled here + {c} carried over" if c else f"{here} labelled")
+            item = QListWidgetItem(f" {name} — {taught}, {pred.get(name, 0)} predicted")
             item.setData(_scoped(Qt, "ItemDataRole", "UserRole"), name)
             item.setIcon(self._swatch(self.colors.get(name) or "#888780"))
-            item.setToolTip("Click the colour box to change this class's colour.")
+            item.setToolTip(
+                ("Carried over: examples you labelled on an earlier run or area, or loaded from "
+                 "a class set. They still train the classifier here; label a few objects in "
+                 "this area to adapt it." + chr(10) * 2 if c else "")
+                + "Click the colour box to change this class's colour.")
             self.list.addItem(item)
         if pred.get(UNKNOWN):
             item = QListWidgetItem(f"  {UNKNOWN} — {pred[UNKNOWN]} predicted")
@@ -948,6 +970,11 @@ class ClassifyPanel(QWidget):
                 self.list.setCurrentRow(i)
                 break
         self._sync_cycle_class_entry()      # add / rename / delete all land here
+
+    def _carried_counts(self):
+        """Examples per class that were NOT labelled on the current objects: banked from an
+        earlier polygon set or area, or loaded from a class set."""
+        return {k: len(v) for k, v in self.class_vectors.items() if len(v)}
 
     def _predicted_counts(self):
         """Counted from the prediction array, not by walking every feature. Rescanning the
@@ -1876,7 +1903,117 @@ class ClassifyPanel(QWidget):
         self.status.setText(
             f"Loaded {len(self.classes)} classes ({n_lab} examples).{note} {self.status.text()}")
 
+
+    # ---------------- before/after lens ----------------
+    def _build_lens_btn(self, row):
+        """Click toggles the lens; the arrow holds its settings. One button, so it costs the
+        panel nothing, and the settings sit next to the thing they configure."""
+        from qgis.core import QgsSettings
+        from .engine import basemap as BM
+        from .lens import lens_icon
+        self.lens_btn = QToolButton()
+        self.lens_btn.setIcon(lens_icon())
+        self.lens_btn.setIconSize(QSize(18, 18))
+        self.lens_btn.setCheckable(True)
+        self.lens_btn.setAutoRaise(True)
+        self.lens_btn.setFixedSize(QSize(38, 26))
+        self.lens_btn.setPopupMode(_scoped(QToolButton, "ToolButtonPopupMode", "MenuButtonPopup"))
+        self.lens_btn.setToolTip(
+            "Before/after lens. Hover the map to see the before year's imagery under the cursor; "
+            "hold A to see the after year. Shift+scroll resizes it." + chr(10) * 2 +
+            "Brings its own imagery (Sentinel-2 cloudless, EOX), so no basemap needs to be open. "
+            "Clicks still label as usual. The arrow sets the years and size.")
+        self.lens_btn.toggled.connect(self._toggle_lens)
+
+        menu = QMenu(self)
+        panel = QWidget()
+        pl = QVBoxLayout(panel)
+        pl.setContentsMargins(8, 6, 8, 6)
+        pl.setSpacing(6)
+        self.lens_before = QComboBox()
+        self.lens_after = QComboBox()
+        for combo, label in ((self.lens_before, "Before"), (self.lens_after, "After")):
+            combo.addItem("Auto", None)
+            for y in BM.EOX_YEARS:
+                combo.addItem(str(y), y)
+            combo.setToolTip("Auto follows the current change map's years. Pick a year to "
+                             "override it.")
+            combo.currentIndexChanged.connect(lambda _i: self._sync_lens())
+            pl.addWidget(row_of(QLabel(label), combo))
+        self.lens_size = QSpinBox()
+        self.lens_size.setRange(40, 400)
+        self.lens_size.setSingleStep(10)
+        self.lens_size.setSuffix(" px radius")
+        self.lens_size.setValue(int(QgsSettings().value(_LENS_SIZE, 100)))
+        self.lens_size.valueChanged.connect(self._lens_size_changed)
+        pl.addWidget(row_of(QLabel("Size"), self.lens_size))
+        act = QWidgetAction(menu)
+        act.setDefaultWidget(panel)
+        menu.addAction(act)
+        self.lens_btn.setMenu(menu)
+        row.addWidget(self.lens_btn)
+        if str(QgsSettings().value(_LENS_ON, False)).lower() in ("true", "1"):
+            QTimer.singleShot(0, lambda: self.lens_btn.setChecked(True))
+
+    def _run_years(self):
+        """(before, after) of the change map on screen, else of the panel's year pickers."""
+        import re
+        m = re.search(r"change_(\d{4})_(\d{4})", os.path.basename(self.host.vrt_path or ""))
+        if m:
+            return int(m.group(1)), int(m.group(2))
+        try:
+            return int(self.host.year_a.currentText()), int(self.host.year_b.currentText())
+        except (AttributeError, ValueError):
+            return None, None
+
+    def lens_years(self):
+        """The EOX years the lens will show, Auto resolved."""
+        from .engine import basemap as BM
+        auto = self._run_years()
+        out = []
+        for combo, run_year in ((self.lens_before, auto[0]), (self.lens_after, auto[1])):
+            y = combo.currentData()
+            if y is None and run_year is not None:
+                y = BM.nearest_year(run_year)
+                text = f"Auto ({y})" if y == run_year else f"Auto ({y}, nearest to {run_year})"
+                if combo.itemText(0) != text:
+                    combo.setItemText(0, text)
+            out.append(y)
+        return tuple(out)
+
+    def _toggle_lens(self, on):
+        from qgis.core import QgsSettings
+        canvas = self.iface.mapCanvas()
+        if canvas is None:
+            return
+        if self._lens is None and on:
+            from .lens import CompareLens
+            self._lens = CompareLens(canvas, lambda: self.layer if self._layer_ok() else None)
+            self._lens.set_radius(self.lens_size.value())
+            self._lens.on_radius_changed = self.lens_size.setValue
+        if self._lens is not None:
+            self._sync_lens()
+            self._lens.set_active(on)
+        QgsSettings().setValue(_LENS_ON, bool(on))
+
+    def _lens_size_changed(self, v):
+        from qgis.core import QgsSettings
+        QgsSettings().setValue(_LENS_SIZE, int(v))
+        if self._lens is not None and self._lens.radius != v:
+            self._lens.set_radius(v)
+
+    def _sync_lens(self):
+        if getattr(self, "lens_before", None) is None:
+            return
+        before, after = self.lens_years()
+        if self._lens is not None and before is not None and after is not None:
+            self._lens.set_years(before, after)
+            self._lens.refresh()
+
     def cleanup(self):
+        if self._lens is not None:
+            self._lens.cleanup()
+            self._lens = None
         if self.tool is not None and self.iface.mapCanvas() is not None:
             self.iface.mapCanvas().unsetMapTool(self.tool)
         self.tool = None

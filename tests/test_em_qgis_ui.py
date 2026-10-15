@@ -1989,7 +1989,36 @@ def test_clicking_labels_a_polygon_when_the_canvas_crs_differs_from_the_layer():
 # the progress lines are lost in the buffer and it looks like an earlier test failed.
 
 
+
+def test_carried_over_examples_are_named_as_such():
+    """Labels from an earlier run still train the classifier on new objects. The list used to say
+    "0 labelled, 765 predicted" — predictions apparently from nothing. It must say the training
+    came from elsewhere."""
+    import tempfile
+    from embed_cd_qgis.classify import ClassifyPanel
+
+    d = tempfile.mkdtemp(prefix="aecarry_")
+    p = _panel(d, _tiny_job(d), ClassifyPanel)
+    p.make_polygons()
+    p.classes.append("cutblock")
+    p.colors["cutblock"] = "#d85a30"
+    p._refresh_list()
+    p.list.setCurrentRow(0)
+    p.label_at(next(p.layer.getFeatures()).geometry().centroid().asPoint())
+    assert "1 labelled," in p.list.item(0).text(), p.list.item(0).text()
+
+    p.detach()                              # moving on: this area's labels are banked
+    p.make_polygons()                       # objects for the "new" area
+    text = p.list.item(0).text()
+    assert "0 labelled here + 1 carried over" in text, text
+    assert "carried over" in p.count_lbl.text(), p.count_lbl.text()
+    assert "carried over" in p.status.text(), p.status.text()
+    QgsProject.instance().removeMapLayer(p.layer.id())
+    print("ok examples carried from an earlier run are named as carried over")
+
+
 if __name__ == "__main__":
+    test_carried_over_examples_are_named_as_such()
     test_a_rewritten_vrt_is_only_seen_at_a_new_path()
     test_a_users_correction_is_never_revised_by_the_model()
     test_pausing_makes_a_label_a_local_edit()

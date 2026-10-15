@@ -1363,6 +1363,7 @@ class ChangeDock(QDockWidget):
         # come back.
         self.proc.errorOccurred.connect(self._on_proc_error)
         self.progress.setRange(0, 0)
+        self.progress.setFormat("%p%")
         self.progress.setVisible(True)
         self.status.setText("Checking coverage…")
         self._sync()
@@ -1396,9 +1397,12 @@ class ChangeDock(QDockWidget):
                 self.n_tiles = int(parts[1])
                 gb = float(parts[2]) / 1e9
                 n_partial = int(parts[5]) if len(parts) >= 6 else 0
-                self.progress.setRange(0, max(1, self.n_tiles))
-                self.progress.setValue(0)
-                msg = (f"{self.n_tiles} tiles · ~{gb:.1f} GB to read (finished tiles are "
+                # Stay in the moving 'busy' state until the first tile lands: the first one also
+                # pays for opening the remote files, so a bar parked at 0% for that long looked
+                # like a hang and users cancelled working jobs.
+                self.progress.setRange(0, 0)
+                msg = (f"Starting — reading the first tile (the slowest one)…\n"
+                       f"{self.n_tiles} tiles · ~{gb:.1f} GB to read (finished tiles are "
                        f"reused if you re-run) · output {parts[3]}×{parts[4]} px")
                 if n_partial:
                     msg += (f"\n{n_partial} tile(s) have only one of the two years — those "
@@ -1409,6 +1413,7 @@ class ChangeDock(QDockWidget):
                 self.vrt_path = " ".join(parts[3:])
                 self.progress.setRange(0, max(1, total))
                 self.progress.setValue(done)
+                self.progress.setFormat("%v of %m tiles")
                 self.status.setText(f"{done} of {total} tiles")
                 self._refresh_layer()
                 if done == 1:
