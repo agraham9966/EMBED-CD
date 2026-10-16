@@ -10,6 +10,11 @@ two years, press one button — then teach it what the changes *are* by clicking
   <a href="assets/embed-cd-overview.mp4">download it instead</a>.
 </video>
 
+## What's new
+
+- **1.1 (October 2026):** A before and after lens. Turn it on with the magnifier button under the class list, then move over the map to see the older imagery under your cursor. Hold A to see the newer year.
+- **1.0 (October 2026):** First stable release. Tested on Windows and Linux, and listed in the official QGIS plugin repository.
+
 ---
 
 ## Built on AlphaEarth embeddings | Expanding to others in future

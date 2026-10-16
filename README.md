@@ -8,6 +8,11 @@ EMBED-CD makes a change map. Click a few of the changes and it labels the rest.
 
 **Full guide, videos and worked examples: [agraham9966.github.io/EMBED-CD](https://agraham9966.github.io/EMBED-CD/)**
 
+## What's new
+
+- **1.1 (October 2026):** A before and after lens. Turn it on with the magnifier button under the class list, then move over the map to see the older imagery under your cursor. Hold A to see the newer year.
+- **1.0 (October 2026):** First stable release. Tested on Windows and Linux, and listed in the official QGIS plugin repository.
+
 It's for people who work in QGIS — foresters, land managers, remote-sensing analysts — who want
 a quick, honest change map without training a model, writing code, or downloading raw imagery.
 
@@ -33,7 +38,7 @@ a quick, honest change map without training a model, writing code, or downloadin
 Runs on QGIS 3.28+ (tested on 3.44 and 4.0). It reads Google's
 [AlphaEarth](https://arxiv.org/abs/2507.22291) satellite embeddings — a yearly, 10 m, global
 summary of the land surface, free under CC BY 4.0 — straight from the cloud. Everything else it
-needs ships with QGIS. Tested on Windows; Linux support is coming.
+needs ships with QGIS. Tested on Windows and Linux.
 
 ## Install
 
