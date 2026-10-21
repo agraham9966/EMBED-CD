@@ -1,2 +1,9 @@
 /* Every selector is under .ecd- : GeoLibre injects plugin CSS globally. */
-.ecd-panel { color: hsl(var(--foreground)); font-size: 13px; padding: 8px 10px; }
+.ecd-panel { color: hsl(var(--foreground)); font-size: 13px; padding: 8px 10px; display: flex; flex-direction: column; gap: 10px; }
+.ecd-muted { color: hsl(var(--muted-foreground)); margin: 0; }
+.ecd-spike { border: 1px solid hsl(var(--border)); border-radius: 6px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.ecd-h { font-size: 13px; font-weight: 600; margin: 0; }
+.ecd-status { margin: 0; line-height: 1.4; }
+.ecd-btn { background: hsl(var(--background)); color: hsl(var(--foreground)); border: 1px solid hsl(var(--border)); border-radius: 4px; padding: 5px 8px; cursor: pointer; text-align: left; }
+.ecd-btn:hover:not(:disabled) { background: hsl(var(--accent, var(--border))); }
+.ecd-btn:disabled { opacity: 0.5; cursor: default; }
