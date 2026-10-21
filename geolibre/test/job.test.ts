@@ -73,3 +73,10 @@ test("cancelling after the first tile ends the run, marked cancelled", async () 
   expect(ev.filter((e) => e.type === "tile").length).toBe(1);
   expect((ev.at(-1) as any).cancelled).toBe(true);
 });
+
+test("a tile whose two years both fail counts once", async () => {
+  const down = async () => { throw new Error("network down"); };
+  const ev = await collect(runJob({ bbox: J.bbox, yearA: 2019, yearB: 2024, resM: 50 },
+    { index: fakeIndex(), open: down, tilePx: J.tile_px }));
+  expect((ev.at(-1) as any).failed).toBe(J.runs["50"].tiles);
+});

@@ -44,7 +44,7 @@ async function processTile(tile: Tile, spec: JobSpec, grid: Grid, factor: number
     tryFetch(deps, tile, spec.yearA, factor, signal),
     tryFetch(deps, tile, spec.yearB, factor, signal),
   ]);
-  const failed = Number(ra.failed) + Number(rb.failed);
+  const failed = ra.failed || rb.failed ? 1 : 0;             // a TILE that could not be read, once
   const a = ra.got, b = rb.got;
   if (!a && !b) return { result: null, failed };
   const ref = (a ?? b)!;

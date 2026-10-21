@@ -160,6 +160,8 @@ export function buildStep1(deps: Deps): { root: HTMLElement; layer(): ChangeLaye
     const persist = (f: () => Promise<unknown>) => {
       if (store) saving = saving.then(f).catch((e) => (status.textContent = describeStorageError(e)));
     };
+    // Locked while running: switching area mid-run would send this job's tiles to another layer.
+    picker.disabled = drawBtn.disabled = true;
     bar.hidden = false;
     bar.removeAttribute("value");                    // busy until the first tile lands
     status.textContent = "Checking coverage...";
@@ -194,6 +196,7 @@ export function buildStep1(deps: Deps): { root: HTMLElement; layer(): ChangeLaye
     });
     job.done.then(() => {
       job = null;
+      picker.disabled = drawBtn.disabled = false;
       bar.hidden = true;
       runBtn.textContent = "Make change map";
       runBtn.disabled = !bbox;
