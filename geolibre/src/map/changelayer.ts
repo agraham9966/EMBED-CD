@@ -31,7 +31,13 @@ export function tileCorners(g: Grid, [r0, r1, c0, c1]: Window): [number, number]
   return [f(x(c0), y(r0)), f(x(c1), y(r0)), f(x(c1), y(r1)), f(x(c0), y(r1))];
 }
 
-type Drawn = { result: TileResult; score: Float32Array; cov: Uint8Array; canvas: HTMLCanvasElement; covCanvas: HTMLCanvasElement };
+type Drawn = {
+  result: TileResult; score: Float32Array; cov: Uint8Array;
+  canvas: HTMLCanvasElement; covCanvas: HTMLCanvasElement; coordinates: [number, number][];
+};
+
+/** The style has its JSON (sources and layers can be added). */
+export const styleReady = (map: any): boolean => !!map?.style?._loaded;
 
 export class ChangeLayer {
   private tiles: Drawn[] = [];
@@ -49,7 +55,12 @@ export class ChangeLayer {
   ) {
     this.changeId = `ecd-${runId}-change`;
     this.coverageId = `ecd-${runId}-coverage`;
+    // GeoLibre swaps the whole style on a basemap change (setStyle, diff: false), which drops
+    // every source and layer a plugin added. Put ours back each time.
+    this.map?.on?.("style.load", this.onStyle);
   }
+
+  private onStyle = () => this.tiles.forEach((_, i) => this.addToMap(i));
 
   private get map(): any {
     return (this.app as any).getMap?.();
@@ -65,7 +76,7 @@ export class ChangeLayer {
     canvas.width = covCanvas.width = c1 - c0;
     canvas.height = covCanvas.height = r1 - r0;
     const all = [...this.tiles.map((t) => t.result), result];
-    const d: Drawn = { result, ...compose(result.window, all), canvas, covCanvas };
+    const d: Drawn = { result, ...compose(result.window, all), canvas, covCanvas, coordinates: tileCorners(grid, result.window) };
     this.tiles.push(d);
     for (const t of this.tiles.slice(0, -1)) {
       if (overlaps(t.result.window, result.window)) {
@@ -75,9 +86,17 @@ export class ChangeLayer {
       }
     }
     this.paint(d);
-    const coordinates = tileCorners(grid, result.window);
-    map.addSource(`${this.coverageId}-${i}`, { type: "canvas", canvas: covCanvas, coordinates, animate: false });
-    map.addSource(`${this.changeId}-${i}`, { type: "canvas", canvas, coordinates, animate: false });
+    this.addToMap(i);
+    this.register();
+  }
+
+  /** Add tile i's sources and layers, unless the style is mid-swap (style.load re-adds them). */
+  private addToMap(i: number): void {
+    const map = this.map, t = this.tiles[i];
+    if (!map || !t || !styleReady(map) || map.getSource(`${this.changeId}-${i}`)) return;
+    const { coordinates } = t;
+    map.addSource(`${this.coverageId}-${i}`, { type: "canvas", canvas: t.covCanvas, coordinates, animate: false });
+    map.addSource(`${this.changeId}-${i}`, { type: "canvas", canvas: t.canvas, coordinates, animate: false });
     // Coverage goes under every change tile; change tiles stack on top.
     map.addLayer({ id: `${this.coverageId}-${i}`, type: "raster", source: `${this.coverageId}-${i}`,
       layout: { visibility: this.visible.coverage ? "visible" : "none" },
@@ -86,7 +105,6 @@ export class ChangeLayer {
     map.addLayer({ id: `${this.changeId}-${i}`, type: "raster", source: `${this.changeId}-${i}`,
       layout: { visibility: this.visible.change ? "visible" : "none" },
       paint: { "raster-opacity": CHANGE_OPACITY, "raster-fade-duration": 0, "raster-resampling": "nearest" } });
-    this.register();
   }
 
   /** Coalesced to one recolour per frame: dragging the slider never queues work up. */
@@ -164,6 +182,7 @@ export class ChangeLayer {
   /** Remove every layer and source this run added. */
   clear(): void {
     const map = this.map;
+    map?.off?.("style.load", this.onStyle);
     for (const base of [this.changeId, this.coverageId]) {
       for (const id of this.ids(base)) {
         if (map?.getLayer(id)) map.removeLayer(id);

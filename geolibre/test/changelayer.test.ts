@@ -46,3 +46,30 @@ test("three cutoff changes in one frame recolour once, with the last value", () 
   expect(recolour).toHaveBeenCalledTimes(1);
   expect((layer as any).cutoff).toBe(0.3);
 });
+
+test("tiles wait for the style, and come back after a basemap switch replaces it", () => {
+  const handlers: Record<string, (() => void)[]> = {};
+  const sources = new Set<string>();
+  const map: any = {
+    style: { _loaded: false },
+    on: (ev: string, f: () => void) => (handlers[ev] ??= []).push(f),
+    off: (ev: string, f: () => void) => (handlers[ev] = (handlers[ev] ?? []).filter((g) => g !== f)),
+    once: (_: string, f: () => void) => f(),
+    addSource: (id: string) => { if (!map.style._loaded) throw new Error("Style is not done loading"); sources.add(id); },
+    addLayer: () => {}, getLayer: () => false, getSource: (id: string) => (sources.has(id) ? { play() {}, pause() {} } : undefined),
+    removeLayer: () => {}, removeSource: (id: string) => sources.delete(id), triggerRepaint: () => {},
+  };
+  const app: any = { getMap: () => map, registerExternalNativeLayer: () => {}, unregisterExternalNativeLayer: () => {} };
+  const layer = new ChangeLayer(app, "r", "2019-2024", (f) => f());
+  const g: Grid = { crs: "EPSG:32610", x0: 500000, y0: 5500000, res: 10, width: 2, height: 1 };
+  layer.addTile(g, { window: [0, 1, 0, 2], score: Float32Array.from([0.5, -1]), cov: Uint8Array.from([1, 4]), hist: new Float64Array(256) });
+  expect(sources.size).toBe(0);                       // style not ready: nothing added, nothing thrown
+  map.style._loaded = true;
+  handlers["style.load"].forEach((f) => f());
+  expect([...sources].sort()).toEqual(["ecd-r-change-0", "ecd-r-coverage-0"]);
+  sources.clear();                                     // a basemap switch wipes the style
+  handlers["style.load"].forEach((f) => f());
+  expect(sources.size).toBe(2);
+  layer.clear();
+  expect(handlers["style.load"].length).toBe(0);
+});
