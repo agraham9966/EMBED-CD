@@ -1,0 +1,82 @@
+{
+ "src_transform": [
+  500000.0,
+  5491280.0,
+  10.0
+ ],
+ "src_shape": [
+  128,
+  128
+ ],
+ "cases": {
+  "same_50": {
+   "dst_crs": "EPSG:32610",
+   "dst_transform": [
+    500000.0,
+    5491280.0,
+    50.0
+   ],
+   "mode": "average",
+   "out": {
+    "file": "rep_same_50.bin",
+    "shape": [
+     26,
+     26
+    ],
+    "dtype": "float32"
+   }
+  },
+  "same_75": {
+   "dst_crs": "EPSG:32610",
+   "dst_transform": [
+    500000.0,
+    5491280.0,
+    75.0
+   ],
+   "mode": "average",
+   "out": {
+    "file": "rep_same_75.bin",
+    "shape": [
+     18,
+     18
+    ],
+    "dtype": "float32"
+   }
+  },
+  "zone_score": {
+   "dst_crs": "EPSG:32609",
+   "dst_transform": [
+    933660.0,
+    5508700.0,
+    10.0
+   ],
+   "mode": "average",
+   "out": {
+    "file": "rep_zone_score.bin",
+    "shape": [
+     139,
+     139
+    ],
+    "dtype": "float32"
+   }
+  },
+  "zone_cov": {
+   "dst_crs": "EPSG:32609",
+   "dst_transform": [
+    933660.0,
+    5508700.0,
+    10.0
+   ],
+   "mode": "nearest",
+   "src": "cov",
+   "out": {
+    "file": "rep_zone_cov.bin",
+    "shape": [
+     139,
+     139
+    ],
+    "dtype": "float32"
+   }
+  }
+ }
+}
