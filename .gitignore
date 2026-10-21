@@ -248,3 +248,9 @@ notes_ideas_alex.txt
 # and the change_*.vrt files reference .tif tiles that are ignored, so committed they are broken.
 tests/*
 !tests/test_*.py
+
+# GeoLibre plugin build output, and the superpowers plan workspaces
+geolibre/node_modules/
+geolibre/plugin/dist/
+geolibre/plugin/*.zip
+.superpowers/
