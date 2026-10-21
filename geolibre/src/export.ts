@@ -13,7 +13,8 @@ function download(filename: string, data: Blob): SaveResult {
   document.body.appendChild(a);
   a.click();
   a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
+  // Revoking right away can cancel the download in WebKit and Firefox; a minute is plenty.
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
   return { method: "download" };
 }
 

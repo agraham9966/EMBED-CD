@@ -31,3 +31,19 @@ test("text goes through the host when it can", () => {
   expect(saveText(app, "a.geojson", "{}")).toEqual({ method: "host" });
   expect(app.exportTextFile).toHaveBeenCalledWith("a.geojson", "{}", undefined);
 });
+
+test("the download link stays valid long enough for slow webviews", async () => {
+  vi.useFakeTimers();
+  try {
+    URL.createObjectURL = vi.fn(() => "blob:x");
+    URL.revokeObjectURL = vi.fn();
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    await saveBinary("a.tif", new Blob(["x"]), {});
+    vi.advanceTimersByTime(5000);
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(60000);
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:x");
+  } finally {
+    vi.useRealTimers();
+  }
+});
