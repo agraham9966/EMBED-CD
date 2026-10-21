@@ -54,9 +54,10 @@ export async function fetchTile(
     window: [colOff, rowOff, colOff + width, rowOff + height],
     interleave: true,
     signal,
-  })) as unknown as Int8Array;
-  // GDAL < 3.7 needed a uint8 -> int8 fix here; geotiff.js honours SampleFormat, but make sure.
-  const src = raw instanceof Int8Array ? raw : new Int8Array(raw.buffer, raw.byteOffset, raw.length);
+  })) as unknown as ArrayBufferView & { length: number };
+  // GDAL < 3.7 needed a uint8 -> int8 fix here; geotiff.js honours SampleFormat, but the bits
+  // are what matter, so view them as int8 whatever array type comes back.
+  const src = new Int8Array(raw.buffer, raw.byteOffset, raw.length);
   const rowBytes = width * 64;
   const data = new Int8Array(height * rowBytes);
   for (let r = 0; r < height; r++) {
