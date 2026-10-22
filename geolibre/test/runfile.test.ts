@@ -59,3 +59,19 @@ test("cells round-trip through the run file, and files without them still open",
   const plain = await readRunFile(await (await writeRunFile(meta, tiles)).arrayBuffer());
   expect(plain.cells).toEqual([]);
 });
+
+test("objects, their vectors and the labelling state round-trip; older files still open", async () => {
+  const ring: [number, number][] = [[500000, 5500000], [500000, 5499990], [500010, 5499990], [500010, 5500000], [500000, 5500000]];
+  const objects = { polys: [{ rings: [ring], areaHa: 0.01, chgMean: 0.4, chgMax: 0.5, nPx: 1 }],
+    vectors: Float32Array.from({ length: 128 }, (_, i) => i / 128), cutoff: 0.3, minArea: 0.5 };
+  const labelState = { classes: ["cutblock"], colors: { cutblock: "#d85a30" }, banked: { cutblock: [[0.25, 0.5]] },
+    labels: [[0, "cutblock"]] as [number, string][], features: "delta" as const };
+  const back = await readRunFile(await (await writeRunFile(meta, tiles, [], { objects, labelState })).arrayBuffer());
+  expect(back.objects!.polys).toEqual(objects.polys);
+  expect([back.objects!.cutoff, back.objects!.minArea]).toEqual([0.3, 0.5]);
+  expect(Array.from(back.objects!.vectors)).toEqual(Array.from(objects.vectors));
+  expect(back.labelState).toEqual(labelState);
+  const plain = await readRunFile(await (await writeRunFile(meta, tiles)).arrayBuffer());
+  expect(plain.objects).toBeUndefined();
+  expect(plain.labelState).toBeUndefined();
+});

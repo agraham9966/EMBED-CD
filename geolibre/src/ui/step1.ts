@@ -175,7 +175,8 @@ export function buildStep1(deps: Deps): {
     status.textContent = "Preparing the file...";
     try {
       const file = runFileName(r.meta);
-      const res = await saveBinary(file, await writeRunFile(r.meta, r.tiles, cellsOf(r.tiles, r.cells)), { "application/zip": [".zip"] });
+      const blob = await writeRunFile(r.meta, r.tiles, cellsOf(r.tiles, r.cells), { objects: r.objects, labelState: r.labelState });
+      const res = await saveBinary(file, blob, { "application/zip": [".zip"] });
       status.textContent = { picker: `Saved ${file}.`, download: `Sent as a download: ${file}.`, host: `Saved ${file}.`, cancelled: "Not saved." }[res.method];
     } catch (e) {
       status.textContent = `Could not save the run: ${(e as Error)?.message ?? e}`;
@@ -190,14 +191,20 @@ export function buildStep1(deps: Deps): {
       const f = input.files?.[0];
       if (!f) return;
       try {
-        const { meta, tiles, cells } = await readRunFile(await f.arrayBuffer());
+        const { meta, tiles, cells, objects, labelState } = await readRunFile(await f.arrayBuffer());
         if (!runs.get(meta.id)) {
+          meta.groupId = undefined;                   // a fresh session: its group is made anew
           runs.start(meta);
           for (const t of tiles) runs.addTile(meta.id, t);
           runs.setCells(meta.id, cells);
+          if (objects) runs.setObjects(meta.id, objects);
+          if (labelState) runs.get(meta.id)!.labelState = labelState;
         }
+        // Back where the objects were cut, so the map and the outlines agree (QGIS restore).
+        if (objects) step2.setCutoff(objects.cutoff);
         show(meta, runs.get(meta.id)!.tiles);
         refreshPicker(meta.id);
+        (app as any).fitBounds?.(meta.bbox);           // take you to the run you opened
         status.textContent = `Opened ${f.name}.`;
       } catch (e) {
         status.textContent = `Could not open ${f.name}: ${(e as Error)?.message ?? e}`;

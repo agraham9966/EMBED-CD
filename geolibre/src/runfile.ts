@@ -8,7 +8,8 @@ import type { Grid } from "./engine/grid";
 import { mosaic, type TileResult } from "./engine/job";
 import { readZip } from "./engine/npz";
 import { histogram, NODATA } from "./engine/score";
-import type { RunRecord } from "./runs";
+import type { LabelState } from "./labeller";
+import type { RunObjects, RunRecord } from "./runs";
 
 const BLOCK = 1024;           // reopened maps are cut back into display tiles of at most this
 
@@ -65,17 +66,30 @@ function unpackCells(b: Uint8Array): CellGrid[] {
 export const cellsOf = (tiles: TileResult[], extra?: CellGrid[]): CellGrid[] =>
   extra?.length ? extra : (tiles.map((t) => t.cells).filter(Boolean) as CellGrid[]);
 
-export async function writeRunFile(meta: RunRecord, tiles: TileResult[], cells = cellsOf(tiles)): Promise<Blob> {
+const json = (v: unknown) => new TextEncoder().encode(JSON.stringify(v));
+
+/** The run as one file. With objects and labelling, reopening it is like QGIS reopening a run
+ *  folder: objects, their embeddings, classes and labels all come back. */
+export async function writeRunFile(meta: RunRecord, tiles: TileResult[], cells = cellsOf(tiles),
+  extra: { objects?: RunObjects; labelState?: LabelState } = {}): Promise<Blob> {
   const m = mosaic(meta.grid, tiles);
+  const { objects, labelState } = extra;
   return writeZip({
     "run.json": new TextEncoder().encode(JSON.stringify({ format: "embed-cd-run", version: 1, meta }, null, 1)),
     "change.tif": geotiff(m.score, meta.grid, NODATA),
     "coverage.tif": geotiff(m.cov, meta.grid),
     ...(cells.length ? { "cells.bin": packCells(cells) } : {}),
+    ...(objects ? {
+      "objects.json": json({ polys: objects.polys, cutoff: objects.cutoff, minArea: objects.minArea }),
+      "vectors.bin": new Uint8Array(objects.vectors.buffer, objects.vectors.byteOffset, objects.vectors.byteLength),
+    } : {}),
+    ...(labelState ? { "labels.json": json(labelState) } : {}),
   });
 }
 
-export async function readRunFile(ab: ArrayBuffer): Promise<{ meta: RunRecord; tiles: TileResult[]; cells: CellGrid[] }> {
+export async function readRunFile(ab: ArrayBuffer): Promise<{
+  meta: RunRecord; tiles: TileResult[]; cells: CellGrid[]; objects?: RunObjects; labelState?: LabelState;
+}> {
   const files = await readZip(ab);
   const doc = files["run.json"] && JSON.parse(new TextDecoder().decode(files["run.json"]));
   if (doc?.format !== "embed-cd-run") throw new Error("This is not an EMBED-CD run file.");
@@ -97,7 +111,13 @@ export async function readRunFile(ab: ArrayBuffer): Promise<{ meta: RunRecord; t
       tiles.push({ window: [r0, r1, c0, c1], score: s, cov: c, hist: histogram(s) });
     }
   }
-  return { meta, tiles, cells: files["cells.bin"] ? unpackCells(files["cells.bin"]) : [] };
+  const text = (name: string) => JSON.parse(new TextDecoder().decode(files[name]));
+  const objects: RunObjects | undefined = files["objects.json"] && files["vectors.bin"]
+    ? { ...text("objects.json"), vectors: new Float32Array(files["vectors.bin"].slice().buffer) } : undefined;
+  return {
+    meta, tiles, cells: files["cells.bin"] ? unpackCells(files["cells.bin"]) : [],
+    objects, labelState: files["labels.json"] ? text("labels.json") : undefined,
+  };
 }
 
 // ---- a minimal zip writer (deflate through the browser's CompressionStream) ------------------
