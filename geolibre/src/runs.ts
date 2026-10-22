@@ -3,6 +3,9 @@
 import type { Bbox } from "./engine/crs";
 import type { Grid } from "./engine/grid";
 import type { TileResult } from "./engine/job";
+import type { ObjectPoly } from "./engine/objects";
+
+export type RunObjects = { polys: ObjectPoly[]; vectors: Float32Array; cutoff: number; minArea: number };
 
 export type RunRecord = {
   id: string; name: string; createdAt: number;
@@ -17,7 +20,7 @@ export function runName(yearA: number, yearB: number, resM: number, when: Date):
 }
 
 export class SessionRuns {
-  private runs = new Map<string, { meta: RunRecord; tiles: TileResult[] }>();
+  private runs = new Map<string, { meta: RunRecord; tiles: TileResult[]; objects?: RunObjects }>();
 
   start(meta: RunRecord): void {
     this.runs.set(meta.id, { meta, tiles: [] });
@@ -25,6 +28,11 @@ export class SessionRuns {
 
   addTile(id: string, t: TileResult): void {
     this.runs.get(id)?.tiles.push(t);
+  }
+
+  setObjects(id: string, objects: RunObjects): void {
+    const r = this.runs.get(id);
+    if (r) r.objects = objects;
   }
 
   get(id: string) {

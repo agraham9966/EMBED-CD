@@ -42,9 +42,10 @@ type Deps = {
   loadIndex: () => Promise<TileIndex>;
   startJob: (spec: any, onEvent: (e: ClientEvent) => void) => { cancel(): void; done: Promise<void> };
   step2: Step2;
+  onRunChanged?: (id: string | null) => void;
 };
 
-export function buildStep1(deps: Deps): { root: HTMLElement; layer(): ChangeLayer | null; dispose(): void } {
+export function buildStep1(deps: Deps): { root: HTMLElement; layer(): ChangeLayer | null; current(): string | null; dispose(): void } {
   const { app, runs, step2 } = deps;
   const map = () => (app as any).getMap?.();
   const root = el("section", "ecd-step");
@@ -107,6 +108,7 @@ export function buildStep1(deps: Deps): { root: HTMLElement; layer(): ChangeLaye
   function show(meta: RunRecord, tiles: TileResult[]) {
     bbox = meta.bbox;
     current = meta.id;
+    deps.onRunChanged?.(current);
     yearA.value = String(meta.yearA);
     yearB.value = String(meta.yearB);
     detail.value = DETAIL.find(([, v]) => v === meta.resM)?.[0] ?? detail.value;
@@ -197,6 +199,7 @@ export function buildStep1(deps: Deps): { root: HTMLElement; layer(): ChangeLaye
     };
     newLayer(id, spec.yearA, spec.yearB);
     current = id;
+    deps.onRunChanged?.(current);
     const hist = new Float64Array(HIST_BINS);
     // Locked while running: switching area mid-run would send this job's tiles to another layer.
     picker.disabled = drawBtn.disabled = openBtn.disabled = saveBtn.disabled = true;
@@ -250,6 +253,7 @@ export function buildStep1(deps: Deps): { root: HTMLElement; layer(): ChangeLaye
   return {
     root,
     layer: () => layer,
+    current: () => current,
     dispose() {
       map()?.off?.("style.load", reShow);
       cancelDraw?.();
