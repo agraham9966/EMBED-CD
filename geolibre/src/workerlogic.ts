@@ -34,7 +34,11 @@ export function createHandler(post: (msg: WorkerOut, transfer?: Transferable[]) 
         return p;
       };
       for await (const e of runJob(msg.spec, { index: idx, open, tilePx: deps.tilePx }, signal)) {
-        if (e.type === "tile") post(e, [e.result.score.buffer, e.result.cov.buffer, e.result.hist.buffer]);
+        if (e.type === "tile") {
+          const c = e.result.cells;
+          post(e, [e.result.score.buffer, e.result.cov.buffer, e.result.hist.buffer,
+            ...(c ? [c.ma.buffer, c.mb.buffer, c.n.buffer, c.smean.buffer, c.smax.buffer] : [])]);
+        }
         else post(e);
       }
     } catch (e) {

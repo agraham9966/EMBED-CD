@@ -91,3 +91,20 @@ test("a tile whose two years both fail counts once", async () => {
     { index: fakeIndex(), open: down, tilePx: J.tile_px, retryDelaysMs: [0, 0] }));
   expect((ev.at(-1) as any).failed).toBe(J.runs["50"].tiles);
 });
+
+test("every tile carries its 160 m cells, aligned with Python's cell grids", async () => {
+  for (const res of ["10", "50"]) {
+    const ev = await collect(runJob({ bbox: J.bbox, yearA: 2019, yearB: 2024, resM: Number(res) },
+      { index: fakeIndex(), open: openFixture, tilePx: J.tile_px }));
+    const cells = ev.filter((e) => e.type === "tile").map((e: any) => e.result.cells);
+    expect(cells.length).toBe(J.runs[res].tiles);
+    for (const c of cells) {
+      expect(c.res).toBe(160);
+      const py = J.runs[res].objects.cell_grids.find((g: any) =>
+        Number.isInteger((c.x0 - g.x0) / 160) && Number.isInteger((g.y0 - c.y0) / 160)
+        && c.x0 >= g.x0 && c.y0 <= g.y0 && c.x0 + c.width * 160 <= g.x0 + g.shape[1] * 160);
+      expect(py).toBeTruthy();
+      expect(c.n.reduce((s: number, v: number) => s + v, 0)).toBeLessThanOrEqual(py.n_sum);
+    }
+  }
+});

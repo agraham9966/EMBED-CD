@@ -1,7 +1,8 @@
 // The change job: tiles fetched, scored, reprojected into one output grid. Port of
 // embed_cd/job.py (process_tile, run) plus the VRT's mosaic rules (embed_cd/vrt.py).
 import type { GeoTIFF } from "geotiff";
-import { utmCrs, type Bbox } from "./crs";
+import { CELL_M, poolCells, type CellGrid } from "./cells";
+import { transformBounds, utmCrs, type Bbox } from "./crs";
 import { estimate, makeGrid, windowForBounds, type Grid, type Window } from "./grid";
 import { reprojectInto } from "./reproject";
 import {
@@ -10,7 +11,7 @@ import {
 import { factorFor, fetchTile, type Affine, type Cube } from "./source";
 import { listTiles, TILE_PX, type Tile, type TileIndex } from "./tileindex";
 
-export type TileResult = { window: Window; score: Float32Array; cov: Uint8Array; hist: Float64Array };
+export type TileResult = { window: Window; score: Float32Array; cov: Uint8Array; hist: Float64Array; cells?: CellGrid };
 export type JobSpec = { bbox: Bbox; yearA: number; yearB: number; resM: number };
 export type JobEvent =
   | { type: "plan"; grid: Grid; tiles: number; partial: number; gb: number }
@@ -68,10 +69,18 @@ async function processTile(tile: Tile, spec: JobSpec, grid: Grid, factor: number
   // at a COG's edge).
   const win = windowForBounds(grid, [t.x0, t.y0 - h0 * t.res, t.x0 + w0 * t.res, t.y0], ref.crs);
   if (!win) return { result: null, failed };
-  let score: Float32Array, cov: Uint8Array;
+  let score: Float32Array, cov: Uint8Array, cells: CellGrid | undefined;
   const sameShape = a && b && a.cube.height === b.cube.height && a.cube.width === b.cube.width;
   if (sameShape) {
     ({ score, cov } = changeScore(a!.cube, b!.cube));
+    // LAST CHANCE: after this the embeddings are gone. A failure here never loses the tile.
+    try {
+      const cellPx = Math.max(1, Math.round(CELL_M / t.res));
+      const keep = cellWindow(grid, t, ref.crs, cellPx * t.res, Math.ceil(h0 / cellPx), Math.ceil(w0 / cellPx));
+      if (keep) cells = poolCells(a!.cube, b!.cube, score, cov, cellPx, t, ref.crs, keep);
+    } catch {
+      cells = undefined;
+    }
   } else {
     // One year missing: a nodata tile that RECORDS WHY, not a hole that looks like "no change".
     const n = h0 * w0;
@@ -88,7 +97,16 @@ async function processTile(tile: Tile, spec: JobSpec, grid: Grid, factor: number
   const covOut = Uint8Array.from(covF);
   // Coverage is the authority on what this tile reached: no score on its "no tile" rim.
   for (let i = 0; i < scOut.length; i++) if (covOut[i] === COV_NO_TILE) scOut[i] = NODATA;
-  return { result: { window: win, score: scOut, cov: covOut, hist: histogram(scOut) }, failed };
+  return { result: { window: win, score: scOut, cov: covOut, hist: histogram(scOut), cells }, failed };
+}
+
+/** The cell rows and columns of a tile that touch the output grid (only those can lie under an object). */
+function cellWindow(grid: Grid, t: Affine, crs: string, cellRes: number, ch: number, cw: number) {
+  const g: Bbox = [grid.x0, grid.y0 - grid.height * grid.res, grid.x0 + grid.width * grid.res, grid.y0];
+  const [left, bottom, right, top] = crs === grid.crs ? g : transformBounds(grid.crs, crs, g);
+  const c0 = Math.max(0, Math.floor((left - t.x0) / cellRes)), c1 = Math.min(cw, Math.ceil((right - t.x0) / cellRes));
+  const r0 = Math.max(0, Math.floor((t.y0 - top) / cellRes)), r1 = Math.min(ch, Math.ceil((t.y0 - bottom) / cellRes));
+  return c1 > c0 && r1 > r0 ? { r0, r1, c0, c1 } : null;
 }
 
 /** Run the job, yielding a plan, then each tile as it lands, then the end. */
