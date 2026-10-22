@@ -49,7 +49,7 @@ export function registerPanel(app: GeoLibreAppAPI): () => void {
       acc.add(step2.root);
       acc.add(step3.root);
       refresh();
-      root.append(acc.root,
+      root.append(acc.root, step1.progressRow,
         el("p", "ecd-muted", "Runs are temporary: they are discarded when GeoLibre closes. Use Save run to keep one as a file."));
       return () => {
         step3.dispose();

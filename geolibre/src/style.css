@@ -40,3 +40,5 @@
 .ecd-acc-head.ecd-acc-open { border-color: hsl(var(--primary, 210 70% 50%)); }
 .ecd-acc-head:disabled { opacity: 0.5; cursor: default; }
 .ecd-acc-body { padding: 6px 2px 8px; }
+.ecd-runrow { display: flex; flex-direction: column; gap: 4px; }
+.ecd-runrow .ecd-progress { flex: 1; }

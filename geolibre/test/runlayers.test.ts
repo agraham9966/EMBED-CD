@@ -88,3 +88,21 @@ test("naming: a typed name names the next run's group; editing it renames the cu
   expect(h.removedGroups).toEqual(["g1"]);
   expect(picker.options[picker.selectedIndex].text).toBe("Nanaimo south · 2019→2024 · 10 m (full)");
 });
+
+test("progress and Cancel live outside step 1, so they stay visible when the steps move on (as in QGIS)", async () => {
+  const h = harness();
+  (h.s1 as any).setArea([-125.34, 49.63, -125.24, 49.71]);
+  const row = h.s1.progressRow;
+  expect(h.s1.root.contains(row)).toBe(false);
+  const runBtn = [...h.s1.root.querySelectorAll("button")].find((b) => b.textContent === "Make change map")!;
+  const cancel = [...row.querySelectorAll("button")].find((b) => b.textContent === "Cancel")!;
+  expect(cancel.hidden).toBe(true);
+  runBtn.disabled = false;
+  runBtn.click();
+  expect(runBtn.disabled).toBe(true);
+  expect(cancel.hidden).toBe(false);
+  expect((row.querySelector("progress") as HTMLElement).hidden).toBe(false);
+  await new Promise((r) => setTimeout(r, 20));
+  expect(cancel.hidden).toBe(true);
+  expect(row.textContent).toContain("Done.");
+});

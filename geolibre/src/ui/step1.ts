@@ -51,6 +51,8 @@ type Deps = {
 
 export function buildStep1(deps: Deps): {
   root: HTMLElement; layer(): ChangeLayer | null; current(): string | null; dispose(): void;
+  /** Progress bar, Cancel and status: shown under the steps, never inside one. */
+  progressRow: HTMLElement;
   /** Set the area as if drawn (also what Open run uses). */
   setArea(bbox: Bbox): void;
   summary(): string | null; hasResult(): boolean;
@@ -77,12 +79,20 @@ export function buildStep1(deps: Deps): {
   const bar = el("progress", "ecd-progress") as HTMLProgressElement;
   bar.hidden = true;
   const status = el("p", "ecd-status", "");
+  // Progress, Cancel and the status line live OUTSIDE the accordion (as in the QGIS dock): step 1
+  // folds itself as soon as the first tile lands, and a bar or a Cancel you can no longer see is
+  // no use. The panel puts this row under the steps.
+  const cancelBtn = el("button", "ecd-btn", "Cancel") as HTMLButtonElement;
+  cancelBtn.title = "Stop after the tile now downloading. Finished tiles are kept.";
+  cancelBtn.hidden = true;
+  const progressRow = el("div", "ecd-runrow");
+  progressRow.append(row(bar, cancelBtn), status);
   const saveBtn = el("button", "ecd-btn", "Save run...") as HTMLButtonElement;
   saveBtn.title = "Runs are temporary. Save one to a file to keep it; Open run brings it back.";
   const openBtn = el("button", "ecd-btn", "Open run...") as HTMLButtonElement;
   root.append(row(el("span", "", "Area"), picker), row(drawBtn, openBtn, saveBtn), row(el("span", "", "Name"), nameIn),
     row(el("span", "", "From"), yearA, el("span", "", "To"), yearB),
-    row(el("span", "", "Detail"), detail), est, warn, row(runBtn), bar, status);
+    row(el("span", "", "Detail"), detail), est, warn, row(runBtn));
 
   let bbox: Bbox | null = null;
   let layer: ChangeLayer | null = null;
@@ -252,13 +262,14 @@ export function buildStep1(deps: Deps): {
     input.click();
   };
 
+  cancelBtn.onclick = () => {
+    if (!job) return;
+    job.cancel();
+    status.textContent = "Stopping after the current tile...";
+  };
+
   runBtn.onclick = () => {
-    if (job) {
-      job.cancel();
-      status.textContent = "Stopping after the current tile...";
-      return;
-    }
-    if (!bbox) return;
+    if (job || !bbox) return;
     const spec = { bbox, yearA: Number(yearA.value), yearB: Number(yearB.value), resM: res() };
     const id = `run-${Date.now()}`;
     const meta: RunRecord = {
@@ -275,7 +286,8 @@ export function buildStep1(deps: Deps): {
     bar.hidden = false;
     bar.removeAttribute("value");                    // busy until the first tile lands
     status.textContent = "Checking coverage...";
-    runBtn.textContent = "Cancel";
+    runBtn.disabled = true;
+    cancelBtn.hidden = false;
     job = deps.startJob(spec, (e) => {
       if (e.type === "error") {
         status.textContent = `The job stopped: ${e.message}`;
@@ -308,7 +320,7 @@ export function buildStep1(deps: Deps): {
       picker.disabled = drawBtn.disabled = openBtn.disabled = false;
       refreshPicker(current ?? undefined);
       bar.hidden = true;
-      runBtn.textContent = "Make change map";
+      cancelBtn.hidden = true;
       runBtn.disabled = !bbox;
     });
   };
@@ -321,6 +333,7 @@ export function buildStep1(deps: Deps): {
   refreshPicker();
   return {
     root,
+    progressRow,
     layer: () => layer,
     current: () => current,
     setArea: (b: Bbox) => newArea(b),
