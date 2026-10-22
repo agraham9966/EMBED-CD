@@ -60,6 +60,10 @@ export function buildStep1(deps: Deps): {
   const root = el("section", "ecd-step");
 
   const picker = select([["", "New area"]]);
+  const nameIn = el("input", "ecd-text") as HTMLInputElement;
+  nameIn.title = "What to call this area. Its layers go in a group of this name, so several areas can sit in the map at once. "
+    + "Leave it empty and the area's location is used instead.\n\nThis always names the area currently drawn. "
+    + "To rename a run you have already made, switch to it under Area first.";
   picker.title = "This session's runs. They are discarded when GeoLibre closes unless you save them.";
   const drawBtn = el("button", "ecd-btn", "Draw area") as HTMLButtonElement;
   drawBtn.title = "Drag a box on the map.";
@@ -76,7 +80,7 @@ export function buildStep1(deps: Deps): {
   const saveBtn = el("button", "ecd-btn", "Save run...") as HTMLButtonElement;
   saveBtn.title = "Runs are temporary. Save one to a file to keep it; Open run brings it back.";
   const openBtn = el("button", "ecd-btn", "Open run...") as HTMLButtonElement;
-  root.append(row(el("span", "", "Area"), picker), row(drawBtn, openBtn, saveBtn),
+  root.append(row(el("span", "", "Area"), picker), row(drawBtn, openBtn, saveBtn), row(el("span", "", "Name"), nameIn),
     row(el("span", "", "From"), yearA, el("span", "", "To"), yearB),
     row(el("span", "", "Detail"), detail), est, warn, row(runBtn), bar, status);
 
@@ -115,6 +119,8 @@ export function buildStep1(deps: Deps): {
 
   function show(meta: RunRecord, tiles: TileResult[]) {
     bbox = meta.bbox;
+    nameIn.value = meta.userName ?? "";
+    nameIn.placeholder = autoName(meta.bbox);
     current = meta.id;
     deps.onRunChanged?.(current);
     yearA.value = String(meta.yearA);
@@ -129,6 +135,41 @@ export function buildStep1(deps: Deps): {
     layer!.setCutoff(step2.cutoff());
     void refreshEstimate();
   }
+
+  /** A new area: a typed name belongs to it, so a DIFFERENT box clears the field (QGIS _on_area). */
+  function newArea(b: Bbox) {
+    if (!bbox || b.some((v, i) => v !== bbox![i])) nameIn.value = "";
+    bbox = b;
+    nameIn.placeholder = autoName(b);
+    showArea(map(), b);
+    deps.onAreaDrawn?.();
+    void refreshEstimate();
+  }
+
+  /** Renaming applies to the current run only while its area is the one drawn (dock.py _save_meta):
+   *  its label, and its group, by moving its layers into a group of the new name. */
+  nameIn.oninput = () => deps.onChange?.();          // the step header follows as you type
+  nameIn.onchange = () => {
+    const r = current ? runs.get(current) : null;
+    if (!r || job || !bbox || r.meta.bbox.some((v, i) => v !== bbox![i])) return;
+    const meta = r.meta;
+    meta.userName = nameIn.value.trim();
+    const groups = ((app as any).listLayerGroups?.() ?? []) as { id: string; name: string }[];
+    const next = resolveGroup(groupName(meta.userName, autoName(meta.bbox), meta.yearA, meta.yearB),
+      groups.filter((g) => g.id !== meta.groupId).map((g) => g.name));
+    if (next !== meta.group && (app as any).addLayerGroup) {
+      const id = (app as any).addLayerGroup(next);
+      const ids = [r.change?.changeId, r.change?.coverageId, r.objectsLayer?.id].filter(Boolean) as string[];
+      (app as any).moveLayersToGroup?.(ids, id);
+      if (meta.groupId) (app as any).removeLayerGroup?.(meta.groupId);
+      meta.group = next;
+      meta.groupId = id;
+      if (r.change) r.change.groupId = id;
+      if (r.objectsLayer) r.objectsLayer.groupId = id;
+    }
+    refreshPicker(meta.id);
+    deps.onChange?.();
+  };
 
   /** The run's change layer, made once, in the run's own Layers-panel group. Other runs' layers stay. */
   function layerFor(meta: RunRecord): ChangeLayer {
@@ -152,11 +193,9 @@ export function buildStep1(deps: Deps): {
     status.textContent = "Drag a box on the map.";
     cancelDraw = drawBox(m, (b) => {
       cancelDraw = null;
-      bbox = b;
-      deps.onAreaDrawn?.();
+      newArea(b);
       picker.value = "";
       status.textContent = "";
-      void refreshEstimate();
     });
   };
   for (const s of [yearA, yearB, detail]) s.onchange = () => void refreshEstimate();
@@ -223,7 +262,7 @@ export function buildStep1(deps: Deps): {
     const spec = { bbox, yearA: Number(yearA.value), yearB: Number(yearB.value), resM: res() };
     const id = `run-${Date.now()}`;
     const meta: RunRecord = {
-      id, name: runName(spec.yearA, spec.yearB, spec.resM, new Date()), createdAt: Date.now(),
+      id, name: runName(spec.yearA, spec.yearB, spec.resM, new Date()), createdAt: Date.now(), userName: nameIn.value.trim(),
       ...spec, grid: null as unknown as Grid, histTotal: [], complete: false, failed: 0, tiles: 0,
     };
     runs.start(meta);
@@ -284,13 +323,8 @@ export function buildStep1(deps: Deps): {
     root,
     layer: () => layer,
     current: () => current,
-    setArea(b: Bbox) {
-      bbox = b;
-      showArea(map(), b);
-      deps.onAreaDrawn?.();
-      void refreshEstimate();
-    },
-    summary: () => (bbox ? `${yearA.value}→${yearB.value}, ${detail.value}` : null),
+    setArea: (b: Bbox) => newArea(b),
+    summary: () => (bbox ? `${nameIn.value.trim() || autoName(bbox)}, ${yearA.value}→${yearB.value}, ${detail.value}` : null),
     hasResult: () => !!layer && layer.count > 0,
     dispose() {
       map()?.off?.("style.load", reShow);

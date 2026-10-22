@@ -22,6 +22,7 @@ const map = new maplibregl.Map({
 const side = document.getElementById("side")!;
 const layers: Record<string, unknown> = {};
 (window as any).registered = layers;
+(window as any).appApi = () => app;
 const app: any = {
   getMap: () => map,
   registerRightPanel(p: any) {
@@ -36,5 +37,12 @@ const app: any = {
   registerExternalNativeLayer: (r: any) => { layers[r.id] = r; },
   unregisterExternalNativeLayer: (id: string) => { delete layers[id]; },
   exportTextFile: (name: string) => console.log("exportTextFile", name),
+  // Layer groups and zoom, as GeoLibre's app API offers them (just recorded here).
+  groups: [] as { id: string; name: string }[],
+  addLayerGroup(name: string) { const id = `g${app.groups.length + 1}`; app.groups.push({ id, name }); return id; },
+  listLayerGroups: () => app.groups.map((g: any) => ({ ...g, parentId: null, visible: true, opacity: 1, collapsed: false })),
+  moveLayersToGroup(ids: string[], gid: string) { for (const id of ids) if (layers[id]) (layers[id] as any).groupId = gid; },
+  removeLayerGroup(id: string) { app.groups = app.groups.filter((g: any) => g.id !== id); },
+  fitBounds: (b: [number, number, number, number]) => map.fitBounds([[b[0], b[1]], [b[2], b[3]]], { padding: 20 }),
 };
 plugin.activate(app);

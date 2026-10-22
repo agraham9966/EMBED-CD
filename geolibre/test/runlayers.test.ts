@@ -16,7 +16,10 @@ function harness() {
     registerExternalNativeLayer: (r: any) => regs.push(r), unregisterExternalNativeLayer() {},
     addLayerGroup: (name: string) => { const id = `g${groups.length + 1}`; groups.push({ id, name }); return id; },
     listLayerGroups: () => groups.map((g) => ({ ...g, parentId: null, visible: true, opacity: 1, collapsed: false })),
+    moveLayersToGroup: (ids: string[], gid: string) => moved.push([ids, gid]),
+    removeLayerGroup: (id: string) => { removedGroups.push(id); groups.splice(groups.findIndex((g) => g.id === id), 1); },
   };
+  const moved: [string[], string][] = [], removedGroups: string[] = [];
   const grid = { crs: "EPSG:32610", x0: 500000, y0: 5500000, res: 10, width: 2, height: 1 };
   const startJob = (_spec: any, on: (e: any) => void) => {
     queueMicrotask(() => {
@@ -28,7 +31,7 @@ function harness() {
   };
   const runs = new SessionRuns();
   const s1 = buildStep1({ app, runs, step2: buildStep2(() => {}), loadIndex: () => new Promise(() => {}), startJob });
-  return { s1, runs, sources, added, regs, groups, setArea: (s1 as any).__setArea };
+  return { s1, runs, sources, added, regs, groups, moved, removedGroups };
 }
 
 async function makeRun(h: ReturnType<typeof harness>, bbox: [number, number, number, number]) {
@@ -60,4 +63,28 @@ test("switching back to a run reuses its layers instead of adding them again", a
   picker.value = h.runs.list()[1].id;
   picker.dispatchEvent(new Event("change"));
   expect(h.added.length).toBe(before);
+});
+
+test("naming: a typed name names the next run's group; editing it renames the current run and moves its layers", async () => {
+  const h = harness();
+  const moves: [string[], string][] = [], removedGroups: string[] = [];
+  (h as any).s1; const app = (h.s1 as any);
+  const name = h.s1.root.querySelector("input.ecd-text") as HTMLInputElement;
+  (h.s1 as any).setArea([-125.34, 49.63, -125.24, 49.71]);
+  expect(name.placeholder).toBe("49.67N 125.29W");
+  name.value = "Nanaimo";
+  name.dispatchEvent(new Event("change"));
+  await makeRun(h, [-125.34, 49.63, -125.24, 49.71]);
+  expect(h.groups.at(-1)!.name).toBe("Nanaimo  2019→2024");
+  const picker = h.s1.root.querySelector("select")!;
+  expect(picker.options[picker.selectedIndex].text).toBe("Nanaimo · 2019→2024 · 10 m (full)");
+  void app; void moves; void removedGroups;
+  name.value = "Nanaimo south";
+  name.dispatchEvent(new Event("change"));
+  expect(h.groups.at(-1)!.name).toBe("Nanaimo south  2019→2024");
+  const run = h.runs.list()[0];
+  expect(run.group).toBe("Nanaimo south  2019→2024");
+  expect(h.moved.at(-1)).toEqual([expect.arrayContaining([`ecd-${run.id}-change`, `ecd-${run.id}-coverage`]), run.groupId]);
+  expect(h.removedGroups).toEqual(["g1"]);
+  expect(picker.options[picker.selectedIndex].text).toBe("Nanaimo south · 2019→2024 · 10 m (full)");
 });
