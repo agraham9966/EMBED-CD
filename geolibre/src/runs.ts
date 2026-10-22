@@ -6,6 +6,7 @@ import type { TileResult } from "./engine/job";
 import type { ObjectPoly } from "./engine/objects";
 import type { ChangeLayer } from "./map/changelayer";
 import type { ObjectsLayer } from "./map/objectslayer";
+import type { LabelState } from "./labeller";
 import type { CellGrid } from "./engine/cells";
 
 export type RunObjects = { polys: ObjectPoly[]; vectors: Float32Array; cutoff: number; minArea: number };
@@ -54,6 +55,8 @@ export const runLabel = (r: Pick<RunRecord, "userName" | "bbox" | "yearA" | "yea
 export type SessionRun = {
   meta: RunRecord; tiles: TileResult[]; objects?: RunObjects; cells?: CellGrid[];
   change?: ChangeLayer; objectsLayer?: ObjectsLayer;
+  /** This run's labelling progress, kept after every change (QGIS autosaves it to the run folder). */
+  labelState?: LabelState;
 };
 
 export class SessionRuns {

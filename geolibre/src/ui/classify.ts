@@ -4,7 +4,7 @@
 // the options (mode, assign selected, pause, best guess, strictness) and class sets.
 import { UNKNOWN } from "../engine/head";
 import type { GeoLibreAppAPI } from "../host-api";
-import { Labeller, type CycleMode } from "../labeller";
+import { Labeller, type CycleMode, type LabelState } from "../labeller";
 import { ClickTool } from "../map/clicktool";
 import type { ObjectsLayer } from "../map/objectslayer";
 import { saveText } from "../export";
@@ -18,13 +18,13 @@ const BAR = 13;
 export type ClassifyUi = {
   root: HTMLElement;
   /** Objects for a run were made or shown: classify them (labels on earlier objects carry over). */
-  setObjects(vectors: Float32Array, n: number, layer: ObjectsLayer): void;
+  setObjects(vectors: Float32Array, n: number, layer: ObjectsLayer, state?: LabelState): void;
   clear(): void;
   status(): string;
   labeller: Labeller;
 };
 
-export function buildClassify(app: GeoLibreAppAPI, setStatus: (s: string) => void): ClassifyUi {
+export function buildClassify(app: GeoLibreAppAPI, setStatus: (s: string) => void, onChange?: (state: LabelState) => void): ClassifyUi {
   const L = new Labeller();
   let layer: ObjectsLayer | null = null;
   let current: number | null = null;                // the object the panel is talking about
@@ -95,6 +95,7 @@ export function buildClassify(app: GeoLibreAppAPI, setStatus: (s: string) => voi
     }));
     if (pred[UNKNOWN]) list.append(el("div", "ecd-class ecd-unknown", `unknown — ${pred[UNKNOWN]} predicted`));
     const has = !!layer && L.objectCount > 0;
+    mode.value = L.features === "delta" ? "delta" : "after";
     for (const b of [labelB, inspectB, prevB, nextB, cycle, discardB, assignB, mode, saveSetB]) (b as HTMLButtonElement).disabled = !has;
     undoB.disabled = !L.canUndo;
     labelB.classList.toggle("ecd-on", tool.isOn && !inspecting);
@@ -109,6 +110,7 @@ export function buildClassify(app: GeoLibreAppAPI, setStatus: (s: string) => voi
   function paint(): void {
     layer?.update(L.pred, L.labels, L.colors, L.conf);
     layer?.highlight(current);
+    if (layer) onChange?.(L.snapshot());             // every change lands here: keep it with the run
   }
 
   function changed(note?: string): void {
@@ -303,11 +305,12 @@ export function buildClassify(app: GeoLibreAppAPI, setStatus: (s: string) => voi
   return {
     root,
     labeller: L,
-    setObjects(vectors, n, l) {
+    setObjects(vectors, n, l, state) {
       layer = l;
       current = null;
       cycleAt = -1;
       L.setObjects(vectors, n);
+      if (state) L.restore(state);
       cls ??= L.classes[0] ?? null;
       paint();
       render();

@@ -94,3 +94,31 @@ test("one class ranks by similarity and says so", () => {
   L.label([2, 5, 9], "cutblock");
   expect(L.report()).toContain("(ranked by similarity)");
 });
+
+test("A then B then back to A: A's own labels come back, nothing counted twice (QGIS restore)", () => {
+  const L = new Labeller();
+  L.setObjects(vecs, N);                                      // run A
+  L.addClass("cutblock");
+  L.label([2, 5], "cutblock");
+  const a = L.snapshot();
+  L.setObjects(vecs.slice(), N);                              // run B: A's labels carried as examples
+  expect(L.carriedCounts()).toEqual({ cutblock: 2 });
+  L.label([9], "cutblock");
+  L.setObjects(vecs, N);                                      // back to A ...
+  L.restore(a);                                               // ... with A's saved state
+  expect([...L.labels.entries()]).toEqual([[2, "cutblock"], [5, "cutblock"]]);
+  expect(L.carriedCounts()).toEqual({});
+  expect(L.pred![2]).toBe("cutblock");
+});
+
+test("a snapshot is plain data that survives JSON (for run files)", () => {
+  const L = withClasses();
+  L.setFeatures("delta");
+  const back = new Labeller();
+  back.setObjects(vecs, N);
+  back.restore(JSON.parse(JSON.stringify(L.snapshot())));
+  expect(back.classes).toEqual(["cutblock", "road"]);
+  expect(back.features).toBe("delta");
+  expect(back.labels.get(10)).toBe("road");
+  expect(back.pred).toEqual(L.pred);
+});

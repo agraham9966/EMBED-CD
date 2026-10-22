@@ -6,6 +6,12 @@ import { fitFromClasses, loadClassesJson, reviewOrder, saveClassesJson, UNKNOWN,
 export const PALETTE = ["#d85a30", "#1d9e75", "#7f77dd", "#d4537e", "#378add", "#ba7517", "#639922", "#993556"];
 export type CycleMode = "uncertain" | "unlabelled" | "unknown" | "labelled" | "class" | "all";
 
+/** A run's labelling progress as plain data (QGIS writes the same to labels_<A>-<B>.json). */
+export type LabelState = {
+  classes: string[]; colors: Record<string, string>; banked: Record<string, number[][]>;
+  labels: [number, string][]; features: Features;
+};
+
 export class Labeller {
   classes: string[] = [];
   colors: Record<string, string> = {};
@@ -197,6 +203,25 @@ export class Labeller {
       return all.filter((i) => this.labels.get(i) === cls || (!this.labels.has(i) && this.pred?.[i] === cls));
     }
     return all;
+  }
+
+  snapshot(): LabelState {
+    const banked: Record<string, number[][]> = {};
+    for (const [k, v] of Object.entries(this.banked)) banked[k] = v.map((r) => Array.from(r));
+    return { classes: [...this.classes], colors: { ...this.colors }, banked, labels: [...this.labels.entries()], features: this.features };
+  }
+
+  /** Bring back a run's own labelling (classify.py restore): its classes, colours, carried
+   *  examples and labels replace what was carried here, so nothing is counted twice. */
+  restore(st: LabelState): void {
+    this.classes = [...st.classes];
+    Object.assign(this.colors, st.colors);
+    this.banked = {};
+    for (const [k, v] of Object.entries(st.banked)) this.banked[k] = v.map((r) => Float32Array.from(r));
+    this.labels = new Map(st.labels.filter(([r]) => r < this.n));
+    this.features = st.features;
+    this.undoStack = [];
+    this.refit(true);
   }
 
   saveClassSet(): string {

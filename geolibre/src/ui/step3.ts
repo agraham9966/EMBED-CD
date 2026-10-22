@@ -44,7 +44,9 @@ export function buildStep3(deps: Deps): { root: HTMLElement; runChanged(id: stri
   const bar = el("progress", "ecd-progress") as HTMLProgressElement;
   bar.hidden = true;
   const status = el("p", "ecd-status", "");
-  const classify = buildClassify(deps.app, (s) => { status.textContent = s; });
+  let shown: string | null = null;                  // the run whose objects the panel is showing
+  const classify = buildClassify(deps.app, (s) => { status.textContent = s; },
+    (state) => { const r = shown ? deps.runs.get(shown) : null; if (r) r.labelState = state; });
   root.append(row(makeBtn), row(el("span", "", "min size"), minArea, el("span", "", "ha")), count, bar, classify.root, status);
 
   let layer: ObjectsLayer | null = null;
@@ -100,6 +102,7 @@ export function buildStep3(deps: Deps): { root: HTMLElement; runChanged(id: stri
   /** Point the panel at a run's own objects, or none. Other runs' objects stay on the map (in
    *  their own groups), as in QGIS; `recut` replaces this run's objects after a new cut. */
   function show(id: string | null, recut = false) {
+    shown = null;
     layer = null;
     classify.clear();
     count.textContent = "";
@@ -114,7 +117,11 @@ export function buildStep3(deps: Deps): { root: HTMLElement; runChanged(id: stri
     }
     layer = r.objectsLayer;
     count.textContent = countText(r.objects.polys.length, r.objects.cutoff);
-    classify.setObjects(r.objects.vectors, r.objects.polys.length, layer);
+    // A re-cut makes new objects: the old labels carry over as examples (QGIS banks them), so
+    // the saved state no longer applies. Otherwise the run gets its own labelling back.
+    const state = recut ? undefined : r.labelState;
+    shown = r.meta.id;
+    classify.setObjects(r.objects.vectors, r.objects.polys.length, layer, state);
   }
 
   return {
