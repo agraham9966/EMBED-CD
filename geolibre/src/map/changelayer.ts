@@ -1,7 +1,7 @@
 // The change map and its data-coverage layer on the MapLibre map. Each tile is a canvas placed by
 // its four corners; overlapping tiles are drawn through the mosaic rules (engine/job compose), so
 // where two tiles overlap they show the same pixels. Colours copy the QGIS plugin (dock.py).
-import { transformer } from "../engine/crs";
+import { transformBounds, transformer, type Bbox } from "../engine/crs";
 import type { Grid, Window } from "../engine/grid";
 import { compose, type TileResult } from "../engine/job";
 import { NODATA } from "../engine/score";
@@ -44,6 +44,7 @@ export class ChangeLayer {
   private cutoff = 0.15;
   private pending = false;
   private visible = { change: true, coverage: true };
+  private bounds: Bbox | null = null;            // lon/lat, for GeoLibre's Zoom to layer
   readonly changeId: string;
   readonly coverageId: string;
 
@@ -71,6 +72,8 @@ export class ChangeLayer {
     const map = this.map;
     if (!map) return;
     const i = this.tiles.length;
+    this.bounds ??= transformBounds(grid.crs, "EPSG:4326",
+      [grid.x0, grid.y0 - grid.height * grid.res, grid.x0 + grid.width * grid.res, grid.y0]);
     const [r0, r1, c0, c1] = result.window;
     const canvas = document.createElement("canvas"), covCanvas = document.createElement("canvas");
     canvas.width = covCanvas.width = c1 - c0;
@@ -167,6 +170,7 @@ export class ChangeLayer {
     ] as const) {
       reg.call(this.app, {
         id, name, type: "raster", nativeLayerIds: this.ids(id), sourceIds: this.ids(id), opacity,
+        metadata: this.bounds ? { bounds: this.bounds } : {},
         paintMode: "plugin",
         paintBridge: {
           setOpacity: (o: number) => this.ids(id).forEach((l) => this.map?.setPaintProperty(l, "raster-opacity", o)),

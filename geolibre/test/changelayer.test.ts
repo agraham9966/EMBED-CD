@@ -73,3 +73,22 @@ test("tiles wait for the style, and come back after a basemap switch replaces it
   layer.clear();
   expect(handlers["style.load"].length).toBe(0);
 });
+
+test("both layers tell GeoLibre their lon/lat extent, so Zoom to layer works", () => {
+  const reg: any[] = [];
+  const map: any = { style: { _loaded: true }, on() {}, off() {}, addSource() {}, addLayer() {}, getLayer: () => false,
+    getSource: () => undefined, triggerRepaint() {} };
+  const app: any = { getMap: () => map, registerExternalNativeLayer: (r: any) => reg.push(r) };
+  const layer = new ChangeLayer(app, "r", "2019-2024", (f) => f());
+  const g: Grid = { crs: "EPSG:32610", x0: 500000, y0: 5500000, res: 10, width: 200, height: 100 };
+  layer.addTile(g, { window: [0, 100, 0, 200], score: new Float32Array(20000), cov: new Uint8Array(20000), hist: new Float64Array(256) });
+  const toLL = transformer("EPSG:32610", "EPSG:4326");
+  const [w, n] = toLL(500000, 5500000), [e, s] = toLL(502000, 5499000);
+  for (const r of reg) {
+    const b = r.metadata.bounds;
+    expect(b[0]).toBeLessThanOrEqual(w + 1e-9); expect(b[1]).toBeLessThanOrEqual(s + 1e-9);
+    expect(b[2]).toBeGreaterThanOrEqual(e - 1e-9); expect(b[3]).toBeGreaterThanOrEqual(n - 1e-9);
+    expect(b[2] - b[0]).toBeLessThan(0.05);
+  }
+  expect(reg.map((r) => r.id).sort()).toEqual(["ecd-r-change", "ecd-r-coverage"]);
+});
