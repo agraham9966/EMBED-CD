@@ -10,6 +10,10 @@ export type RunObjects = { polys: ObjectPoly[]; vectors: Float32Array; cutoff: n
 
 export type RunRecord = {
   id: string; name: string; createdAt: number;
+  /** What the user called the area ("" = unnamed: its centre stands in). */
+  userName?: string;
+  /** Its layer group's name, and GeoLibre's id for that group once made. */
+  group?: string; groupId?: string;
   bbox: Bbox; yearA: number; yearB: number; resM: number; grid: Grid;
   histTotal: number[]; complete: boolean; failed: number; tiles: number;
 };
@@ -19,6 +23,30 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 export function runName(yearA: number, yearB: number, resM: number, when: Date): string {
   return `${yearA} to ${yearB}, ${resM} m, ${when.getDate()} ${MONTHS[when.getMonth()]} ${when.getFullYear()}`;
 }
+
+/** A name for an area nobody named: where it is (dock.py _auto_name). */
+export function autoName([w, s, e, n]: Bbox): string {
+  const cy = (s + n) / 2, cx = (w + e) / 2;
+  return `${Math.abs(cy).toFixed(2)}${cy >= 0 ? "N" : "S"} ${Math.abs(cx).toFixed(2)}${cx >= 0 ? "E" : "W"}`;
+}
+
+/** The layer group for a run: "<name>  <A>→<B>" (dock.py _group_name). */
+export const groupName = (name: string, auto: string, yearA: number, yearB: number) =>
+  `${name.trim() || auto}  ${yearA}→${yearB}`;
+
+/** A group name not already taken: the second becomes "<base> (2)" (dock.py _resolve_group). */
+export function resolveGroup(base: string, taken: string[]): string {
+  if (!taken.includes(base)) return base;
+  let n = 2;
+  while (taken.includes(`${base} (${n})`)) n++;
+  return `${base} (${n})`;
+}
+
+const detailLabel = (resM: number) => (resM === 10 ? "10 m (full)" : `${resM} m`);
+
+/** How the Area list names a run (dock.py _refresh_run_combo). */
+export const runLabel = (r: Pick<RunRecord, "userName" | "bbox" | "yearA" | "yearB" | "resM" | "complete">) =>
+  `${r.userName?.trim() || autoName(r.bbox)} · ${r.yearA}→${r.yearB} · ${detailLabel(r.resM)}` + (r.complete ? "" : " (incomplete)");
 
 export class SessionRuns {
   private runs = new Map<string, { meta: RunRecord; tiles: TileResult[]; objects?: RunObjects; cells?: CellGrid[] }>();
