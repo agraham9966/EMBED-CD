@@ -109,17 +109,23 @@ export async function polygonize(grid: Grid, score: Float32Array, cutoff: number
   const { labels, n } = await label8(mask, w, h, tick);
   const pixels: number[][] = Array.from({ length: n + 1 }, () => []);
   const sum = new Float64Array(n + 1), max = new Float32Array(n + 1).fill(-Infinity);
+  const lastRow = new Int32Array(n + 1);
   for (let p = 0; p < labels.length; p++) {
     const l = labels[p];
     if (!l) continue;
     pixels[l].push(p);
+    lastRow[l] = (p / w) | 0;
     sum[l] += score[p];
     if (score[p] > max[l]) max[l] = score[p];
   }
   const pxHa = (res * res) / 10000;
   const out: ObjectPoly[] = [];
-  for (let l = 1; l <= n; l++) {
-    if (tick && l % 200 === 0) await tick();
+  // GDAL Polygonize emits an object once the scan has passed its bottom row, so its order is by
+  // bottom row, then by first pixel. Python numbers objects in that order and, where two touch
+  // the same 160 m cell, the later one owns it; matching the order matches both.
+  const order = Array.from({ length: n }, (_, i) => i + 1).sort((a, b) => lastRow[a] - lastRow[b] || a - b);
+  for (const l of order) {
+    if (tick && out.length % 200 === 0) await tick();
     const count = pixels[l].length;
     if (count * pxHa < minAreaHa) continue;
     const rings = trace(labels, w, h, l, pixels[l]).map((r) =>

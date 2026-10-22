@@ -45,11 +45,9 @@ test("rings, holes, diagonal joins, single pixels and edges match GDAL", async (
   sameObjects(got, s.polys, 10);
 });
 
-test("objects are numbered in raster-scan order of their first pixel", async () => {
-  const grid = { crs: "EPSG:32610", x0: 0, y0: 50, res: 10, width: 5, height: 5 };
-  const sc = new Float32Array(25).fill(0);
-  sc[3] = sc[10] = sc[11] = sc[24] = 0.9;             // first pixels at index 3, 10, 24
-  const got = await polygonize(grid, sc, 0.5, 0);
-  expect(got.map((o) => o.nPx)).toEqual([1, 2, 1]);
-  expect(got[1].rings[0][0][1]).toBe(50 - 20);         // the second object starts on row 2
+test("objects come in GDAL's order: by bottom row, then by first pixel", async () => {
+  const s = J.runs["10"].synthetic;
+  const got = await polygonize(gridOf(J.runs["10"].grid), f32(s.score.file), s.cutoff, s.min_area);
+  expect(got.map((o) => [o.nPx, Math.round(o.chgMean * 1e6)])).toEqual(
+    s.polys.map((p: any) => [p.n_px, Math.round(p.chg_mean * 1e6)]));
 });
