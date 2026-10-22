@@ -1,0 +1,45 @@
+{
+ "cell_px": 16,
+ "ma": {
+  "file": "cells_ma.bin",
+  "shape": [
+   8,
+   8,
+   64
+  ],
+  "dtype": "float32"
+ },
+ "mb": {
+  "file": "cells_mb.bin",
+  "shape": [
+   8,
+   8,
+   64
+  ],
+  "dtype": "float32"
+ },
+ "n": {
+  "file": "cells_n.bin",
+  "shape": [
+   8,
+   8
+  ],
+  "dtype": "float32"
+ },
+ "smean": {
+  "file": "cells_smean.bin",
+  "shape": [
+   8,
+   8
+  ],
+  "dtype": "float32"
+ },
+ "smax": {
+  "file": "cells_smax.bin",
+  "shape": [
+   8,
+   8
+  ],
+  "dtype": "float32"
+ }
+}

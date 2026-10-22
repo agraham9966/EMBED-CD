@@ -172,6 +172,13 @@ def main():
                         "hist": hist.tolist(), "otsu": S.otsu_from_histogram(hist),
                         "fraction_above_0.3": S.fraction_above(hist, 0.3)})
 
+    # ---- cells -----------------------------------------------------------------------------
+    from embed_cd import cells as CE
+    ma, mb, n, smean, smax = CE.pool(ca, cb, sc, cov == S.COV_OK, 16)
+    dump("cells.json", {"cell_px": 16, "ma": put("cells_ma.bin", ma), "mb": put("cells_mb.bin", mb),
+                        "n": put("cells_n.bin", n), "smean": put("cells_smean.bin", smean),
+                        "smax": put("cells_smax.bin", smax)})
+
     # ---- reprojection ---------------------------------------------------------------------
     tr = fetch_meta[1]["transform"]
     src_t = GD.Transform.from_origin(tr[0], tr[1], 10.0, 10.0)
@@ -206,7 +213,7 @@ def main():
         tmp = tempfile.mkdtemp(prefix="ecd_fixture_job_")
         src = SRC.AlphaEarthSource(index=idx, tile_px=TILE, factor=SRC.factor_for(res))
         g, records, hist_total, _ = job.run(tuple(bbox), 2019, 2024, tmp, dst_crs=CRS, res_m=res,
-                                            src=src)
+                                            src=src, cell_m=160)
         from embed_cd import vrt
         vp = os.path.join(tmp, "m.vrt")
         vrt.write_vrt(vp, g, records)
@@ -215,6 +222,45 @@ def main():
         jobs[res] = {"grid": list(g), "hist": hist_total.tolist(), "tiles": len(records),
                      "score": put(f"job_score_{res}.bin", arr.astype(np.float32)),
                      "cov": put(f"job_cov_{res}.bin", cv.astype(np.uint8))}
+        from embed_cd import objects as OB
+        polys, pcrs = OB.polygonize(vp, 0.2, 0.05)
+        index = OB.CellIndex(tmp, 2019, 2024)
+        vecs = OB.attach_vectors(polys, index, str(pcrs))
+        grids = []
+        for path in index.files:
+            ga, gb, gn, _, _, gcrs, gt = CE.read_cells(path)
+            grids.append({"crs": str(gcrs), "x0": gt.c, "y0": gt.f, "res": gt.a, "shape": list(gn.shape),
+                          "n_sum": float(gn.sum())})
+        jobs[res]["objects"] = {"cutoff": 0.2, "min_area": 0.05, "polys": polys,
+                                "vectors": put(f"vectors_{res}.bin", np.asarray(vecs, np.float32)),
+                                "cell_grids": grids}
+        if res == 10:
+            # A synthetic change map on this same grid with awkward shapes, cut by GDAL and given
+            # vectors from this run's real cells: many objects, rings with holes, diagonal-only
+            # joins, single pixels, objects on the edge, and no-data inside the area.
+            r2 = np.random.default_rng(11)
+            H, W = g.height, g.width
+            yy, xx = np.mgrid[0:H, 0:W]
+            syn = np.zeros((H, W), np.float32)
+            for _ in range(40):
+                cy, cx, rad = r2.integers(0, H), r2.integers(0, W), r2.integers(1, 12)
+                syn[(yy - cy) ** 2 + (xx - cx) ** 2 <= rad * rad] = r2.uniform(0.25, 0.9)
+            syn[40:60, 120:140] = 0.6
+            syn[45:55, 125:135] = 0.0                     # a ring with a hole
+            syn[47:53, 128:132] = 0.7                     # an island inside the hole
+            syn[100, 100] = syn[101, 101] = syn[102, 102] = 0.5   # diagonal-only chain
+            syn[0, 0] = syn[H - 1, W - 1] = 0.4           # single pixels in the corners
+            syn[150:160, 0:8] = 0.3                       # on the west edge
+            syn[170:175, 50:60] = -1                      # no data
+            syn += r2.uniform(0, 0.05, syn.shape).astype(np.float32) * (syn > 0)
+            spath = os.path.join(tmp, "synthetic.tif")
+            GD.write(spath, syn[None], CRS, GD.Transform.from_origin(g.x0, g.y0, g.res, g.res),
+                     nodata=-1.0)
+            spolys, _ = OB.polygonize(spath, 0.2, 0.01)
+            svecs = OB.attach_vectors(spolys, index, CRS)
+            jobs[res]["synthetic"] = {"cutoff": 0.2, "min_area": 0.01, "score": put("synthetic.bin", syn),
+                                      "polys": spolys,
+                                      "vectors": put("synthetic_vectors.bin", np.asarray(svecs, np.float32))}
         shutil.rmtree(tmp, ignore_errors=True)
     dump("job.json", {"bbox": bbox, "tile_px": TILE, "dst_crs": CRS, "runs": jobs})
 
