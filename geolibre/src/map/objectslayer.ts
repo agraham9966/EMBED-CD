@@ -53,7 +53,7 @@ export class ObjectsLayer {
     map.addLayer({ id: `${this.id}-fill`, type: "fill", source: this.id, layout: { visibility: vis },
       paint: { "fill-color": "rgba(255,255,255,0.086)" } });
     map.addLayer({ id: `${this.id}-line`, type: "line", source: this.id, layout: { visibility: vis },
-      paint: { "line-color": "rgba(235,235,235,0.86)", "line-width": 2, "line-dasharray": [2, 1.5] } });
+      paint: { "line-color": "rgba(235,235,235,0.86)", "line-width": 2.6, "line-dasharray": [2, 1.5] } });
   }
 
   private register(): void {

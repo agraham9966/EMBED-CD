@@ -221,6 +221,8 @@ export interface GeoLibreAppAPI<TControl extends GeoLibreControl = GeoLibreContr
   getOpenFloatingPanels?: () => string[];
   /** Save text with a native dialog (desktop) or a download (web). */
   exportTextFile?: (filename: string, content: string, options?: GeoLibreFileDialogOptions) => void;
+  /** Show or hide a layer like the Layers panel's eye (GeoLibre PR pending; absent on older hosts). */
+  setLayerVisibility?: (layerId: string, visible: boolean) => void;
   /** Pick a text file and return its contents; null on cancel (desktop). */
   importTextFile?: (options?: GeoLibreFileDialogOptions) => Promise<string | null>;
 }

@@ -22,7 +22,12 @@ export function registerPanel(app: GeoLibreAppAPI): () => void {
       container.append(root);
       let step1: ReturnType<typeof buildStep1> | null = null;
       const step2 = buildStep2((t) => step1?.layer()?.setCutoff(t));
-      const step3 = buildStep3({ app, runs: sessionRuns, currentRun: () => step1?.current() ?? null, cutoff: () => step2.cutoff() });
+      const step3 = buildStep3({ app, runs: sessionRuns, currentRun: () => step1?.current() ?? null, cutoff: () => step2.cutoff(),
+        // Through GeoLibre's own visibility (when the host has it), so the Layers panel's eye agrees.
+        onObjectsMade: () => {
+          const id = step1?.layer()?.changeId;
+          if (id) { try { app.setLayerVisibility?.(id, false); } catch { /* layer already gone */ } }
+        } });
       step1 = buildStep1({ app, runs: sessionRuns, step2, loadIndex: () => TileIndex.load(), startJob,
         onRunChanged: (id) => step3.runChanged(id) });
       root.append(step1.root, step2.root, step3.root,

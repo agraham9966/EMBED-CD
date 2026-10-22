@@ -26,7 +26,11 @@ export function makeTicker(now: () => number, yieldNow: () => Promise<void>, can
   };
 }
 
-type Deps = { app: GeoLibreAppAPI; runs: SessionRuns; currentRun: () => string | null; cutoff: () => number };
+type Deps = {
+  app: GeoLibreAppAPI; runs: SessionRuns; currentRun: () => string | null; cutoff: () => number;
+  /** Objects now exist: they are the answer, so the change raster steps back (QGIS unticks it). */
+  onObjectsMade?: () => void;
+};
 
 export function buildStep3(deps: Deps): { root: HTMLElement; runChanged(id: string | null): void; dispose(): void } {
   const root = el("section", "ecd-step");
@@ -77,6 +81,7 @@ export function buildStep3(deps: Deps): { root: HTMLElement; runChanged(id: stri
       });
       deps.runs.setObjects(meta.id, { polys, vectors, cutoff, minArea: min });
       show(meta.id);
+      deps.onObjectsMade?.();
       status.textContent = "";
     } catch (e) {
       status.textContent = e instanceof Cancelled ? "Cancelled." : `Could not make objects: ${(e as Error)?.message ?? e}`;
