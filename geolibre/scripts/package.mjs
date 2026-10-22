@@ -1,6 +1,6 @@
 // Reproducible plugin zip, from opengeos/geolibre-plugin-template (MIT) scripts/package-geolibre-plugin.mjs.
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -13,6 +13,17 @@ const CRC_TABLE = createCrcTable();
 const FIXED_DOS_DATE_TIME = { date: (1 << 5) | 1, time: 0 };
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
 const outputPath = join(bundleDir, `${manifest.id}-${manifest.version}.zip`);
+
+// GeoLibre loads the entry as ONE module from a blob: URL, so nothing beside it can be imported.
+// A bundle split into chunks installs "fine" and then fails to load (0.2.1 shipped like that).
+const distFiles = (await readdir(join(bundleDir, "dist"))).sort();
+const entryCode = await readFile(join(bundleDir, manifest.entry), "utf8");
+const relative = entryCode.match(/(?:from\s*|import\s*\()\s*["'`]\.\.?\//);
+if (distFiles.join(",") !== "index.js,style.css" || relative) {
+  console.error(`Refusing to package: dist/ must hold only index.js and style.css with no relative imports. ` +
+    `Found: ${distFiles.join(", ")}${relative ? `; relative import "${relative[0]}"` : ""}`);
+  process.exit(1);
+}
 
 const entries = [
   ["plugin.json", manifestPath],

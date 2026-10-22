@@ -10,7 +10,9 @@ export default defineConfig({
     minify: true,
     sourcemap: false,
     // Vite leaves ES library output unminified on purpose; the GeoLibre registry asks for minified.
-    rolldownOptions: { output: { assetFileNames: () => "style.css", minify: true } },
+    // ...and ONE file: GeoLibre imports the entry alone from a blob: URL, so geotiff.js's lazily
+    // loaded decoders must be inlined, not split into chunks next to it.
+    rolldownOptions: { output: { assetFileNames: () => "style.css", minify: true, codeSplitting: false } },
   },
   test: { environment: "jsdom", globals: true },
 });
