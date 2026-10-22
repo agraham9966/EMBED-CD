@@ -20,7 +20,14 @@ export type JobDeps = {
   index: TileIndex;
   open: (url: string) => Promise<GeoTIFF>;
   tilePx?: number;
+  /** Waits before each retry of a failed read. Two retries ride out a network blip. */
+  retryDelaysMs?: number[];
 };
+
+const sleep = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve) => {
+  const t = setTimeout(resolve, ms);
+  signal?.addEventListener("abort", () => { clearTimeout(t); resolve(); }, { once: true });
+});
 
 type Fetched = { cube: Cube; crs: string; transform: Affine } | null;
 
@@ -28,13 +35,20 @@ async function tryFetch(deps: JobDeps, tile: Tile, year: number, factor: number,
   Promise<{ got: Fetched; failed: boolean }> {
   const row = deps.index.rowFor(tile, year);
   if (!row) return { got: null, failed: false };               // no COG for this year here
-  try {
-    return { got: await fetchTile(row, tile, factor, deps.open, signal), failed: false };
-  } catch (e) {
-    if (signal?.aborted) throw e;
-    // Python treats an unreadable year as missing; we do the same but COUNT it, so the user
-    // hears that part of the map is missing because of a failed download, not a data gap.
-    return { got: null, failed: true };
+  const delays = deps.retryDelaysMs ?? [1000, 3000];
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return { got: await fetchTile(row, tile, factor, deps.open, signal), failed: false };
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      if (attempt < delays.length) {
+        await sleep(delays[attempt], signal);
+        continue;
+      }
+      // Python treats an unreadable year as missing; we do the same but COUNT it, so the user
+      // hears that part of the map is missing because of a failed download, not a data gap.
+      return { got: null, failed: true };
+    }
   }
 }
 

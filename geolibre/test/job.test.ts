@@ -49,14 +49,25 @@ test("a missing year B gives coverage 'no data in B' and no score", async () => 
   expect(new Set(m.cov)).toEqual(new Set([3, 4]));
 });
 
-test("a tile that fails to read is counted and the run carries on", async () => {
+test("a network blip is retried, so nothing is lost", async () => {
   let calls = 0;
-  const flaky = async (url: string) => {
-    if (url === "cog_b.tif" && calls++ === 0) throw new Error("network down");
+  const blip = async (url: string) => {
+    if (url === "cog_b.tif" && calls++ === 0) throw new Error("network blip");
     return openFixture(url);
   };
   const ev = await collect(runJob({ bbox: J.bbox, yearA: 2019, yearB: 2024, resM: 10 },
-    { index: fakeIndex(), open: flaky, tilePx: J.tile_px }));
+    { index: fakeIndex(), open: blip, tilePx: J.tile_px, retryDelaysMs: [0, 0] }));
+  expect((ev.at(-1) as any).failed).toBe(0);
+});
+
+test("a tile that keeps failing is counted and the run carries on", async () => {
+  let calls = 0;
+  const down = async (url: string) => {
+    if (url === "cog_b.tif" && calls++ < 3) throw new Error("network down");   // first tile: all 3 tries
+    return openFixture(url);
+  };
+  const ev = await collect(runJob({ bbox: J.bbox, yearA: 2019, yearB: 2024, resM: 10 },
+    { index: fakeIndex(), open: down, tilePx: J.tile_px, retryDelaysMs: [0, 0] }));
   const end = ev.at(-1) as any;
   expect(end.failed).toBe(1);
   expect(ev.filter((e) => e.type === "tile").length).toBe(J.runs["10"].tiles);
@@ -77,6 +88,6 @@ test("cancelling after the first tile ends the run, marked cancelled", async () 
 test("a tile whose two years both fail counts once", async () => {
   const down = async () => { throw new Error("network down"); };
   const ev = await collect(runJob({ bbox: J.bbox, yearA: 2019, yearB: 2024, resM: 50 },
-    { index: fakeIndex(), open: down, tilePx: J.tile_px }));
+    { index: fakeIndex(), open: down, tilePx: J.tile_px, retryDelaysMs: [0, 0] }));
   expect((ev.at(-1) as any).failed).toBe(J.runs["50"].tiles);
 });

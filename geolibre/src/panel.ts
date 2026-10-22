@@ -2,8 +2,7 @@ import type { GeoLibreAppAPI } from "./host-api";
 import { TileIndex } from "./engine/tileindex";
 import { startJob } from "./jobclient";
 import { removeArea } from "./map/drawbox";
-import { renderSpike } from "./spike";
-import { openRunStore, describeStorageError, type RunStore } from "./storage";
+import { sessionRuns } from "./runs";
 import { buildStep1 } from "./ui/step1";
 import { buildStep2 } from "./ui/step2";
 import { el } from "./ui/dom";
@@ -20,28 +19,15 @@ export function registerPanel(app: GeoLibreAppAPI): () => void {
     render(container: HTMLElement) {
       const root = el("div", "ecd-panel");
       container.append(root);
-      let disposeSteps = () => {};
-      let disposeSpike = () => {};
-      let closed = false;
-      const build = (store: RunStore | null, note = "") => {
-        if (closed) return;
-        let step1: ReturnType<typeof buildStep1> | null = null;
-        const step2 = buildStep2((t) => step1?.layer()?.setCutoff(t));
-        step1 = buildStep1({ app, store, step2, loadIndex: () => TileIndex.load(), startJob });
-        root.append(step1.root, step2.root);
-        if (note) root.append(el("p", "ecd-warn", note));
-        disposeSpike = renderSpike(root, app);
-        disposeSteps = () => {
-          step1?.dispose();
-          step1?.layer()?.clear();
-          removeArea((app as any).getMap?.());
-        };
-      };
-      openRunStore().then((s) => build(s), (e) => build(null, describeStorageError(e)));
+      let step1: ReturnType<typeof buildStep1> | null = null;
+      const step2 = buildStep2((t) => step1?.layer()?.setCutoff(t));
+      step1 = buildStep1({ app, runs: sessionRuns, step2, loadIndex: () => TileIndex.load(), startJob });
+      root.append(step1.root, step2.root,
+        el("p", "ecd-muted", "Runs are temporary: they are discarded when GeoLibre closes. Use Save run to keep one as a file."));
       return () => {
-        closed = true;
-        disposeSteps();
-        disposeSpike();
+        step1?.dispose();
+        step1?.layer()?.clear();
+        removeArea((app as any).getMap?.());
         root.remove();
       };
     },

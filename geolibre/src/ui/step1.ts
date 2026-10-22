@@ -10,8 +10,9 @@ import type { GeoLibreAppAPI } from "../host-api";
 import type { ClientEvent } from "../jobclient";
 import { ChangeLayer } from "../map/changelayer";
 import { drawBox, showArea } from "../map/drawbox";
-import { listRunRecords, loadRun, runName, saveRunMeta, saveTile, type RunRecord } from "../runs";
-import { describeStorageError, type RunStore } from "../storage";
+import { saveBinary } from "../export";
+import { readRunFile, runFileName, writeRunFile } from "../runfile";
+import { runName, type RunRecord, type SessionRuns } from "../runs";
 import { el, row, select } from "./dom";
 import type { Step2 } from "./step2";
 
@@ -37,20 +38,20 @@ export function progressText(e: JobEvent): string {
 
 type Deps = {
   app: GeoLibreAppAPI;
-  store: RunStore | null;
+  runs: SessionRuns;
   loadIndex: () => Promise<TileIndex>;
   startJob: (spec: any, onEvent: (e: ClientEvent) => void) => { cancel(): void; done: Promise<void> };
   step2: Step2;
 };
 
 export function buildStep1(deps: Deps): { root: HTMLElement; layer(): ChangeLayer | null; dispose(): void } {
-  const { app, store, step2 } = deps;
+  const { app, runs, step2 } = deps;
   const map = () => (app as any).getMap?.();
   const root = el("section", "ecd-step");
   root.append(el("h3", "ecd-h", "1. Area"));
 
   const picker = select([["", "New area"]]);
-  picker.title = "Saved runs. Pick one to reopen it.";
+  picker.title = "This session's runs. They are discarded when GeoLibre closes unless you save them.";
   const drawBtn = el("button", "ecd-btn", "Draw area") as HTMLButtonElement;
   drawBtn.title = "Drag a box on the map.";
   const yearA = select(YEARS.map((y) => [String(y), String(y)]), "2019");
@@ -63,7 +64,10 @@ export function buildStep1(deps: Deps): { root: HTMLElement; layer(): ChangeLaye
   const bar = el("progress", "ecd-progress") as HTMLProgressElement;
   bar.hidden = true;
   const status = el("p", "ecd-status", "");
-  root.append(row(el("span", "", "Area"), picker), row(drawBtn),
+  const saveBtn = el("button", "ecd-btn", "Save run...") as HTMLButtonElement;
+  saveBtn.title = "Runs are temporary. Save one to a file to keep it; Open run brings it back.";
+  const openBtn = el("button", "ecd-btn", "Open run...") as HTMLButtonElement;
+  root.append(row(el("span", "", "Area"), picker), row(drawBtn, openBtn, saveBtn),
     row(el("span", "", "From"), yearA, el("span", "", "To"), yearB),
     row(el("span", "", "Detail"), detail), est, warn, row(runBtn), bar, status);
 
@@ -92,12 +96,26 @@ export function buildStep1(deps: Deps): { root: HTMLElement; layer(): ChangeLaye
     }
   }
 
-  async function refreshPicker(select_?: string) {
-    if (!store) return;
-    const runs = await listRunRecords(store).catch(() => [] as RunRecord[]);
+  let current: string | null = null;              // the run on the map
+  function refreshPicker(select_?: string) {
     picker.replaceChildren(new Option("New area", ""),
-      ...runs.map((r) => new Option(r.complete ? r.name : `${r.name} (incomplete)`, r.id)));
+      ...runs.list().map((r) => new Option(r.complete ? r.name : `${r.name} (incomplete)`, r.id)));
     picker.value = select_ ?? "";
+    saveBtn.disabled = !current || !!job;
+  }
+
+  function show(meta: RunRecord, tiles: TileResult[]) {
+    bbox = meta.bbox;
+    current = meta.id;
+    yearA.value = String(meta.yearA);
+    yearB.value = String(meta.yearB);
+    detail.value = DETAIL.find(([, v]) => v === meta.resM)?.[0] ?? detail.value;
+    showArea(map(), bbox);
+    newLayer(meta.id, meta.yearA, meta.yearB);
+    for (const t of tiles) layer!.addTile(meta.grid, t);
+    step2.setHist(Float64Array.from(meta.histTotal.length ? meta.histTotal : sumHist(tiles)));
+    layer!.setCutoff(step2.cutoff());
+    void refreshEstimate();
   }
 
   function newLayer(id: string, a: number, b: number) {
@@ -120,25 +138,48 @@ export function buildStep1(deps: Deps): { root: HTMLElement; layer(): ChangeLaye
   };
   for (const s of [yearA, yearB, detail]) s.onchange = () => void refreshEstimate();
 
-  picker.onchange = async () => {
-    if (!store || !picker.value) return;
+  picker.onchange = () => {
+    const r = picker.value ? runs.get(picker.value) : null;
+    if (!r) return;
+    show(r.meta, r.tiles);
+    status.textContent = r.meta.complete ? `Showing ${r.tiles.length} tiles.` : `Showing ${r.tiles.length} tiles. This run was not finished.`;
+    refreshPicker(r.meta.id);
+  };
+
+  saveBtn.onclick = async () => {
+    const r = current ? runs.get(current) : null;
+    if (!r) return;
+    status.textContent = "Preparing the file...";
     try {
-      const { meta, tiles } = await loadRun(store, picker.value);
-      bbox = meta.bbox;
-      yearA.value = String(meta.yearA);
-      yearB.value = String(meta.yearB);
-      detail.value = DETAIL.find(([, v]) => v === meta.resM)?.[0] ?? detail.value;
-      showArea(map(), bbox);
-      newLayer(meta.id, meta.yearA, meta.yearB);
-      for (const t of tiles) layer!.addTile(meta.grid, t);
-      const h = Float64Array.from(meta.histTotal.length ? meta.histTotal : sumHist(tiles));
-      step2.setHist(h);
-      layer!.setCutoff(step2.cutoff());
-      status.textContent = meta.complete ? `Reopened ${tiles.length} tiles.` : `Reopened ${tiles.length} tiles. This run was not finished.`;
-      void refreshEstimate();
+      const file = runFileName(r.meta);
+      const res = await saveBinary(file, await writeRunFile(r.meta, r.tiles), { "application/zip": [".zip"] });
+      status.textContent = { picker: `Saved ${file}.`, download: `Sent as a download: ${file}.`, host: `Saved ${file}.`, cancelled: "Not saved." }[res.method];
     } catch (e) {
-      status.textContent = `Could not reopen this run: ${(e as Error)?.message ?? e}`;
+      status.textContent = `Could not save the run: ${(e as Error)?.message ?? e}`;
     }
+  };
+
+  openBtn.onclick = () => {
+    const input = el("input") as HTMLInputElement;
+    input.type = "file";
+    input.accept = ".zip";
+    input.onchange = async () => {
+      const f = input.files?.[0];
+      if (!f) return;
+      try {
+        const { meta, tiles } = await readRunFile(await f.arrayBuffer());
+        if (!runs.get(meta.id)) {
+          runs.start(meta);
+          for (const t of tiles) runs.addTile(meta.id, t);
+        }
+        show(meta, runs.get(meta.id)!.tiles);
+        refreshPicker(meta.id);
+        status.textContent = `Opened ${f.name}.`;
+      } catch (e) {
+        status.textContent = `Could not open ${f.name}: ${(e as Error)?.message ?? e}`;
+      }
+    };
+    input.click();
   };
 
   runBtn.onclick = () => {
@@ -151,17 +192,14 @@ export function buildStep1(deps: Deps): { root: HTMLElement; layer(): ChangeLaye
     const spec = { bbox, yearA: Number(yearA.value), yearB: Number(yearB.value), resM: res() };
     const id = `run-${Date.now()}`;
     const meta: RunRecord = {
-      id, name: runName(spec.yearA, spec.yearB, spec.resM, new Date()), createdAt: Date.now(), bytes: 0,
+      id, name: runName(spec.yearA, spec.yearB, spec.resM, new Date()), createdAt: Date.now(),
       ...spec, grid: null as unknown as Grid, histTotal: [], complete: false, failed: 0, tiles: 0,
     };
     newLayer(id, spec.yearA, spec.yearB);
+    current = id;
     const hist = new Float64Array(HIST_BINS);
-    let saving: Promise<unknown> = Promise.resolve();
-    const persist = (f: () => Promise<unknown>) => {
-      if (store) saving = saving.then(f).catch((e) => (status.textContent = describeStorageError(e)));
-    };
     // Locked while running: switching area mid-run would send this job's tiles to another layer.
-    picker.disabled = drawBtn.disabled = true;
+    picker.disabled = drawBtn.disabled = openBtn.disabled = saveBtn.disabled = true;
     bar.hidden = false;
     bar.removeAttribute("value");                    // busy until the first tile lands
     status.textContent = "Checking coverage...";
@@ -174,7 +212,8 @@ export function buildStep1(deps: Deps): { root: HTMLElement; layer(): ChangeLaye
       status.textContent = progressText(e);
       if (e.type === "plan") {
         meta.grid = e.grid;
-        persist(() => saveRunMeta(store!, meta).then(() => refreshPicker(id)));
+        runs.start(meta);
+        refreshPicker(id);
       } else if (e.type === "tile") {
         bar.max = e.total;
         bar.value = e.done;
@@ -182,21 +221,20 @@ export function buildStep1(deps: Deps): { root: HTMLElement; layer(): ChangeLaye
         for (let i = 0; i < HIST_BINS; i++) hist[i] += e.result.hist[i];
         if (meta.tiles === 0) step2.setHist(hist);
         layer?.setCutoff(step2.cutoff());
-        const i = meta.tiles++;
-        const r: TileResult = e.result;
-        persist(() => saveTile(store!, id, i, r));
+        meta.tiles++;
+        runs.addTile(id, e.result);
       } else {
         meta.complete = !e.cancelled;
         meta.failed = e.failed;
         meta.histTotal = Array.from(e.histTotal);
-        persist(() => saveRunMeta(store!, meta).then(() => refreshPicker(id)));
         step2.setHist(Float64Array.from(e.histTotal));
         if (!e.cancelled && meta.tiles > 0) step2.auto();       // as the QGIS run reports AUTO
       }
     });
     job.done.then(() => {
       job = null;
-      picker.disabled = drawBtn.disabled = false;
+      picker.disabled = drawBtn.disabled = openBtn.disabled = false;
+      refreshPicker(current ?? undefined);
       bar.hidden = true;
       runBtn.textContent = "Make change map";
       runBtn.disabled = !bbox;
@@ -208,7 +246,7 @@ export function buildStep1(deps: Deps): { root: HTMLElement; layer(): ChangeLaye
   map()?.on?.("style.load", reShow);
 
   runBtn.disabled = true;
-  void refreshPicker();
+  refreshPicker();
   return {
     root,
     layer: () => layer,

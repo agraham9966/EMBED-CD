@@ -41,8 +41,8 @@ function parseNpy(buf: Uint8Array): NpyArray {
   throw new Error(`unsupported npy dtype ${descr}`);
 }
 
-/** Every array in an .npz, keyed by name (without ".npy"). */
-export async function readNpz(ab: ArrayBuffer): Promise<Record<string, NpyArray>> {
+/** Every file in a zip (stored or deflated), keyed by name. */
+export async function readZip(ab: ArrayBuffer): Promise<Record<string, Uint8Array>> {
   const buf = new Uint8Array(ab);
   const view = new DataView(ab);
   let eocd = buf.length - 22;
@@ -50,7 +50,7 @@ export async function readNpz(ab: ArrayBuffer): Promise<Record<string, NpyArray>
   if (eocd < 0) throw new Error("not a zip file");
   const count = view.getUint16(eocd + 10, true);
   let p = view.getUint32(eocd + 16, true);
-  const out: Record<string, NpyArray> = {};
+  const out: Record<string, Uint8Array> = {};
   for (let i = 0; i < count; i++) {
     const method = view.getUint16(p + 10, true);
     const csize = view.getUint32(p + 20, true);
@@ -64,8 +64,15 @@ export async function readNpz(ab: ArrayBuffer): Promise<Record<string, NpyArray>
     const raw = buf.subarray(dataAt, dataAt + csize);
     const bytes = method === 0 ? raw : method === 8 ? await inflateRaw(raw) : null;
     if (!bytes) throw new Error(`unsupported zip method ${method} for ${name}`);
-    out[name.replace(/\.npy$/, "")] = parseNpy(bytes);
+    out[name] = bytes;
   }
+  return out;
+}
+
+/** Every array in an .npz, keyed by name (without ".npy"). */
+export async function readNpz(ab: ArrayBuffer): Promise<Record<string, NpyArray>> {
+  const out: Record<string, NpyArray> = {};
+  for (const [name, bytes] of Object.entries(await readZip(ab))) out[name.replace(/\.npy$/, "")] = parseNpy(bytes);
   return out;
 }
 
