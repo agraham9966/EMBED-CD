@@ -45,6 +45,8 @@ export class ChangeLayer {
   private pending = false;
   private visible = { change: true, coverage: true };
   private bounds: Bbox | null = null;            // lon/lat, for GeoLibre's Zoom to layer
+  /** The run's Layers-panel group, set before the first tile is registered. */
+  groupId?: string;
   readonly changeId: string;
   readonly coverageId: string;
 
@@ -170,7 +172,7 @@ export class ChangeLayer {
     ] as const) {
       reg.call(this.app, {
         id, name, type: "raster", nativeLayerIds: this.ids(id), sourceIds: this.ids(id), opacity,
-        metadata: this.bounds ? { bounds: this.bounds } : {},
+        metadata: this.bounds ? { bounds: this.bounds } : {}, groupId: this.groupId,
         paintMode: "plugin",
         paintBridge: {
           setOpacity: (o: number) => this.ids(id).forEach((l) => this.map?.setPaintProperty(l, "raster-opacity", o)),

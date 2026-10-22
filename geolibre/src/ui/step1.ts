@@ -12,7 +12,7 @@ import { ChangeLayer } from "../map/changelayer";
 import { drawBox, showArea } from "../map/drawbox";
 import { saveBinary } from "../export";
 import { cellsOf, readRunFile, runFileName, writeRunFile } from "../runfile";
-import { runName, type RunRecord, type SessionRuns } from "../runs";
+import { autoName, groupName, resolveGroup, runLabel, runName, type RunRecord, type SessionRuns } from "../runs";
 import { el, row, select } from "./dom";
 import type { Step2 } from "./step2";
 
@@ -51,6 +51,8 @@ type Deps = {
 
 export function buildStep1(deps: Deps): {
   root: HTMLElement; layer(): ChangeLayer | null; current(): string | null; dispose(): void;
+  /** Set the area as if drawn (also what Open run uses). */
+  setArea(bbox: Bbox): void;
   summary(): string | null; hasResult(): boolean;
 } {
   const { app, runs, step2 } = deps;
@@ -106,8 +108,7 @@ export function buildStep1(deps: Deps): {
 
   let current: string | null = null;              // the run on the map
   function refreshPicker(select_?: string) {
-    picker.replaceChildren(new Option("New area", ""),
-      ...runs.list().map((r) => new Option(r.complete ? r.name : `${r.name} (incomplete)`, r.id)));
+    picker.replaceChildren(new Option("New area", ""), ...runs.list().map((r) => new Option(runLabel(r), r.id)));
     picker.value = select_ ?? "";
     saveBtn.disabled = !current || !!job;
   }
@@ -120,16 +121,28 @@ export function buildStep1(deps: Deps): {
     yearB.value = String(meta.yearB);
     detail.value = DETAIL.find(([, v]) => v === meta.resM)?.[0] ?? detail.value;
     showArea(map(), bbox);
-    newLayer(meta.id, meta.yearA, meta.yearB);
-    for (const t of tiles) layer!.addTile(meta.grid, t);
+    const r = runs.get(meta.id)!;
+    const fresh = !r.change;                         // already on the map: reuse, never add twice
+    layer = layerFor(meta);
+    if (fresh) for (const t of tiles) layer.addTile(meta.grid, t);
     step2.setHist(Float64Array.from(meta.histTotal.length ? meta.histTotal : sumHist(tiles)));
     layer!.setCutoff(step2.cutoff());
     void refreshEstimate();
   }
 
-  function newLayer(id: string, a: number, b: number) {
-    layer?.clear();
-    layer = new ChangeLayer(app, id, `${a}-${b}`);
+  /** The run's change layer, made once, in the run's own Layers-panel group. Other runs' layers stay. */
+  function layerFor(meta: RunRecord): ChangeLayer {
+    const r = runs.get(meta.id)!;
+    if (!r.change) {
+      if (!meta.groupId) {
+        const taken = ((app as any).listLayerGroups?.() ?? []).map((g: { name: string }) => g.name);
+        meta.group = resolveGroup(groupName(meta.userName ?? "", autoName(meta.bbox), meta.yearA, meta.yearB), taken);
+        meta.groupId = (app as any).addLayerGroup?.(meta.group) ?? undefined;
+      }
+      r.change = new ChangeLayer(app, meta.id, `${meta.yearA}-${meta.yearB}`);
+      r.change.groupId = meta.groupId;
+    }
+    return r.change;
   }
 
   drawBtn.onclick = () => {
@@ -206,7 +219,8 @@ export function buildStep1(deps: Deps): {
       id, name: runName(spec.yearA, spec.yearB, spec.resM, new Date()), createdAt: Date.now(),
       ...spec, grid: null as unknown as Grid, histTotal: [], complete: false, failed: 0, tiles: 0,
     };
-    newLayer(id, spec.yearA, spec.yearB);
+    runs.start(meta);
+    layer = layerFor(meta);
     current = id;
     deps.onRunChanged?.(current);
     const hist = new Float64Array(HIST_BINS);
@@ -224,7 +238,6 @@ export function buildStep1(deps: Deps): {
       status.textContent = progressText(e);
       if (e.type === "plan") {
         meta.grid = e.grid;
-        runs.start(meta);
         refreshPicker(id);
       } else if (e.type === "tile") {
         bar.max = e.total;
@@ -264,6 +277,12 @@ export function buildStep1(deps: Deps): {
     root,
     layer: () => layer,
     current: () => current,
+    setArea(b: Bbox) {
+      bbox = b;
+      showArea(map(), b);
+      deps.onAreaDrawn?.();
+      void refreshEstimate();
+    },
     summary: () => (bbox ? `${yearA.value}→${yearB.value}, ${detail.value}` : null),
     hasResult: () => !!layer && layer.count > 0,
     dispose() {

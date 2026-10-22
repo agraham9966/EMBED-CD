@@ -53,8 +53,7 @@ export function registerPanel(app: GeoLibreAppAPI): () => void {
         el("p", "ecd-muted", "Runs are temporary: they are discarded when GeoLibre closes. Use Save run to keep one as a file."));
       return () => {
         step3.dispose();
-        step1?.dispose();
-        step1?.layer()?.clear();
+        step1?.dispose();                                  // runs' layers stay on the map
         removeArea((app as any).getMap?.());
         root.remove();
       };

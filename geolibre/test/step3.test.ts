@@ -29,7 +29,7 @@ test("cutting yields to the panel every 50 ms of work, and Cancel stops it", asy
   await expect(tick()).rejects.toBeInstanceOf(Cancelled);
 });
 
-test("switching runs swaps the objects shown for that run's own (or none)", async () => {
+test("switching runs points at that run's objects; the other run's objects stay on the map", async () => {
   const { SessionRuns } = await import("../src/runs");
   const { buildStep3 } = await import("../src/ui/step3");
   const added: string[] = [], removed: string[] = [];
@@ -48,8 +48,10 @@ test("switching runs swaps the objects shown for that run's own (or none)", asyn
   expect(added).toEqual(["ecd-a-objects"]);
   expect(s3.root.textContent).toContain("1 objects at cutoff 0.30.");
   s3.runChanged("b");
-  expect(removed).toEqual(["ecd-a-objects"]);
+  expect(removed).toEqual([]);
   expect(s3.root.textContent).not.toContain("objects at cutoff");
+  s3.runChanged("a");
+  expect(added).toEqual(["ecd-a-objects"]);            // reused, not added twice
 });
 
 test("after cutting, the change map is switched off so only the outlines show (as in QGIS)", async () => {

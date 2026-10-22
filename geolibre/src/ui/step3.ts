@@ -81,7 +81,7 @@ export function buildStep3(deps: Deps): { root: HTMLElement; runChanged(id: stri
         return true;
       });
       deps.runs.setObjects(meta.id, { polys, vectors, cutoff, minArea: min });
-      show(meta.id);
+      show(meta.id, true);
       deps.onObjectsMade?.();
       count.textContent = `${countText(polys.length, cutoff)} Add a class, turn on 'Label by clicking the map', and click a few.`;
       const carried = Object.values(classify.labeller.carriedCounts()).reduce((a, b) => a + b, 0);
@@ -97,16 +97,22 @@ export function buildStep3(deps: Deps): { root: HTMLElement; runChanged(id: stri
     }
   };
 
-  /** Show a run's own objects, or none. */
-  function show(id: string | null) {
-    layer?.clear();
+  /** Point the panel at a run's own objects, or none. Other runs' objects stay on the map (in
+   *  their own groups), as in QGIS; `recut` replaces this run's objects after a new cut. */
+  function show(id: string | null, recut = false) {
     layer = null;
     classify.clear();
     count.textContent = "";
     const r = id ? deps.runs.get(id) : null;
     if (!r?.objects) return;
-    layer = new ObjectsLayer(deps.app, r.meta.id, `${r.meta.yearA}-${r.meta.yearB}`);
-    layer.set(r.objects.polys, r.meta.grid);
+    if (!r.objectsLayer) {
+      r.objectsLayer = new ObjectsLayer(deps.app, r.meta.id, `${r.meta.yearA}-${r.meta.yearB}`);
+      r.objectsLayer.groupId = r.meta.groupId;
+      r.objectsLayer.set(r.objects.polys, r.meta.grid);
+    } else if (recut) {
+      r.objectsLayer.set(r.objects.polys, r.meta.grid);
+    }
+    layer = r.objectsLayer;
     count.textContent = countText(r.objects.polys.length, r.objects.cutoff);
     classify.setObjects(r.objects.vectors, r.objects.polys.length, layer);
   }
@@ -114,6 +120,6 @@ export function buildStep3(deps: Deps): { root: HTMLElement; runChanged(id: stri
   return {
     root,
     runChanged: (id) => { cancel = true; status.textContent = ""; show(id); },
-    dispose: () => { cancel = true; classify.clear(); layer?.clear(); },
+    dispose: () => { cancel = true; classify.clear(); },          // runs' objects stay on the map
   };
 }

@@ -1,6 +1,7 @@
 import type { GeoLibrePlugin } from "./host-api";
 import { wipeLegacyStorage } from "./legacy";
 import { registerPanel } from "./panel";
+import { sessionRuns } from "./runs";
 import "./style.css";
 
 let disposePanel: (() => void) | null = null;
@@ -15,6 +16,7 @@ export const plugin: GeoLibrePlugin = {
     disposePanel ??= registerPanel(app);   // a second activate must not add a second panel
   },
   deactivate() {
+    sessionRuns.clearLayers();              // the plugin is off: take its layers with it
     disposePanel?.();
     disposePanel = null;
   },

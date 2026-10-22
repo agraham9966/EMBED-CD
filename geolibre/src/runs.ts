@@ -4,6 +4,8 @@ import type { Bbox } from "./engine/crs";
 import type { Grid } from "./engine/grid";
 import type { TileResult } from "./engine/job";
 import type { ObjectPoly } from "./engine/objects";
+import type { ChangeLayer } from "./map/changelayer";
+import type { ObjectsLayer } from "./map/objectslayer";
 import type { CellGrid } from "./engine/cells";
 
 export type RunObjects = { polys: ObjectPoly[]; vectors: Float32Array; cutoff: number; minArea: number };
@@ -48,8 +50,14 @@ const detailLabel = (resM: number) => (resM === 10 ? "10 m (full)" : `${resM} m`
 export const runLabel = (r: Pick<RunRecord, "userName" | "bbox" | "yearA" | "yearB" | "resM" | "complete">) =>
   `${r.userName?.trim() || autoName(r.bbox)} · ${r.yearA}→${r.yearB} · ${detailLabel(r.resM)}` + (r.complete ? "" : " (incomplete)");
 
+/** A run in this session, with the map layers showing it (they outlive the panel being closed). */
+export type SessionRun = {
+  meta: RunRecord; tiles: TileResult[]; objects?: RunObjects; cells?: CellGrid[];
+  change?: ChangeLayer; objectsLayer?: ObjectsLayer;
+};
+
 export class SessionRuns {
-  private runs = new Map<string, { meta: RunRecord; tiles: TileResult[]; objects?: RunObjects; cells?: CellGrid[] }>();
+  private runs = new Map<string, SessionRun>();
 
   start(meta: RunRecord): void {
     this.runs.set(meta.id, { meta, tiles: [] });
@@ -72,6 +80,14 @@ export class SessionRuns {
 
   get(id: string) {
     return this.runs.get(id);
+  }
+
+  /** Remove every run's layers from the map (the plugin is being switched off). */
+  clearLayers(): void {
+    for (const r of this.runs.values()) {
+      r.change?.clear(); r.objectsLayer?.clear();
+      r.change = r.objectsLayer = undefined;
+    }
   }
 
   list(): RunRecord[] {

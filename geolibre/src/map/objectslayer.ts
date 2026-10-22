@@ -47,6 +47,8 @@ export class ObjectsLayer {
   private visible = true;
   private colors: Record<string, string> = {};
   private current: number | null = null;
+  /** The run's Layers-panel group. */
+  groupId?: string;
 
   constructor(private app: GeoLibreAppAPI, runId: string, private label: string) {
     this.id = `ecd-${runId}-objects`;
@@ -131,7 +133,7 @@ export class ObjectsLayer {
     const ids = this.layerIds;
     this.app.registerExternalNativeLayer?.({
       id: this.id, name: `Objects ${this.label}`, type: "geojson", nativeLayerIds: ids, sourceIds: [this.id],
-      geojson: this.fc ?? undefined, paintMode: "plugin",
+      geojson: this.fc ?? undefined, paintMode: "plugin", groupId: this.groupId,
       paintBridge: {
         setOpacity: (o: number) => {
           this.map?.setPaintProperty(`${this.id}-fill`, "fill-opacity", o);
