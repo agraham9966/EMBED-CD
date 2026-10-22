@@ -67,7 +67,7 @@ function fitLogistic(x: Mat, y: Uint8Array, C = 1, maxIter = 500): { b: number; 
     }
     return [0.5 * ww + C * loss, g];
   };
-  let theta = new Float64Array(D);
+  let theta: Float64Array = new Float64Array(D);
   let [f, g] = obj(theta);
   for (let it = 0; it < maxIter; it++) {
     let gmax = 0;
@@ -90,7 +90,7 @@ function fitLogistic(x: Mat, y: Uint8Array, C = 1, maxIter = 500): { b: number; 
     const step = solveSpd(h, g, D);
     let gs = 0;
     for (let a = 0; a < D; a++) gs += g[a] * step[a];
-    let t = 1, next: Float64Array, fNew: number, gNew: Float64Array;
+    let t = 1, next: Float64Array = theta, fNew: number, gNew: Float64Array;
     for (;;) {
       next = theta.map((v, a) => v - t * step[a]);
       [fNew, gNew] = obj(next);
