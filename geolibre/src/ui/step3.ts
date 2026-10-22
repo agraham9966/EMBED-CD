@@ -1,7 +1,7 @@
 // Step 3: cut the change map into objects and give each its embedding ("Generate Embedded Vector
 // Set" in the QGIS plugin). Runs on the main thread in slices that yield, so the map and panel stay
 // usable, with a progress bar and Cancel.
-import { mosaic } from "../engine/job";
+import { mosaicAsync } from "../engine/job";
 import { attachVectors, polygonize } from "../engine/objects";
 import type { GeoLibreAppAPI } from "../host-api";
 import { ObjectsLayer } from "../map/objectslayer";
@@ -64,7 +64,7 @@ export function buildStep3(deps: Deps): { root: HTMLElement; runChanged(id: stri
     const tick = makeTicker(() => performance.now(), () => new Promise((r) => setTimeout(r, 0)), () => cancel);
     try {
       const { meta } = run;
-      const polys = await polygonize(meta.grid, mosaic(meta.grid, run.tiles).score, cutoff, min, tick);
+      const polys = await polygonize(meta.grid, (await mosaicAsync(meta.grid, run.tiles, tick)).score, cutoff, min, tick);
       if (!polys.length) {
         status.textContent = "Nothing above the current cutoff. Lower it and retry.";
         return;

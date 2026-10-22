@@ -108,3 +108,15 @@ test("every tile carries its 160 m cells, aligned with Python's cell grids", asy
     }
   }
 });
+
+test("the mosaic can be built a tile at a time, giving the page a turn between tiles", async () => {
+  const { mosaicAsync } = await import("../src/engine/job");
+  const ev = await collect(runJob({ bbox: J.bbox, yearA: 2019, yearB: 2024, resM: 10 },
+    { index: fakeIndex(), open: openFixture, tilePx: J.tile_px }));
+  const plan = ev[0] as any, tiles = ev.filter((e) => e.type === "tile").map((e: any) => e.result);
+  let ticks = 0;
+  const a = mosaic(plan.grid, tiles), b = await mosaicAsync(plan.grid, tiles, async () => { ticks++; });
+  expect(Array.from(b.score)).toEqual(Array.from(a.score));
+  expect(Array.from(b.cov)).toEqual(Array.from(a.cov));
+  expect(ticks).toBe(tiles.length);
+});

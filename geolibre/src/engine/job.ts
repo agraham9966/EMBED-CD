@@ -142,21 +142,43 @@ export async function* runJob(spec: JobSpec, deps: JobDeps, signal?: AbortSignal
  *  real score forces "data in both years", so an EMPTY neighbour from the other UTM zone can never
  *  paint "no data" over real data (embed_cd/vrt.py, _BANDS). */
 export function compose(win: Window, tiles: TileResult[]): { score: Float32Array; cov: Uint8Array } {
-  const [r0, r1, c0, c1] = win, h = r1 - r0, w = c1 - c0;
-  const score = new Float32Array(h * w).fill(NODATA), cov = new Uint8Array(h * w);
-  for (const t of tiles) {
-    const [tr0, tr1, tc0, tc1] = t.window, tw = tc1 - tc0;
-    const y0 = Math.max(r0, tr0), y1 = Math.min(r1, tr1), x0 = Math.max(c0, tc0), x1 = Math.min(c1, tc1);
-    for (let y = y0; y < y1; y++) {
-      for (let x = x0; x < x1; x++) {
-        const s = (y - tr0) * tw + (x - tc0), d = (y - r0) * w + (x - c0);
-        if (t.score[s] !== NODATA) score[d] = t.score[s];
-        if (t.cov[s] !== COV_NO_TILE) cov[d] = t.cov[s];
-      }
+  const out = blank(win);
+  for (const t of tiles) paint(win, t, out);
+  return finish(out);
+}
+
+function blank([r0, r1, c0, c1]: Window) {
+  const n = (r1 - r0) * (c1 - c0);
+  return { win: [r0, r1, c0, c1] as Window, score: new Float32Array(n).fill(NODATA), cov: new Uint8Array(n) };
+}
+
+function paint(win: Window, t: TileResult, out: { score: Float32Array; cov: Uint8Array }): void {
+  const [r0, r1, c0, c1] = win, w = c1 - c0;
+  const [tr0, tr1, tc0, tc1] = t.window, tw = tc1 - tc0;
+  const y0 = Math.max(r0, tr0), y1 = Math.min(r1, tr1), x0 = Math.max(c0, tc0), x1 = Math.min(c1, tc1);
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const s = (y - tr0) * tw + (x - tc0), d = (y - r0) * w + (x - c0);
+      if (t.score[s] !== NODATA) out.score[d] = t.score[s];
+      if (t.cov[s] !== COV_NO_TILE) out.cov[d] = t.cov[s];
     }
   }
-  for (let i = 0; i < score.length; i++) if (score[i] !== NODATA) cov[i] = 1;
-  return { score, cov };
+}
+
+function finish(out: { score: Float32Array; cov: Uint8Array }) {
+  for (let i = 0; i < out.score.length; i++) if (out.score[i] !== NODATA) out.cov[i] = 1;
+  return { score: out.score, cov: out.cov };
+}
+
+/** mosaic(), giving the page a turn after each tile, for big maps on the main thread. */
+export async function mosaicAsync(grid: Grid, tiles: TileResult[], tick: () => Promise<void> | void) {
+  const win: Window = [0, grid.height, 0, grid.width];
+  const out = blank(win);
+  for (const t of tiles) {
+    paint(win, t, out);
+    await tick();
+  }
+  return finish(out);
 }
 
 /** The whole grid composed, as the Python VRT reads back. */
