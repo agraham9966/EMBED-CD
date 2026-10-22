@@ -40,7 +40,7 @@ test("big maps reopen as display-sized tiles", async () => {
   const back = await readRunFile(await (await writeRunFile({ ...meta, grid: g }, [t])).arrayBuffer());
   expect(back.tiles.length).toBe(6);                 // 3 x 2 blocks of at most 1024 px
   expect(back.tiles.every((x) => x.window[1] - x.window[0] <= 1024 && x.window[3] - x.window[2] <= 1024)).toBe(true);
-});
+}, 30_000);                     // 2.75 million pixels through zip + GeoTIFF: slow when the suite runs in parallel
 
 test("the file name says what the run is", () => {
   expect(runFileName(meta, new Date(2026, 9, 21))).toBe("embed-cd_2019-2024_10m_2026-10-21.zip");
