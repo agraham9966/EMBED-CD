@@ -34,3 +34,9 @@
 .ecd-detail:empty { display: none; }
 .ecd-bar { font-family: Consolas, ui-monospace, monospace; line-height: 150%; white-space: pre; }
 .ecd-panel [hidden] { display: none !important; }   /* our display: flex rules must not override [hidden] */
+.ecd-accordion { display: flex; flex-direction: column; gap: 4px; }
+.ecd-acc-head { text-align: left; font-weight: 600; font-size: 13px; padding: 6px 8px; border: 1px solid hsl(var(--border)); border-radius: 4px; background: hsl(var(--muted, var(--background))); color: hsl(var(--foreground)); cursor: pointer; }
+.ecd-acc-head:hover:not(:disabled) { background: hsl(var(--accent, var(--border))); }
+.ecd-acc-head.ecd-acc-open { border-color: hsl(var(--primary, 210 70% 50%)); }
+.ecd-acc-head:disabled { opacity: 0.5; cursor: default; }
+.ecd-acc-body { padding: 6px 2px 8px; }

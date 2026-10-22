@@ -12,7 +12,6 @@ export type Step2 = {
 
 export function buildStep2(onCutoff: (t: number) => void): Step2 {
   const root = el("section", "ecd-step");
-  root.append(el("h3", "ecd-h", "2. Change map"));
   const slider = el("input", "ecd-slider") as HTMLInputElement;
   Object.assign(slider, { type: "range", min: "0", max: "1", step: "0.01", value: "0.15" });
   slider.title = "Cutoff: only change above this shows. Moving it is instant and changes nothing on disk.";

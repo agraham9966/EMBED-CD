@@ -35,7 +35,6 @@ type Deps = {
 
 export function buildStep3(deps: Deps): { root: HTMLElement; runChanged(id: string | null): void; dispose(): void } {
   const root = el("section", "ecd-step");
-  root.append(el("h3", "ecd-h", "3. Objects and classes"));
   const makeBtn = el("button", "ecd-btn ecd-primary", "Generate Embedded Vector Set") as HTMLButtonElement;
   makeBtn.title = "Cut the change map at the current cutoff and give every object the embedding of what it covers.";
   const minArea = el("input", "ecd-number") as HTMLInputElement;

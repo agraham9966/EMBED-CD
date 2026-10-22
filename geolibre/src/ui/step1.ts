@@ -43,13 +43,19 @@ type Deps = {
   startJob: (spec: any, onEvent: (e: ClientEvent) => void) => { cancel(): void; done: Promise<void> };
   step2: Step2;
   onRunChanged?: (id: string | null) => void;
+  /** Anything a step header shows changed (area, years, Detail, a result appearing). */
+  onChange?: () => void;
+  /** A new area was drawn: the steps may move forward again once it has a result. */
+  onAreaDrawn?: () => void;
 };
 
-export function buildStep1(deps: Deps): { root: HTMLElement; layer(): ChangeLayer | null; current(): string | null; dispose(): void } {
+export function buildStep1(deps: Deps): {
+  root: HTMLElement; layer(): ChangeLayer | null; current(): string | null; dispose(): void;
+  summary(): string | null; hasResult(): boolean;
+} {
   const { app, runs, step2 } = deps;
   const map = () => (app as any).getMap?.();
   const root = el("section", "ecd-step");
-  root.append(el("h3", "ecd-h", "1. Area"));
 
   const picker = select([["", "New area"]]);
   picker.title = "This session's runs. They are discarded when GeoLibre closes unless you save them.";
@@ -80,6 +86,7 @@ export function buildStep1(deps: Deps): { root: HTMLElement; layer(): ChangeLaye
   const res = () => DETAIL.find(([l]) => l === detail.value)![1];
 
   async function refreshEstimate() {
+    deps.onChange?.();
     warn.textContent = "";
     runBtn.disabled = !bbox || !!job;
     if (!bbox) return;
@@ -133,6 +140,7 @@ export function buildStep1(deps: Deps): { root: HTMLElement; layer(): ChangeLaye
     cancelDraw = drawBox(m, (b) => {
       cancelDraw = null;
       bbox = b;
+      deps.onAreaDrawn?.();
       picker.value = "";
       status.textContent = "";
       void refreshEstimate();
@@ -227,6 +235,7 @@ export function buildStep1(deps: Deps): { root: HTMLElement; layer(): ChangeLaye
         layer?.setCutoff(step2.cutoff());
         meta.tiles++;
         runs.addTile(id, e.result);
+        deps.onChange?.();
       } else {
         meta.complete = !e.cancelled;
         meta.failed = e.failed;
@@ -255,6 +264,8 @@ export function buildStep1(deps: Deps): { root: HTMLElement; layer(): ChangeLaye
     root,
     layer: () => layer,
     current: () => current,
+    summary: () => (bbox ? `${yearA.value}→${yearB.value}, ${detail.value}` : null),
+    hasResult: () => !!layer && layer.count > 0,
     dispose() {
       map()?.off?.("style.load", reShow);
       cancelDraw?.();
