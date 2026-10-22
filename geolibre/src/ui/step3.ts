@@ -5,6 +5,7 @@ import { mosaicAsync } from "../engine/job";
 import { attachVectors, polygonize } from "../engine/objects";
 import type { GeoLibreAppAPI } from "../host-api";
 import { ObjectsLayer } from "../map/objectslayer";
+import { buildClassify } from "./classify";
 import { cellsOf } from "../runfile";
 import type { SessionRuns } from "../runs";
 import { el, row } from "./dom";
@@ -44,7 +45,8 @@ export function buildStep3(deps: Deps): { root: HTMLElement; runChanged(id: stri
   const bar = el("progress", "ecd-progress") as HTMLProgressElement;
   bar.hidden = true;
   const status = el("p", "ecd-status", "");
-  root.append(row(makeBtn), row(el("span", "", "min size"), minArea, el("span", "", "ha")), count, bar, status);
+  const classify = buildClassify(deps.app, (s) => { status.textContent = s; });
+  root.append(row(makeBtn), row(el("span", "", "min size"), minArea, el("span", "", "ha")), count, bar, classify.root, status);
 
   let layer: ObjectsLayer | null = null;
   let cancel = false, busy = false;
@@ -82,7 +84,11 @@ export function buildStep3(deps: Deps): { root: HTMLElement; runChanged(id: stri
       deps.runs.setObjects(meta.id, { polys, vectors, cutoff, minArea: min });
       show(meta.id);
       deps.onObjectsMade?.();
-      status.textContent = "";
+      count.textContent = `${countText(polys.length, cutoff)} Add a class, turn on 'Label by clicking the map', and click a few.`;
+      const carried = Object.values(classify.labeller.carriedCounts()).reduce((a, b) => a + b, 0);
+      status.textContent = carried && classify.labeller.classes.length
+        ? `Classified using ${carried} examples carried over from earlier runs, nothing labelled here yet. Check a few and label any it got wrong.  (${classify.status()})`
+        : classify.status();
     } catch (e) {
       status.textContent = e instanceof Cancelled ? "Cancelled." : `Could not make objects: ${(e as Error)?.message ?? e}`;
     } finally {
@@ -96,17 +102,19 @@ export function buildStep3(deps: Deps): { root: HTMLElement; runChanged(id: stri
   function show(id: string | null) {
     layer?.clear();
     layer = null;
+    classify.clear();
     count.textContent = "";
     const r = id ? deps.runs.get(id) : null;
     if (!r?.objects) return;
     layer = new ObjectsLayer(deps.app, r.meta.id, `${r.meta.yearA}-${r.meta.yearB}`);
     layer.set(r.objects.polys, r.meta.grid);
     count.textContent = countText(r.objects.polys.length, r.objects.cutoff);
+    classify.setObjects(r.objects.vectors, r.objects.polys.length, layer);
   }
 
   return {
     root,
     runChanged: (id) => { cancel = true; status.textContent = ""; show(id); },
-    dispose: () => { cancel = true; layer?.clear(); },
+    dispose: () => { cancel = true; classify.clear(); layer?.clear(); },
   };
 }

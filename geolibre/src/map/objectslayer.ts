@@ -62,6 +62,11 @@ export class ObjectsLayer {
     return [`${this.id}-fill`, `${this.id}-line`, `${this.id}-labelled`, `${this.id}-current`];
   }
 
+  /** Object `row` as GeoJSON (lon/lat), or null. */
+  feature(row: number): FeatureCollection["features"][number] | null {
+    return this.fc?.features[row] ?? null;
+  }
+
   /** The id MapLibre answers a click with, for the fill layer. */
   get fillLayerId(): string {
     return `${this.id}-fill`;

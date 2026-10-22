@@ -18,3 +18,19 @@
 .ecd-slider { flex: 1; min-width: 120px; }
 .ecd-value { font-variant-numeric: tabular-nums; min-width: 2.5em; }
 .ecd-number { width: 5.5em; background: hsl(var(--background)); color: hsl(var(--foreground)); border: 1px solid hsl(var(--border)); border-radius: 4px; padding: 3px 4px; }
+.ecd-classify { display: flex; flex-direction: column; gap: 6px; }
+.ecd-classes { border: 1px solid hsl(var(--border)); border-radius: 4px; max-height: 150px; overflow: auto; }
+.ecd-class { display: flex; align-items: center; gap: 6px; padding: 3px 6px; cursor: pointer; }
+.ecd-class:hover { background: hsl(var(--accent, var(--border))); }
+.ecd-class.ecd-selected { background: hsl(var(--accent, var(--border))); font-weight: 600; }
+.ecd-unknown { color: hsl(var(--muted-foreground)); cursor: default; }
+.ecd-swatch { width: 18px; height: 18px; padding: 0; border: 1px solid hsl(var(--border)); border-radius: 3px; background: none; cursor: pointer; }
+.ecd-small { padding: 3px 6px; font-size: 12px; }
+.ecd-toggle.ecd-on, .ecd-small.ecd-on { background: hsl(var(--primary, 210 70% 50%)); color: hsl(var(--primary-foreground, 0 0% 100%)); }
+.ecd-options, .ecd-nameform:not(:empty) { border: 1px solid hsl(var(--border)); border-radius: 4px; padding: 6px 8px; display: flex; flex-direction: column; gap: 6px; }
+.ecd-check { display: flex; align-items: center; gap: 4px; }
+.ecd-text { background: hsl(var(--background)); color: hsl(var(--foreground)); border: 1px solid hsl(var(--border)); border-radius: 4px; padding: 3px 4px; flex: 1; }
+.ecd-detail { font-size: 11px; }
+.ecd-detail:empty { display: none; }
+.ecd-bar { font-family: Consolas, ui-monospace, monospace; line-height: 150%; white-space: pre; }
+.ecd-panel [hidden] { display: none !important; }   /* our display: flex rules must not override [hidden] */

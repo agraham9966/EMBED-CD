@@ -1,7 +1,7 @@
 {
   "id": "embed-cd",
   "name": "EMBED-CD",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "entry": "dist/index.js",
   "style": "dist/style.css",
   "description": "Change maps from satellite embeddings: draw an area, pick two years, then label a few changes and a live classifier labels the rest."

@@ -34,7 +34,8 @@ test("switching runs swaps the objects shown for that run's own (or none)", asyn
   const { buildStep3 } = await import("../src/ui/step3");
   const added: string[] = [], removed: string[] = [];
   const map: any = { style: { _loaded: true }, on() {}, off() {}, getSource: (id: string) => (added.includes(id) && !removed.includes(id) ? { setData() {} } : undefined),
-    addSource: (id: string) => added.push(id), addLayer() {}, getLayer: () => true, removeLayer() {}, removeSource: (id: string) => removed.push(id) };
+    addSource: (id: string) => added.push(id), addLayer() {}, getLayer: () => true, removeLayer() {}, removeSource: (id: string) => removed.push(id),
+    setPaintProperty() {}, setFilter() {} };
   const app: any = { getMap: () => map, registerExternalNativeLayer() {}, unregisterExternalNativeLayer() {} };
   const runs = new SessionRuns();
   const grid = { crs: "EPSG:32610", x0: 500000, y0: 5500000, res: 10, width: 1, height: 1 };
