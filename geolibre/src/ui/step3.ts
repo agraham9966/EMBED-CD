@@ -1,11 +1,11 @@
 // Step 3: cut the change map into objects and give each its embedding ("Generate Embedded Vector
 // Set" in the QGIS plugin). Runs on the main thread in slices that yield, so the map and panel stay
 // usable, with a progress bar and Cancel.
-import type { CellGrid } from "../engine/cells";
 import { mosaic } from "../engine/job";
 import { attachVectors, polygonize } from "../engine/objects";
 import type { GeoLibreAppAPI } from "../host-api";
 import { ObjectsLayer } from "../map/objectslayer";
+import { cellsOf } from "../runfile";
 import type { SessionRuns } from "../runs";
 import { el, row } from "./dom";
 
@@ -49,7 +49,7 @@ export function buildStep3(deps: Deps): { root: HTMLElement; runChanged(id: stri
     if (busy) { cancel = true; return; }
     const id = deps.currentRun(), run = id ? deps.runs.get(id) : null;
     if (!run || !run.tiles.length) { status.textContent = "Make a change map first."; return; }
-    const cells = run.tiles.map((t) => t.cells).filter(Boolean) as CellGrid[];
+    const cells = cellsOf(run.tiles, run.cells);
     if (!cells.length) {
       status.textContent = "No embeddings were captured for this run. Make the change map again with this version.";
       return;

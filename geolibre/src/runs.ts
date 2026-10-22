@@ -4,6 +4,7 @@ import type { Bbox } from "./engine/crs";
 import type { Grid } from "./engine/grid";
 import type { TileResult } from "./engine/job";
 import type { ObjectPoly } from "./engine/objects";
+import type { CellGrid } from "./engine/cells";
 
 export type RunObjects = { polys: ObjectPoly[]; vectors: Float32Array; cutoff: number; minArea: number };
 
@@ -20,7 +21,7 @@ export function runName(yearA: number, yearB: number, resM: number, when: Date):
 }
 
 export class SessionRuns {
-  private runs = new Map<string, { meta: RunRecord; tiles: TileResult[]; objects?: RunObjects }>();
+  private runs = new Map<string, { meta: RunRecord; tiles: TileResult[]; objects?: RunObjects; cells?: CellGrid[] }>();
 
   start(meta: RunRecord): void {
     this.runs.set(meta.id, { meta, tiles: [] });
@@ -28,6 +29,12 @@ export class SessionRuns {
 
   addTile(id: string, t: TileResult): void {
     this.runs.get(id)?.tiles.push(t);
+  }
+
+  /** Cells read from a run file (a reopened run's tiles do not carry their own). */
+  setCells(id: string, cells: CellGrid[]): void {
+    const r = this.runs.get(id);
+    if (r) r.cells = cells;
   }
 
   setObjects(id: string, objects: RunObjects): void {

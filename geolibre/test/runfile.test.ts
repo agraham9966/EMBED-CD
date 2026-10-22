@@ -45,3 +45,17 @@ test("big maps reopen as display-sized tiles", async () => {
 test("the file name says what the run is", () => {
   expect(runFileName(meta, new Date(2026, 9, 21))).toBe("embed-cd_2019-2024_10m_2026-10-21.zip");
 });
+
+test("cells round-trip through the run file, and files without them still open", async () => {
+  const cells = { crs: "EPSG:32610", x0: 500000, y0: 5500000, res: 160, width: 2, height: 1,
+    ma: Float32Array.from({ length: 128 }, (_, i) => i / 100), mb: Float32Array.from({ length: 128 }, (_, i) => -i / 100),
+    n: Float32Array.from([256, 12]), smean: Float32Array.from([0.1, 0.2]), smax: Float32Array.from([0.5, 0.6]) };
+  const withCells = tiles.map((t, i) => (i === 0 ? { ...t, cells } : t));
+  const back = await readRunFile(await (await writeRunFile(meta, withCells)).arrayBuffer());
+  const got = back.cells;
+  expect(got.length).toBe(1);
+  expect({ ...got[0], ma: Array.from(got[0].ma), mb: Array.from(got[0].mb), n: Array.from(got[0].n), smean: Array.from(got[0].smean), smax: Array.from(got[0].smax) })
+    .toEqual({ ...cells, ma: Array.from(cells.ma), mb: Array.from(cells.mb), n: Array.from(cells.n), smean: Array.from(cells.smean), smax: Array.from(cells.smax) });
+  const plain = await readRunFile(await (await writeRunFile(meta, tiles)).arrayBuffer());
+  expect(plain.cells).toEqual([]);
+});

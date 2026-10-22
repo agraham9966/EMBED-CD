@@ -3,6 +3,7 @@
 // QGIS plugin's "Save to" folder.
 import { writeArrayBuffer } from "geotiff";
 import { fromArrayBuffer } from "geotiff";
+import type { CellGrid } from "./engine/cells";
 import type { Grid } from "./engine/grid";
 import { mosaic, type TileResult } from "./engine/job";
 import { readZip } from "./engine/npz";
@@ -27,16 +28,54 @@ function geotiff(values: Float32Array | Uint8Array, g: Grid, nodata?: number): U
   return new Uint8Array(writeArrayBuffer(values, meta as any));
 }
 
-export async function writeRunFile(meta: RunRecord, tiles: TileResult[]): Promise<Blob> {
+// cells.bin: a little-endian uint32 header length, the JSON header (padded to 4 bytes), then for
+// each grid its ma, mb, n, smean and smax as float32.
+const CELL_FIELDS = ["ma", "mb", "n", "smean", "smax"] as const;
+
+function packCells(grids: CellGrid[]): Uint8Array {
+  const head = new TextEncoder().encode(JSON.stringify(grids.map(({ crs, x0, y0, res, width, height }) => ({ crs, x0, y0, res, width, height }))));
+  const headLen = Math.ceil(head.length / 4) * 4;
+  const body = grids.reduce((n, g) => n + CELL_FIELDS.reduce((m, f) => m + g[f].byteLength, 0), 0);
+  const out = new Uint8Array(4 + headLen + body);
+  new DataView(out.buffer).setUint32(0, headLen, true);
+  out.fill(32, 4, 4 + headLen);
+  out.set(head, 4);
+  let at = 4 + headLen;
+  for (const g of grids) for (const f of CELL_FIELDS) {
+    out.set(new Uint8Array(g[f].buffer, g[f].byteOffset, g[f].byteLength), at);
+    at += g[f].byteLength;
+  }
+  return out;
+}
+
+function unpackCells(b: Uint8Array): CellGrid[] {
+  const buf = b.slice().buffer;
+  const headLen = new DataView(buf).getUint32(0, true);
+  const head = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, headLen)));
+  let at = 4 + headLen;
+  return head.map((h: Omit<CellGrid, (typeof CELL_FIELDS)[number]>) => {
+    const n = h.width * h.height, sizes = { ma: n * 64, mb: n * 64, n, smean: n, smax: n };
+    const g: any = { ...h };
+    for (const f of CELL_FIELDS) { g[f] = new Float32Array(buf, at, sizes[f]); at += sizes[f] * 4; }
+    return g as CellGrid;
+  });
+}
+
+/** The embedding cells behind a run: its tiles' own, or (for a reopened run) those from its file. */
+export const cellsOf = (tiles: TileResult[], extra?: CellGrid[]): CellGrid[] =>
+  extra?.length ? extra : (tiles.map((t) => t.cells).filter(Boolean) as CellGrid[]);
+
+export async function writeRunFile(meta: RunRecord, tiles: TileResult[], cells = cellsOf(tiles)): Promise<Blob> {
   const m = mosaic(meta.grid, tiles);
   return writeZip({
     "run.json": new TextEncoder().encode(JSON.stringify({ format: "embed-cd-run", version: 1, meta }, null, 1)),
     "change.tif": geotiff(m.score, meta.grid, NODATA),
     "coverage.tif": geotiff(m.cov, meta.grid),
+    ...(cells.length ? { "cells.bin": packCells(cells) } : {}),
   });
 }
 
-export async function readRunFile(ab: ArrayBuffer): Promise<{ meta: RunRecord; tiles: TileResult[] }> {
+export async function readRunFile(ab: ArrayBuffer): Promise<{ meta: RunRecord; tiles: TileResult[]; cells: CellGrid[] }> {
   const files = await readZip(ab);
   const doc = files["run.json"] && JSON.parse(new TextDecoder().decode(files["run.json"]));
   if (doc?.format !== "embed-cd-run") throw new Error("This is not an EMBED-CD run file.");
@@ -58,7 +97,7 @@ export async function readRunFile(ab: ArrayBuffer): Promise<{ meta: RunRecord; t
       tiles.push({ window: [r0, r1, c0, c1], score: s, cov: c, hist: histogram(s) });
     }
   }
-  return { meta, tiles };
+  return { meta, tiles, cells: files["cells.bin"] ? unpackCells(files["cells.bin"]) : [] };
 }
 
 // ---- a minimal zip writer (deflate through the browser's CompressionStream) ------------------

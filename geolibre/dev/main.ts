@@ -2,6 +2,11 @@
 // MapLibre comes from its CDN in index.html: its own map workers do not start under the dev server.
 const maplibregl = (window as any).maplibregl;
 import { plugin } from "../src/index";
+import { sessionRuns } from "../src/runs";
+import * as runfile from "../src/runfile";
+import * as job from "../src/engine/job";
+import * as objects from "../src/engine/objects";
+(window as any).ecd = { sessionRuns, runfile, job, objects };   // for checks from the console
 
 const map = new maplibregl.Map({
   container: "map",

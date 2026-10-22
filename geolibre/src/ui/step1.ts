@@ -11,7 +11,7 @@ import type { ClientEvent } from "../jobclient";
 import { ChangeLayer } from "../map/changelayer";
 import { drawBox, showArea } from "../map/drawbox";
 import { saveBinary } from "../export";
-import { readRunFile, runFileName, writeRunFile } from "../runfile";
+import { cellsOf, readRunFile, runFileName, writeRunFile } from "../runfile";
 import { runName, type RunRecord, type SessionRuns } from "../runs";
 import { el, row, select } from "./dom";
 import type { Step2 } from "./step2";
@@ -154,7 +154,7 @@ export function buildStep1(deps: Deps): { root: HTMLElement; layer(): ChangeLaye
     status.textContent = "Preparing the file...";
     try {
       const file = runFileName(r.meta);
-      const res = await saveBinary(file, await writeRunFile(r.meta, r.tiles), { "application/zip": [".zip"] });
+      const res = await saveBinary(file, await writeRunFile(r.meta, r.tiles, cellsOf(r.tiles, r.cells)), { "application/zip": [".zip"] });
       status.textContent = { picker: `Saved ${file}.`, download: `Sent as a download: ${file}.`, host: `Saved ${file}.`, cancelled: "Not saved." }[res.method];
     } catch (e) {
       status.textContent = `Could not save the run: ${(e as Error)?.message ?? e}`;
@@ -169,10 +169,11 @@ export function buildStep1(deps: Deps): { root: HTMLElement; layer(): ChangeLaye
       const f = input.files?.[0];
       if (!f) return;
       try {
-        const { meta, tiles } = await readRunFile(await f.arrayBuffer());
+        const { meta, tiles, cells } = await readRunFile(await f.arrayBuffer());
         if (!runs.get(meta.id)) {
           runs.start(meta);
           for (const t of tiles) runs.addTile(meta.id, t);
+          runs.setCells(meta.id, cells);
         }
         show(meta, runs.get(meta.id)!.tiles);
         refreshPicker(meta.id);
