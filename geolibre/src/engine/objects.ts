@@ -141,3 +141,95 @@ export async function polygonize(grid: Grid, score: Float32Array, cutoff: number
   }
   return out;
 }
+
+// ---- vectors -----------------------------------------------------------------------------------
+import type { CellGrid } from "./cells";
+import { transformer } from "./crs";
+
+/** Cells of `g` a polygon touches (GDAL ALL_TOUCHED): every cell its outline passes through, plus
+ *  every cell whose centre is inside it. Rings are in the cell grid's CRS. */
+function touchedCells(g: CellGrid, rings: [number, number][][], out: (cell: number) => void): void {
+  const W = g.width, H = g.height;
+  const px = (X: number) => (X - g.x0) / g.res, py = (Y: number) => (g.y0 - Y) / g.res;
+  const pr = rings.map((r) => r.map(([X, Y]) => [px(X), py(Y)] as [number, number]));
+  const mark = (c: number, r: number) => { if (c >= 0 && r >= 0 && c < W && r < H) out(r * W + c); };
+  // Outline: every cell whose INTERIOR a segment passes through. A segment lying exactly on a cell
+  // edge touches neither neighbour (measured against GDAL: counting either side over-marks).
+  for (const ring of pr) {
+    for (let k = 0; k < ring.length - 1; k++) {
+      const [x0, y0] = ring[k], [x1, y1] = ring[k + 1];
+      const steps = Math.ceil(Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0)) * 8) + 1;
+      let last = -1;
+      for (let s = 0; s < steps; s++) {
+        const t = (s + 0.5) / steps, x = x0 + (x1 - x0) * t, y = y0 + (y1 - y0) * t;
+        if (Number.isInteger(x) || Number.isInteger(y)) continue;        // on a cell edge
+        const c = Math.floor(x), r = Math.floor(y), id = r * W + c;
+        if (id !== last) { mark(c, r); last = id; }
+      }
+    }
+  }
+  // Inside: cell centres, even-odd over all rings.
+  let ymin = Infinity, ymax = -Infinity;
+  for (const ring of pr) for (const [, y] of ring) { ymin = Math.min(ymin, y); ymax = Math.max(ymax, y); }
+  for (let r = Math.max(0, Math.floor(ymin)); r < Math.min(H, Math.ceil(ymax)); r++) {
+    const cy = r + 0.5, xs: number[] = [];
+    for (const ring of pr) {
+      for (let k = 0; k < ring.length - 1; k++) {
+        const [x0, y0] = ring[k], [x1, y1] = ring[k + 1];
+        if ((y0 <= cy) !== (y1 <= cy)) xs.push(x0 + ((cy - y0) / (y1 - y0)) * (x1 - x0));
+      }
+    }
+    xs.sort((a, b) => a - b);
+    for (let k = 0; k + 1 < xs.length; k += 2) {
+      for (let c = Math.max(0, Math.ceil(xs[k] - 0.5)); c < Math.min(W, Math.ceil(xs[k + 1] - 0.5)); c++) mark(c, r);
+    }
+  }
+}
+
+/** One burn per cell grid, in object order (1-based ids, 0 = none): where two objects touch the
+ *  same cell, the later one wins, as with GDAL's RasterizeLayer. */
+export function burnObjects(g: { x0: number; y0: number; res: number; width: number; height: number; crs: string },
+  polys: ObjectPoly[], polyCrs: string): Int32Array {
+  const f = g.crs === polyCrs ? null : transformer(polyCrs, g.crs);
+  const burned = new Int32Array(g.width * g.height);
+  polys.forEach((p, i) => {
+    const rings = f ? p.rings.map((r) => r.map(([x, y]) => f(x, y))) : p.rings;
+    touchedCells(g as CellGrid, rings, (c) => { burned[c] = i + 1; });
+  });
+  return burned;
+}
+
+/** [N*128]: each object's count-weighted mean embedding, year A then year B (objects.attach_vectors).
+ *  `poolCutoff` skips cells whose own mean change is below it; an object it empties keeps its
+ *  unfiltered vector. `progress` returning false cancels. */
+export async function attachVectors(
+  polys: ObjectPoly[], polyCrs: string, grids: CellGrid[], poolCutoff: number | null = null,
+  progress?: (done: number, total: number) => boolean | Promise<boolean>,
+): Promise<Float32Array> {
+  const N = polys.length, D = 128;
+  const acc = new Float64Array(N * D), accAll = new Float64Array(N * D);
+  const weight = new Float64Array(N), weightAll = new Float64Array(N);
+  for (let gi = 0; gi < grids.length; gi++) {
+    const g = grids[gi];
+    if (progress && (await progress(gi * N, grids.length * N)) === false) return new Float32Array(N * D);
+    const burned = burnObjects(g, polys, polyCrs);
+    for (let c = 0; c < burned.length; c++) {
+      const i = burned[c] - 1, w = g.n[c];
+      if (i < 0 || !(w > 0)) continue;
+      const use = poolCutoff === null || g.smean[c] >= poolCutoff;
+      for (let d = 0; d < 64; d++) {
+        const va = g.ma[c * 64 + d] * w, vb = g.mb[c * 64 + d] * w;
+        accAll[i * D + d] += va; accAll[i * D + 64 + d] += vb;
+        if (use) { acc[i * D + d] += va; acc[i * D + 64 + d] += vb; }
+      }
+      weightAll[i] += w;
+      if (use) weight[i] += w;
+    }
+  }
+  const out = new Float32Array(N * D);
+  for (let i = 0; i < N; i++) {
+    const [src, wt] = weight[i] > 0 ? [acc, weight[i]] : weightAll[i] > 0 ? [accAll, weightAll[i]] : [null, 0];
+    if (src) for (let d = 0; d < D; d++) out[i * D + d] = src[i * D + d] / wt;
+  }
+  return out;
+}

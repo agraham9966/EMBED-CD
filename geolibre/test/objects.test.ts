@@ -51,3 +51,44 @@ test("objects come in GDAL's order: by bottom row, then by first pixel", async (
   expect(got.map((o) => [o.nPx, Math.round(o.chgMean * 1e6)])).toEqual(
     s.polys.map((p: any) => [p.n_px, Math.round(p.chg_mean * 1e6)]));
 });
+
+import { attachVectors } from "../src/engine/objects";
+import { runJob } from "../src/engine/job";
+import { TileIndex } from "../src/engine/tileindex";
+import { fixtureRow, openFixture } from "./fixtures";
+
+async function jobCells(res: number) {
+  const rows = [fixtureRow("cog_a.tif", 2019), fixtureRow("cog_b.tif", 2024)];
+  const index = { covering: (_b: unknown, y: number) => rows.filter((r) => r.year === y),
+    rowFor: (_t: unknown, y: number) => rows.find((r) => r.year === y) ?? null } as unknown as TileIndex;
+  const cells = [];
+  for await (const e of runJob({ bbox: J.bbox, yearA: 2019, yearB: 2024, resM: res }, { index, open: openFixture, tilePx: J.tile_px })) {
+    if (e.type === "tile" && e.result.cells) cells.push(e.result.cells);
+  }
+  return cells;
+}
+
+function sameVectors(got: Float32Array, file: string) {
+  const want = f32(file);
+  expect(got.length).toBe(want.length);
+  let worst = 0;
+  for (let i = 0; i < want.length; i++) worst = Math.max(worst, Math.abs(got[i] - want[i]));
+  expect(worst).toBeLessThan(1e-5);
+}
+
+test("object vectors match Python's attach_vectors at 10 m and 50 m", async () => {
+  for (const res of ["10", "50"]) {
+    const o = J.runs[res].objects;
+    const polys = await polygonize(gridOf(J.runs[res].grid), f32(J.runs[res].score.file), o.cutoff, o.min_area);
+    sameVectors(await attachVectors(polys, "EPSG:32610", await jobCells(Number(res))), o.vectors.file);
+  }
+});
+
+test("vectors for 37 awkward objects, including single pixels and neighbours sharing cells, match", async () => {
+  const s = J.runs["10"].synthetic;
+  const polys = await polygonize(gridOf(J.runs["10"].grid), f32(s.score.file), s.cutoff, s.min_area);
+  const v = await attachVectors(polys, "EPSG:32610", await jobCells(10));
+  sameVectors(v, s.vectors.file);
+  const single = polys.findIndex((p) => p.nPx === 1);
+  expect(v.subarray(single * 128, single * 128 + 128).some((x) => x !== 0)).toBe(true);
+});
