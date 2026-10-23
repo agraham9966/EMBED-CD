@@ -19,8 +19,14 @@ user needs to know before they put this in a deliverable. Commercial licences: c
 
 # What EOX actually publishes. AlphaEarth runs 2017-2025; there is no 2017 mosaic.
 EOX_YEARS = (2016, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025)
-_TEMPLATE = ("https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-{year}_3857"
+_TEMPLATE = ("https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless{year}_3857"
              "/default/g/{{z}}/{{y}}/{{x}}.jpg")
+
+
+def _layer_year(year):
+    """EOX names the 2016 mosaic plain "s2cloudless"; "s2cloudless-2016" is a 404, which left the
+    17 button and a 2017 lens year blank."""
+    return "" if int(year) == 2016 else f"-{int(year)}"
 ZMAX = 18
 
 ATTRIBUTION = ("Sentinel-2 cloudless — https://s2maps.eu by EOX IT Services GmbH "
@@ -50,7 +56,7 @@ def xyz_uri(year, zmax=ZMAX):
     "max retry" while the identical URL added by hand worked. The URL carries no "&" or "="
     of its own, so it needs no other escaping to sit safely in the datasource string.
     """
-    url = _TEMPLATE.format(year=int(year))
+    url = _TEMPLATE.format(year=_layer_year(year))
     url = url.replace("{", "%7B").replace("}", "%7D")
     return f"type=xyz&url={url}&zmax={zmax}&zmin=0"
 

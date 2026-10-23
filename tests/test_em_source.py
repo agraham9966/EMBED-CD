@@ -230,6 +230,8 @@ def test_basemap_uri_keeps_qgis_placeholders_and_wmts_row_order():
     assert raw.endswith("/%7Bz%7D/%7By%7D/%7Bx%7D.jpg"), f"wrong placeholder order/encoding: {raw[-40:]}"
     assert "s2cloudless-2019_3857" in raw, "the year has to reach the URL"
     assert "{year}" not in raw and "%7Byear%7D" not in raw, "the year must be substituted"
+    # EOX's 2016 layer has no year in its name; the dated form returns 404 for every tile.
+    assert "/s2cloudless_3857/" in BM.xyz_uri(2016)
 
 
 def test_basemap_snaps_to_a_year_eox_actually_has():
