@@ -106,3 +106,22 @@ test("progress and Cancel live outside step 1, so they stay visible when the ste
   expect(cancel.hidden).toBe(true);
   expect(row.textContent).toContain("Done.");
 });
+
+test("a second area: a name typed before Draw area is the new area's, the last run keeps its own, and step 1 has no result yet", async () => {
+  const h = harness();
+  document.body.append(h.s1.root);
+  await makeRun(h, [-125.34, 49.63, -125.24, 49.71]);
+  expect(h.s1.hasResult()).toBe(true);
+  const name = h.s1.root.querySelector("input.ecd-text") as HTMLInputElement;
+  const draw = [...h.s1.root.querySelectorAll("button")].find((b) => b.textContent === "Draw area")!;
+  name.focus();
+  name.value = "Second";
+  draw.dispatchEvent(new Event("pointerdown"));      // comes before the field's change event
+  name.dispatchEvent(new Event("change"));
+  expect(h.runs.list()[0].userName).toBe("");        // the first run is not renamed
+  h.s1.setArea([-125.0, 49.0, -124.9, 49.1]);
+  expect(name.value).toBe("Second");
+  expect(h.s1.current()).toBe(null);
+  expect(h.s1.hasResult()).toBe(false);              // so the panel does not fold step 1 away
+  h.s1.root.remove();
+});

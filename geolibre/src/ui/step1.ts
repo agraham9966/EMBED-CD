@@ -62,6 +62,7 @@ export function buildStep1(deps: Deps): {
   const root = el("section", "ecd-step");
 
   const picker = select([["", "New area"]]);
+  picker.classList.add("ecd-grow");                 // one line whatever the run is called: no jumping rows
   const nameIn = el("input", "ecd-text") as HTMLInputElement;
   nameIn.title = "What to call this area. Its layers go in a group of this name, so several areas can sit in the map at once. "
     + "Leave it empty and the area's location is used instead.\n\nThis always names the area currently drawn. "
@@ -98,6 +99,7 @@ export function buildStep1(deps: Deps): {
   let layer: ChangeLayer | null = null;
   let job: { cancel(): void; done: Promise<void> } | null = null;
   let cancelDraw: (() => void) | null = null;
+  let nameForNext = false;                          // the Name field's text is for the next box
   let index: Promise<TileIndex> | null = null;
   const res = () => DETAIL.find(([l]) => l === detail.value)![1];
 
@@ -129,6 +131,7 @@ export function buildStep1(deps: Deps): {
 
   function show(meta: RunRecord, tiles: TileResult[]) {
     bbox = meta.bbox;
+    nameForNext = false;
     nameIn.value = meta.userName ?? "";
     nameIn.placeholder = autoName(meta.bbox);
     current = meta.id;
@@ -146,9 +149,21 @@ export function buildStep1(deps: Deps): {
     void refreshEstimate();
   }
 
-  /** A new area: a typed name belongs to it, so a DIFFERENT box clears the field (QGIS _on_area). */
+  /** A new area: a typed name belongs to it, so a DIFFERENT box clears the field (QGIS _on_area),
+   *  unless the name was typed for this very box (Draw area pressed straight from the Name field). */
   function newArea(b: Bbox) {
-    if (!bbox || b.some((v, i) => v !== bbox![i])) nameIn.value = "";
+    const moved = !bbox || b.some((v, i) => v !== bbox![i]);
+    if (moved && !nameForNext) nameIn.value = "";
+    nameForNext = false;
+    // A different box is a run still to make: the last run's result no longer belongs to step 1,
+    // so steps 2 and 3 wait for this one (its layers stay on the map).
+    const r = current ? runs.get(current) : null;
+    if (r && r.meta.bbox.some((v, i) => v !== b[i])) {
+      current = null;
+      layer = null;
+      deps.onRunChanged?.(null);
+      saveBtn.disabled = true;
+    }
     bbox = b;
     nameIn.placeholder = autoName(b);
     showArea(map(), b);
@@ -160,6 +175,7 @@ export function buildStep1(deps: Deps): {
    *  its label, and its group, by moving its layers into a group of the new name. */
   nameIn.oninput = () => deps.onChange?.();          // the step header follows as you type
   nameIn.onchange = () => {
+    if (nameForNext) return;                         // typed for the area about to be drawn
     const r = current ? runs.get(current) : null;
     if (!r || job || !bbox || r.meta.bbox.some((v, i) => v !== bbox![i])) return;
     const meta = r.meta;
@@ -196,6 +212,9 @@ export function buildStep1(deps: Deps): {
     return r.change;
   }
 
+  // Type a name, then press Draw area: the name is for the new area, not a rename of the last
+  // run. pointerdown comes before the Name field's change event, so it can say so in time.
+  drawBtn.onpointerdown = () => { nameForNext = document.activeElement === nameIn; };
   drawBtn.onclick = () => {
     const m = map();
     if (!m) return;

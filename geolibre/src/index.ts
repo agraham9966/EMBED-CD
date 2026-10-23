@@ -9,7 +9,7 @@ let disposePanel: (() => void) | null = null;
 export const plugin: GeoLibrePlugin = {
   id: "embed-cd",
   name: "EMBED-CD",
-  version: "0.4.3",
+  version: "0.4.4",
   engines: ["maplibre"],
   activate(app) {
     void wipeLegacyStorage();             // once-only cleanup of what builds 0.1-0.2 stored

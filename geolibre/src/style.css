@@ -3,6 +3,7 @@
 .ecd-step { display: flex; flex-direction: column; gap: 6px; }
 .ecd-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .ecd-row > span { color: hsl(var(--muted-foreground)); }
+.ecd-grow { flex: 1; min-width: 0; }
 .ecd-muted { color: hsl(var(--muted-foreground)); margin: 0; line-height: 1.4; }
 .ecd-warn { color: hsl(var(--destructive, 0 70% 50%)); margin: 0; line-height: 1.4; }
 .ecd-warn:empty, .ecd-muted:empty, .ecd-status:empty { display: none; }
