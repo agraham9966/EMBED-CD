@@ -10,8 +10,8 @@ EMBED-CD makes a change map. Click a few of the changes and it labels the rest.
 
 ## What's new
 
+- **GeoLibre (October 2026):** EMBED-CD now also runs inside GeoLibre, on desktop and on the web. Install it from GeoLibre's plugin manager. [More](https://agraham9966.github.io/EMBED-CD/geolibre/)
 - **1.1 (October 2026):** A before and after lens. Turn it on with the magnifier button under the class list, then move over the map to see the older imagery under your cursor. Hold A to see the newer year.
-- **1.0 (October 2026):** First stable release. Tested on Windows and Linux, and listed in the official QGIS plugin repository.
 
 It's for people who work in QGIS — foresters, land managers, remote-sensing analysts — who want
 a quick, honest change map without training a model, writing code, or downloading raw imagery.

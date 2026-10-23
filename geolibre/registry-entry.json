@@ -1,0 +1,14 @@
+{
+  "id": "embed-cd",
+  "name": "EMBED-CD",
+  "version": "0.6.0",
+  "description": "Change maps from satellite embeddings: draw an area, pick two years, then label a few changes and a live classifier labels the rest.",
+  "author": "Alex Graham",
+  "homepage": "https://agraham9966.github.io/EMBED-CD/",
+  "repository": "https://github.com/agraham9966/EMBED-CD",
+  "issues": "https://github.com/agraham9966/EMBED-CD/issues",
+  "license": "GPL-2.0-or-later",
+  "manifestUrl": "plugins/embed-cd/plugin.json",
+  "categories": ["Analysis", "Imagery", "Raster"],
+  "minGeoLibreVersion": "3.4.0"
+}

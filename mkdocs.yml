@@ -59,6 +59,7 @@ nav:
   - Getting started:
       - Install: getting-started/install.md
       - Quickstart: getting-started/quickstart.md
+  - GeoLibre: geolibre.md
   - How it works: how-it-works.md
   - Limitations: limitations.md
   - Reference: reference.md

@@ -12,8 +12,8 @@ two years, press one button — then teach it what the changes *are* by clicking
 
 ## What's new
 
+- **GeoLibre (October 2026):** EMBED-CD now also runs inside GeoLibre, on desktop and on the web. Install it from GeoLibre's plugin manager. [More](geolibre.md)
 - **1.1 (October 2026):** A before and after lens. Turn it on with the magnifier button under the class list, then move over the map to see the older imagery under your cursor. Hold A to see the newer year.
-- **1.0 (October 2026):** First stable release. Tested on Windows and Linux, and listed in the official QGIS plugin repository.
 
 ---
 
