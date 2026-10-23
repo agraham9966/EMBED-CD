@@ -102,7 +102,11 @@ export function buildClassify(app: GeoLibreAppAPI, setStatus: (s: string) => voi
   const lens = new CompareLens(app);
   lens.setRadius(lensPrefs.size);
 
-  root.append(list, row(addB, delB, renB, inspectB, optsB, setsB), nameForm, opts, sets, row(lensB, lensSetB), lensOpts, labelB,
+  // What to do next, in one line, with the button it means lit up: after Generate the panel is a
+  // wall of equal-looking buttons and nothing says where to start.
+  const guide = el("div", "ecd-guide");
+
+  root.append(guide, list, row(addB, delB, renB, inspectB, optsB, setsB), nameForm, opts, sets, row(lensB, lensSetB), lensOpts, labelB,
     row(el("span", "", "Step through"), cycle, prevB, nextB), row(el("span", "", "This object"), objCls, undoB, discardB), detail);
 
   const tool = new ClickTool(app, () => layer?.fillLayerId ?? null, (r, right) => clicked(r, right));
@@ -137,6 +141,40 @@ export function buildClassify(app: GeoLibreAppAPI, setStatus: (s: string) => voi
     classOpt.disabled = !cls;
     fillObjectCombo();
     showDetail();
+    showGuide(has, here);
+  }
+
+  function showGuide(has: boolean, here: Record<string, number>): void {
+    for (const b of [addB, labelB, nextB]) b.classList.remove("ecd-next");
+    guide.hidden = !has;
+    if (!has) return;
+    const n = Object.values(here).reduce((a, b) => a + b, 0);
+    const carried = Object.values(L.carriedCounts()).reduce((a, b) => a + b, 0);
+    let text: string, next: HTMLButtonElement | null = null;
+    if (!L.classes.length) {
+      text = "Click Add and name the kind of change you are after, for example 'Clearcut'.";
+      next = addB;
+    } else if (tool.isOn && inspecting) {
+      text = "Click an object on the map to see how the classifier scores it. Click Inspect again to stop.";
+    } else if (!tool.isOn && n === 0) {
+      text = carried
+        ? `Classes carried over from earlier runs are already colouring the map. Turn on Label by clicking the map and fix any it got wrong.`
+        : `Turn on Label by clicking the map, then click a few objects that are '${cls}'.`;
+      next = labelB;
+    } else if (n < 3) {
+      text = `Click objects on the map that are '${cls}'. ${n} labelled so far. Right-click removes a label.`;
+      if (!tool.isOn) next = labelB;
+    } else if (L.classes.length === 1) {
+      text = "The rest are coloured on the map. Now add a second class for what you are NOT after (for example 'Other') "
+        + "and label a few: telling two apart works far better than one alone.";
+      next = addB;
+    } else {
+      text = "Check its calls: step through the least certain objects with ▶ and fix any it got wrong. "
+        + "Save the classes (Class set) to reuse them on another area.";
+      next = nextB;
+    }
+    guide.replaceChildren(el("b", "", "Next: "), text);
+    next?.classList.add("ecd-next");
   }
 
   function paint(): void {
@@ -213,7 +251,7 @@ export function buildClassify(app: GeoLibreAppAPI, setStatus: (s: string) => voi
   inspectB.onclick = () => {
     if (tool.isOn && inspecting) { tool.off(); inspecting = false; render(); setStatus(""); return; }
     inspecting = true;
-    tool.on();
+    tool.on("inspect");
     render();
     setStatus("Click a polygon to see what the classifier makes of it. Nothing is labelled in this mode.");
   };

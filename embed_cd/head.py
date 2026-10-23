@@ -312,6 +312,12 @@ class OvRHead:
         if hi - lo < 1e-6:
             return max(0.0, floor - 0.05)
         hist, edges = np.histogram(sims, bins=64, range=(lo, hi))
+        # Never below the middle of the pool. With nothing to contrast against, the widest empty
+        # stretch was often down in the sparse low tail (or Otsu split off a few outliers), so the
+        # cut sat under nearly every object and one label claimed them all. The class being hunted
+        # is a subset of the changes, so it may claim at most the half most like its examples
+        # until a second class arrives and one-vs-rest takes over.
+        med = float(np.quantile(sims, 0.5))
         # Prefer a real valley: the widest EMPTY stretch below the labelled examples. That is
         # the honest boundary between "like these" and "not", and unlike Otsu it cannot land
         # inside a cluster — Otsu's cut fell one bin short of the group it was excluding and
@@ -325,11 +331,11 @@ class OvRHead:
                 continue
             if run is not None:
                 width, top = i - run, float(edges[i])
-                if top <= floor and (best is None or width > best[0]):
+                if top <= floor and float(edges[run]) >= med and (best is None or width > best[0]):
                     best = (width, 0.5 * (float(edges[run]) + top))
                 run = None
         cut = best[1] if best else lo + _otsu(hist) * (hi - lo)
-        cut = min(cut, floor)
+        cut = min(max(cut, med), floor)
         # `q` is a quantile for the discriminative detectors; here it is the same user-facing
         # idea — strictness — expressed as how far to slide from the natural break (permissive,
         # "anything on this side of the gap") toward the labelled examples' own similarity

@@ -86,7 +86,7 @@ export function buildStep3(deps: Deps): { root: HTMLElement; runChanged(id: stri
       deps.runs.setObjects(meta.id, { polys, vectors, cutoff, minArea: min });
       show(meta.id, true);
       deps.onObjectsMade?.();
-      count.textContent = `${countText(polys.length, cutoff)} Add a class, turn on 'Label by clicking the map', and click a few.`;
+      count.textContent = countText(polys.length, cutoff);
       const carried = Object.values(classify.labeller.carriedCounts()).reduce((a, b) => a + b, 0);
       status.textContent = carried && classify.labeller.classes.length
         ? `Classified using ${carried} examples carried over from earlier runs, nothing labelled here yet. Check a few and label any it got wrong.  (${classify.status()})`

@@ -10,7 +10,7 @@ let host: Parameters<GeoLibrePlugin["activate"]>[0] | null = null;
 export const plugin: GeoLibrePlugin = {
   id: "embed-cd",
   name: "EMBED-CD",
-  version: "0.6.0",
+  version: "0.7.0",
   engines: ["maplibre"],
   activate(app) {
     host = app;

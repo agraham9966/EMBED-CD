@@ -24,6 +24,23 @@ export function scoreColour(v: number, cutoff: number): RGBA {
 
 export const coverageColour = (code: number): RGBA => COVERAGE[code] ?? [0, 0, 0, 0];
 
+/** RGBA as one little-endian 32-bit pixel, for writing an ImageData through a Uint32Array. */
+const pack = ([r, g, b, a]: RGBA) => (r | (g << 8) | (b << 16) | (a << 24)) >>> 0;
+// The ramp in steps of 0.001 (indistinguishable on screen); everything past 0.8 is the top colour.
+const LUT_STEPS = 1000 * RAMP[2][0];
+const SCORE_LUT = Uint32Array.from({ length: LUT_STEPS + 1 }, (_, i) => pack(scoreColour(i / 1000, -Infinity)));
+const COVERAGE_PX = COVERAGE.map(pack);
+
+/** Each pixel's colour ignoring the cutoff (nodata transparent): worked out once per tile. */
+export function scoreColours(score: Float32Array): Uint32Array {
+  const out = new Uint32Array(score.length);
+  for (let p = 0; p < score.length; p++) {
+    const v = score[p];
+    if (v !== NODATA && v >= 0) out[p] = SCORE_LUT[Math.min(LUT_STEPS, Math.round(v * 1000))];
+  }
+  return out;
+}
+
 /** The window's corners in lon/lat, in MapLibre's order: top-left, top-right, bottom-right, bottom-left. */
 export function tileCorners(g: Grid, [r0, r1, c0, c1]: Window): [number, number][] {
   const f = transformer(g.crs, "EPSG:4326");
@@ -34,6 +51,8 @@ export function tileCorners(g: Grid, [r0, r1, c0, c1]: Window): [number, number]
 type Drawn = {
   result: TileResult; score: Float32Array; cov: Uint8Array;
   canvas: HTMLCanvasElement; covCanvas: HTMLCanvasElement; coordinates: [number, number][];
+  /** Cutoff-free colour per pixel, and the image the cutoff is applied into (kept, not remade). */
+  colours?: Uint32Array; img?: ImageData;
 };
 
 /** The style has its JSON (sources and layers can be added). */
@@ -123,34 +142,41 @@ export class ChangeLayer {
     });
   }
 
+  /** Only the change canvases: coverage does not depend on the cutoff, so it is not resent. */
   private recolourAll(): void {
     this.tiles.forEach((t, i) => {
       this.paintScore(t);
-      this.refresh(i);
+      this.refresh(i, false);
     });
   }
 
+  /** New or recomposed pixels: work out their colours, then draw both canvases. */
   private paint(t: Drawn): void {
+    t.colours = scoreColours(t.score);
+    t.img = undefined;
     this.paintScore(t);
     const ctx = t.covCanvas.getContext("2d");
     if (!ctx) return;
     const img = ctx.createImageData(t.covCanvas.width, t.covCanvas.height);
-    for (let p = 0; p < t.cov.length; p++) img.data.set(coverageColour(t.cov[p]), p * 4);
+    const px = new Uint32Array(img.data.buffer);
+    for (let p = 0; p < t.cov.length; p++) px[p] = COVERAGE_PX[t.cov[p]] ?? 0;
     ctx.putImageData(img, 0, 0);
   }
 
+  /** The slider's whole cost: one comparison per pixel, into an image kept from last time. */
   private paintScore(t: Drawn): void {
     const ctx = t.canvas.getContext("2d");
-    if (!ctx) return;
-    const img = ctx.createImageData(t.canvas.width, t.canvas.height);
-    for (let p = 0; p < t.score.length; p++) img.data.set(scoreColour(t.score[p], this.cutoff), p * 4);
-    ctx.putImageData(img, 0, 0);
+    if (!ctx || !t.colours) return;
+    t.img ??= ctx.createImageData(t.canvas.width, t.canvas.height);
+    const px = new Uint32Array(t.img.data.buffer), s = t.score, col = t.colours, c = this.cutoff;
+    for (let p = 0; p < s.length; p++) px[p] = s[p] > c ? col[p] : 0;
+    ctx.putImageData(t.img, 0, 0);
   }
 
   /** A canvas source re-uploads only while playing: play for one frame, then pause. */
-  private refresh(i: number): void {
+  private refresh(i: number, coverage = true): void {
     const map = this.map;
-    for (const id of [`${this.changeId}-${i}`, `${this.coverageId}-${i}`]) {
+    for (const id of coverage ? [`${this.changeId}-${i}`, `${this.coverageId}-${i}`] : [`${this.changeId}-${i}`]) {
       const src = map?.getSource(id);
       if (!src) continue;
       src.play?.();

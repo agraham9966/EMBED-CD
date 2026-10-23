@@ -248,17 +248,19 @@ export class OvRHead {
     const lo = Math.min(...sims), hi = Math.max(...sims);
     if (hi - lo < 1e-6) return Math.max(0, floor - 0.05);
     const { hist, edges } = histogram(sims, 64, lo, hi);
+    // Never below the middle of the pool (head.py): one label must not claim every object.
+    const med = quantile(sortNum(sims), 0.5);
     let best: [number, number] | null = null, run: number | null = null;
     [...hist, 1].forEach((count, i) => {
       if (count === 0) { run = run ?? i; return; }
       if (run !== null) {
         const width = i - run, top = edges[i];
-        if (top <= floor && (best === null || width > best[0])) best = [width, 0.5 * (edges[run] + top)];
+        if (top <= floor && edges[run] >= med && (best === null || width > best[0])) best = [width, 0.5 * (edges[run] + top)];
         run = null;
       }
     });
     let cut = best ? (best as [number, number])[1] : lo + otsu(hist) * (hi - lo);
-    cut = Math.min(cut, floor);
+    cut = Math.min(Math.max(cut, med), floor);
     return cut + Math.min(this.q / 0.4, 1) * (floor - cut);
   }
 

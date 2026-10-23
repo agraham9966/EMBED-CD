@@ -335,18 +335,12 @@ def test_baseline_plus_delta_handles_a_class_spanning_two_baselines():
     print(f"ok class spanning two baselines: raw {raw:.3f} vs delta {delta:.3f} over 12 seeds")
 
 
-def test_a_single_class_cannot_yet_reject_the_opposite_change():
-    """A KNOWN weakness, recorded so it cannot regress further and so the fix has a baseline.
-
-    Label three cleared-forest objects and the single-class path also accepts 100% of the
-    REVERSE change from the same baseline — regrowth gets selected as clearing. With one class
-    there is nothing to discriminate against, so scoring is cosine to a prototype, and with A
-    shared between both groups that cosine is largely measuring "did this start as forest".
-    Unchanged by the choice of features: all three fail identically. "after" was predicted to
-    fix this and does not — measured at 100% acceptance, same as the others. B for "forest
-    cleared" and B for "forest regrown" still share the forest component that dominates the
-    cosine, so it is the same failure on a different half of the vector.
-    """
+def test_a_single_class_rejects_the_opposite_change():
+    """Was a KNOWN weakness: label three cleared-forest objects and the single-class path also
+    accepted 100% of the REVERSE change from the same baseline (regrowth selected as clearing).
+    Cosine to a prototype is dominated by "did this start as forest", and the cut took the widest
+    empty stretch anywhere below the examples, which sat under nearly everything. Capping the cut
+    at the middle of the pool keeps one class to the objects most like its examples."""
     ff, fu, other = _same_change_two_baselines()
     pool = np.concatenate([ff, fu, other])
     for mode in ("raw", "delta", "after"):
@@ -354,9 +348,8 @@ def test_a_single_class_cannot_yet_reject_the_opposite_change():
                                          pool=pool)
         assert (h.predict(ff)[0] == "cleared").mean() > 0.9, f"{mode}: lost its own examples"
         opp = (h.predict(other)[0] == "cleared").mean()
-        assert opp > 0.5, (f"{mode}: opposite-change acceptance is {opp:.0%} — if this has been "
-                           "FIXED, update this test rather than deleting it")
-    print("ok single-class opposite-change weakness still reproduces (documented, not fixed)")
+        assert opp < 0.1, f"{mode}: opposite-change acceptance is back up to {opp:.0%}"
+    print("ok one class no longer accepts the opposite change")
 
 
 def test_features_default_is_baseline_plus_delta():
@@ -543,7 +536,7 @@ if __name__ == "__main__":
     test_delta_features_are_available_and_change_nothing_structurally()
     test_matches_sklearn_when_available()
     test_baseline_plus_delta_handles_a_class_spanning_two_baselines()
-    test_a_single_class_cannot_yet_reject_the_opposite_change()
+    test_a_single_class_rejects_the_opposite_change()
     test_features_default_is_baseline_plus_delta()
     test_review_order_honours_locked()
     test_a_preset_remembers_which_question_it_was_answering()

@@ -1,4 +1,4 @@
-import { scoreColour, coverageColour, tileCorners, ChangeLayer, CHANGE_OPACITY } from "../src/map/changelayer";
+import { scoreColour, scoreColours, coverageColour, tileCorners, ChangeLayer, CHANGE_OPACITY } from "../src/map/changelayer";
 import { transformer } from "../src/engine/crs";
 import type { Grid } from "../src/engine/grid";
 
@@ -91,4 +91,10 @@ test("both layers tell GeoLibre their lon/lat extent, so Zoom to layer works", (
     expect(b[2] - b[0]).toBeLessThan(0.05);
   }
   expect(reg.map((r) => r.id).sort()).toEqual(["ecd-r-change", "ecd-r-coverage"]);
+});
+
+test("the precomputed colours match the ramp, and a cutoff only hides pixels", () => {
+  const score = Float32Array.from([-1, 0, 0.2, 0.4, 0.8, 3]);
+  const px = [...scoreColours(score)].map((u) => [u & 255, (u >>> 8) & 255, (u >>> 16) & 255, u >>> 24]);
+  expect(px).toEqual([[0, 0, 0, 0], ...[0, 0.2, 0.4, 0.8, 3].map((v) => scoreColour(v, -1))]);
 });

@@ -58,3 +58,10 @@
 .ecd-lens-ring { position: absolute; box-sizing: border-box; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 0 1px rgba(0,0,0,0.35); }
 .ecd-lens-ring.ecd-lens-after { border-color: rgb(255,215,0); }
 .ecd-lens-tag { position: absolute; transform: translateX(-50%); background: rgba(0,0,0,0.67); color: #fff; font: 12px/1.3 system-ui, sans-serif; padding: 2px 6px; white-space: nowrap; }
+/* Labelling: a target cursor that shows on any imagery (white with a dark edge), whatever cursor
+   GeoLibre would set over a feature. Inspect: the question-mark arrow. */
+.ecd-labelling .maplibregl-canvas { cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cg fill='none' stroke-linecap='round'%3E%3Cg stroke='%23000' stroke-width='4'%3E%3Ccircle cx='16' cy='16' r='8'/%3E%3Cpath d='M16 2v8M16 22v8M2 16h8M22 16h8'/%3E%3C/g%3E%3Cg stroke='%23fff' stroke-width='2'%3E%3Ccircle cx='16' cy='16' r='8'/%3E%3Cpath d='M16 2v8M16 22v8M2 16h8M22 16h8'/%3E%3C/g%3E%3C/g%3E%3Ccircle cx='16' cy='16' r='1.5' fill='%23fff' stroke='%23000'/%3E%3C/svg%3E") 16 16, crosshair !important; }
+.ecd-inspecting .maplibregl-canvas { cursor: help !important; }
+/* The "Next:" line after Generate, and the button it points at */
+.ecd-guide { border-left: 3px solid hsl(var(--primary, 210 70% 50%)); background: hsl(var(--muted, var(--background))); padding: 6px 8px; border-radius: 0 4px 4px 0; line-height: 1.4; }
+.ecd-btn.ecd-next { border-color: hsl(var(--primary, 210 70% 50%)); box-shadow: 0 0 0 2px hsl(var(--primary, 210 70% 50%) / 0.35); }

@@ -82,3 +82,24 @@ test("stepping walks objects and reports the position", () => {
   button("▶").click();
   expect(status()).toMatch(/^1 of \d+ {2}\(least certain first\)$/);
 });
+
+test("after Generate a Next line walks you through it and lights the button it means", () => {
+  const { ui, click, button } = setup();
+  const guide = () => ui.root.querySelector(".ecd-guide")!.textContent!;
+  const lit = () => [...ui.root.querySelectorAll(".ecd-next")].map((b) => b.textContent);
+  expect(guide()).toMatch(/^Next: Click Add/);
+  expect(lit()).toEqual(["Add"]);
+  addClass(ui, button, "cutblock");
+  expect(guide()).toContain("Turn on Label by clicking the map");
+  expect(lit()).toEqual(["Label by clicking the map"]);
+  button("Label by clicking the map").click();
+  click("click", 1);
+  expect(guide()).toContain("1 labelled so far");
+  expect(lit()).toEqual([]);
+  click("click", 2); click("click", 3);
+  expect(guide()).toContain("add a second class");
+  expect(lit()).toEqual(["Add"]);
+  addClass(ui, button, "other");
+  expect(guide()).toContain("step through the least certain");
+  expect(lit()).toEqual(["▶"]);
+});

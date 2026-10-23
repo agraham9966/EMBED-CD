@@ -31,12 +31,17 @@ export class ClickTool {
   private left = this.handle(false);
   private right = this.handle(true);
 
-  on(): void {
-    if (this.active || !this.map) return;
+  /** A cursor that says "click to label" (or, inspecting, "click to read"). A class on the map
+   *  container, not canvas.style: GeoLibre sets the canvas cursor itself (a hand over features). */
+  on(mode: "label" | "inspect" = "label"): void {
+    if (!this.map) return;
+    const box: HTMLElement | undefined = this.map.getContainer?.();
+    box?.classList.toggle("ecd-labelling", mode === "label");
+    box?.classList.toggle("ecd-inspecting", mode === "inspect");
+    if (this.active) return;
     this.active = true;
     this.map.on("click", this.left);
     this.map.on("contextmenu", this.right);
-    this.map.getCanvas().style.cursor = "crosshair";
   }
 
   off(): void {
@@ -44,7 +49,7 @@ export class ClickTool {
     this.active = false;
     this.map?.off("click", this.left);
     this.map?.off("contextmenu", this.right);
-    if (this.map) this.map.getCanvas().style.cursor = "";
+    this.map?.getContainer?.()?.classList.remove("ecd-labelling", "ecd-inspecting");
   }
 
   get isOn(): boolean {
