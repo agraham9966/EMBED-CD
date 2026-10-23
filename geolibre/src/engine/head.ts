@@ -105,53 +105,21 @@ function fitLogistic(x: Mat, y: Uint8Array, C = 1, maxIter = 500): { b: number; 
   return { b: theta[0], w: theta.subarray(1) };
 }
 
-function protoScore(x: Mat, proto: Float64Array, rows?: number[]): number[] {
-  let nc = 0;
-  for (const v of proto) nc += v * v;
-  nc = Math.sqrt(nc);
-  const idx = rows ?? Array.from({ length: x.n }, (_, i) => i);
+/** Each row of x's Euclidean distance to its nearest row of ex (head.py _nearest, by differences). */
+function nearest(x: Mat, ex: Mat, rowsOf?: number[]): number[] {
+  const idx = rowsOf ?? Array.from({ length: x.n }, (_, i) => i);
   return idx.map((i) => {
-    let dot = 0, nx = 0;
-    for (let j = 0; j < x.d; j++) { const v = at(x, i, j); dot += v * proto[j]; nx += v * v; }
-    return (1 + dot / Math.max(Math.sqrt(nx) * nc, 1e-12)) * 0.5;
+    let best = Infinity;
+    for (let e = 0; e < ex.n; e++) {
+      let s = 0;
+      for (let j = 0; j < x.d; j++) { const d = at(x, i, j) - at(ex, e, j); s += d * d; }
+      best = Math.min(best, Math.sqrt(s));
+    }
+    return best;
   });
 }
 
-/** numpy.histogram over (lo, hi) with numpy's own edge rule. */
-function histogram(v: number[], bins: number, lo: number, hi: number): { hist: number[]; edges: number[] } {
-  const step = (hi - lo) / bins;
-  const edges = Array.from({ length: bins + 1 }, (_, i) => (i === bins ? hi : lo + i * step));
-  const hist = new Array<number>(bins).fill(0);
-  const norm = bins / (hi - lo);
-  for (const x of v) {
-    if (!(x >= lo && x <= hi)) continue;
-    let i = Math.floor((x - lo) * norm);
-    if (i >= bins) i = bins - 1;
-    if (x < edges[i]) i--;
-    else if (i !== bins - 1 && x >= edges[i + 1]) i++;
-    hist[i]++;
-  }
-  return { hist, edges };
-}
-
-function otsu(hist: number[]): number {
-  const n = hist.length;
-  let total = 0;
-  for (const c of hist) total += c;
-  if (total <= 0) return 0.5;
-  const centers = hist.map((_, i) => (i + 0.5) / n);
-  let w0 = 0, csum = 0, csumAll = 0;
-  for (let i = 0; i < n; i++) csumAll += hist[i] * centers[i];
-  let best = -Infinity, at_ = -1;
-  for (let i = 0; i < n; i++) {
-    w0 += hist[i]; csum += hist[i] * centers[i];
-    const w1 = total - w0, b = w0 * w1 * (csum / w0 - (csumAll - csum) / w1) ** 2;
-    if (Number.isFinite(b) && b > best) { best = b; at_ = i; }
-  }
-  return at_ >= 0 ? centers[at_] : 0.5;
-}
-
-type Det = { kind: "proto"; proto: Float64Array } | { kind: "linear"; b: number; w: Float64Array };
+type Det = { kind: "nn"; ex: Mat; r: number } | { kind: "linear"; b: number; w: Float64Array };
 
 export class OvRHead {
   q: number; calibrateFolds: number; minConfidence: number; C: number;
@@ -241,27 +209,27 @@ export class OvRHead {
     return pos.length ? pos : inSample();
   }
 
-  private oneClassThreshold(memberSims: number[], proto: Float64Array, pool: Mat | null): number {
-    const floor = memberSims.length ? Math.min(...memberSims) : 0.5;
-    if (!pool || pool.n < 4) return Math.max(0, floor - 0.05);
-    const sims = protoScore(pool, proto);
-    const lo = Math.min(...sims), hi = Math.max(...sims);
-    if (hi - lo < 1e-6) return Math.max(0, floor - 0.05);
-    const { hist, edges } = histogram(sims, 64, lo, hi);
-    // Never below the middle of the pool (head.py): one label must not claim every object.
-    const med = quantile(sortNum(sims), 0.5);
-    let best: [number, number] | null = null, run: number | null = null;
-    [...hist, 1].forEach((count, i) => {
-      if (count === 0) { run = run ?? i; return; }
-      if (run !== null) {
-        const width = i - run, top = edges[i];
-        if (top <= floor && edges[run] >= med && (best === null || width > best[0])) best = [width, 0.5 * (edges[run] + top)];
-        run = null;
-      }
-    });
-    let cut = best ? (best as [number, number])[1] : lo + otsu(hist) * (hi - lo);
-    cut = Math.min(Math.max(cut, med), floor);
-    return cut + Math.min(this.q / 0.4, 1) * (floor - cut);
+  /** How close to one of the examples an object must be to join the class (head.py
+   *  _one_class_radius): as close as the examples are to each other, never less than the reach
+   *  that takes in the nearest 10% of all objects. */
+  private oneClassRadius(ex: Mat, pool: Mat | null): number {
+    const q10 = pool && pool.n >= 4 ? quantile(sortNum(nearest(pool, ex)), 0.1) : 0;
+    let spacing = 0;
+    for (let i = 0; i < ex.n && ex.n >= 2; i++) {
+      const others = subset(ex, Array.from({ length: ex.n }, (_, k) => k).filter((k) => k !== i));
+      spacing = Math.max(spacing, nearest(ex, others, [i])[0]);
+    }
+    const r = Math.max(spacing, q10);
+    if (r > 0) return r;
+    let norms = 0;
+    for (let i = 0; i < ex.n; i++) { let s = 0; for (let j = 0; j < ex.d; j++) s += at(ex, i, j) ** 2; norms += Math.sqrt(s); }
+    return (norms / ex.n) * 0.25;
+  }
+
+  /** Strictness scales the radius: 1 at the default, wider at 0, half at 0.40. */
+  private oneClassBar(): number {
+    const scale = Math.max(0.1, 1 + (0.05 - this.q) * 1.25);
+    return 1 / (1 + scale);
   }
 
   fit(x: Float32Array, n: number, y: string[], pool: Float32Array | null = null, seed = 0): this {
@@ -290,11 +258,10 @@ export class OvRHead {
       let nPos = 0;
       for (const v of yc) nPos += v;
       if (nPos === 0 || nPos === yc.length) {
-        // One class: similarity to its prototype in RAW space (see head.py fit).
-        const members = rows(yc, 1), proto = new Float64Array(raw.d);
-        for (const i of members) for (let j = 0; j < raw.d; j++) proto[j] += at(raw, i, j) / members.length;
-        this.dets[c] = { kind: "proto", proto };
-        this.thr[c] = this.oneClassThreshold(protoScore(raw, proto, members), proto, poolMat);
+        // One class: distance to the NEAREST labelled example, in RAW space (see head.py fit).
+        const ex = subset(raw, rows(yc, 1));
+        this.dets[c] = { kind: "nn", ex, r: this.oneClassRadius(ex, poolMat) };
+        this.thr[c] = this.oneClassBar();
         continue;
       }
       const pos = this.oofPositive(xs, yc, seed);
@@ -315,7 +282,7 @@ export class OvRHead {
     const out = new Float64Array(this.classes.length * n);
     this.classes.forEach((c, k) => {
       const det = this.dets[c];
-      if (det.kind === "proto") protoScore(raw, det.proto).forEach((v, j) => { out[k * n + j] = v; });
+      if (det.kind === "nn") nearest(raw, det.ex).forEach((d, j) => { out[k * n + j] = 1 / (1 + d / det.r); });
       else for (let j = 0; j < n; j++) out[k * n + j] = sigmoid(dotRow(xs, j, det.w) + det.b);
     });
     return out;
@@ -391,7 +358,8 @@ export function reviewOrder(pred: string[], scores: Float64Array, C: number, n: 
   const free = Array.from({ length: n }, (_, i) => i).filter((i) => !(locked && locked[i]));
   const key = free.map((j) => {
     const col = Array.from({ length: C }, (_, k) => scores[k * n + j]).sort((a, b) => a - b);
-    const margin = C > 1 ? col[C - 1] - col[C - 2] : -col[C - 1];
+    // Rounded as head.py does, so near-ties fall back to object order in both.
+    const margin = Math.round((C > 1 ? col[C - 1] - col[C - 2] : -col[C - 1]) * 1e9) / 1e9;
     return { j, unknown: pred[j] === UNKNOWN, margin };
   });
   key.sort((a, b) => (a.unknown === b.unknown ? a.margin - b.margin : a.unknown ? -1 : 1));

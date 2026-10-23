@@ -48,3 +48,19 @@ test("while a GeoLibre map tool owns clicks, ours does nothing", () => {
   map.fire("click");
   expect(got).toEqual([]);
 });
+
+test("while labelling, a middle-button drag pans the map", () => {
+  const map: any = Object.assign(fakeMap(null), { moved: [] as number[][] });
+  map.panBy = (d: number[]) => map.moved.push(d);
+  const tool = new ClickTool({ getMap: () => map } as any, () => "objects-fill", () => {});
+  tool.on();
+  map.box.dispatchEvent(new MouseEvent("mousedown", { button: 1, clientX: 100, clientY: 100 }));
+  window.dispatchEvent(new MouseEvent("mousemove", { clientX: 90, clientY: 120 }));
+  window.dispatchEvent(new MouseEvent("mouseup"));
+  window.dispatchEvent(new MouseEvent("mousemove", { clientX: 0, clientY: 0 }));
+  expect(map.moved).toEqual([[10, -20]]);
+  tool.off();
+  map.box.dispatchEvent(new MouseEvent("mousedown", { button: 1, clientX: 0, clientY: 0 }));
+  window.dispatchEvent(new MouseEvent("mousemove", { clientX: 50, clientY: 50 }));
+  expect(map.moved.length).toBe(1);
+});

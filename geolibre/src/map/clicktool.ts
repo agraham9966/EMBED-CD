@@ -31,6 +31,27 @@ export class ClickTool {
   private left = this.handle(false);
   private right = this.handle(true);
 
+  // Middle-button drag pans while labelling (MapLibre itself pans only with the left button, which
+  // still works too: a click labels, a drag pans).
+  private last: { x: number; y: number } | null = null;
+  private down = (e: MouseEvent) => {
+    if (e.button !== 1) return;
+    e.preventDefault();                                   // no browser autoscroll
+    this.last = { x: e.clientX, y: e.clientY };
+    window.addEventListener("mousemove", this.drag);
+    window.addEventListener("mouseup", this.up);
+  };
+  private drag = (e: MouseEvent) => {
+    if (!this.last) return;
+    this.map?.panBy([this.last.x - e.clientX, this.last.y - e.clientY], { animate: false });
+    this.last = { x: e.clientX, y: e.clientY };
+  };
+  private up = () => {
+    this.last = null;
+    window.removeEventListener("mousemove", this.drag);
+    window.removeEventListener("mouseup", this.up);
+  };
+
   /** A cursor that says "click to label" (or, inspecting, "click to read"). A class on the map
    *  container, not canvas.style: GeoLibre sets the canvas cursor itself (a hand over features). */
   on(mode: "label" | "inspect" = "label"): void {
@@ -42,6 +63,7 @@ export class ClickTool {
     this.active = true;
     this.map.on("click", this.left);
     this.map.on("contextmenu", this.right);
+    box?.addEventListener("mousedown", this.down);
   }
 
   off(): void {
@@ -49,7 +71,10 @@ export class ClickTool {
     this.active = false;
     this.map?.off("click", this.left);
     this.map?.off("contextmenu", this.right);
-    this.map?.getContainer?.()?.classList.remove("ecd-labelling", "ecd-inspecting");
+    const box: HTMLElement | undefined = this.map?.getContainer?.();
+    box?.classList.remove("ecd-labelling", "ecd-inspecting");
+    box?.removeEventListener("mousedown", this.down);
+    this.up();
   }
 
   get isOn(): boolean {
