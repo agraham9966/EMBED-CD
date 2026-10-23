@@ -93,11 +93,12 @@ recognises, and adding a class leaves the others untouched. Refitting takes well
 second, so the map recolours as fast as you can click.
 
 **The first class is a special case.** One-vs-rest needs a rest, and with a single class there
-is nothing to discriminate against. So the head answers the question one class *can* answer —
-how much does this object look like the ones you labelled? — by ranking every object on
-**cosine similarity** to the average of your examples. Read those numbers as an ordering, "most
-like this first", not as probabilities. Label a second class and every detector switches to
-logistic regression.
+is nothing to discriminate against. So the head answers the question one class *can* answer:
+how much does this object look like the ones you labelled? Each object is measured by its
+distance to the **nearest** of your examples, not to their average, so a class with two kinds in
+it (fresh and older cutblocks, say) finds both. An object joins the class if it is as close to
+one of your examples as your examples are to each other. With a single label it takes the 10% of
+objects nearest to it. Label a second class and every detector switches to logistic regression.
 
 Your classes will never cover a whole landscape, and a classifier forced to pick one would file
 genuinely new things under whatever they resemble most. So this one is allowed to answer

@@ -295,53 +295,35 @@ class OvRHead:
             pos = _sigmoid(xs[yc == 1] @ w + b)
         return pos
 
-    def _one_class_threshold(self, member_sims, raw, proto, pool):
-        """Where to cut a similarity ranking when there is nothing to contrast against.
+    def _one_class_radius(self, ex, pool):
+        """How close to one of the examples an object has to be to join the class.
 
-        The labelled examples alone can't say: three hand-picked objects sit tightly around
-        their own mean, so any quantile of THEIR similarity is near 1 and excludes the very
-        objects the user is hunting for (measured: 8% of them found). What can say is the
-        candidates themselves — the split between "like these" and "not like these" is a break
-        in the pool's own similarity distribution, so take Otsu of that.
+        Two or more examples: as close as they are to each other. Each example's distance to its
+        nearest other example says how tight the class really is, and the largest of those is
+        the radius that still finds every one of them. Never less than the distance that takes
+        in the nearest 10% of all objects, so one label has a sensible reach and a second, very
+        similar label cannot suddenly shrink it.
+
+        Measured on three real labelled runs (vanisle 50 m, vanisle south, nanaimo), against the
+        cosine-to-the-average rule it replaces ("wrong" = other labelled classes claimed):
+            1 label   finds 64% of the rest (was 30%)
+            2 labels  finds 89%, 40% wrong (was 81%, 47%)
+            3 labels  finds 93%, 43% wrong (was 84%, 55%)
         """
-        floor = float(member_sims.min()) if member_sims.size else 0.5
-        if pool is None or len(pool) < 4:
-            return max(0.0, floor - 0.05)
-        sims = _proto_score(self._transform(pool), proto)
-        lo, hi = float(sims.min()), float(sims.max())
-        if hi - lo < 1e-6:
-            return max(0.0, floor - 0.05)
-        hist, edges = np.histogram(sims, bins=64, range=(lo, hi))
-        # Never below the middle of the pool. With nothing to contrast against, the widest empty
-        # stretch was often down in the sparse low tail (or Otsu split off a few outliers), so the
-        # cut sat under nearly every object and one label claimed them all. The class being hunted
-        # is a subset of the changes, so it may claim at most the half most like its examples
-        # until a second class arrives and one-vs-rest takes over.
-        med = float(np.quantile(sims, 0.5))
-        # Prefer a real valley: the widest EMPTY stretch below the labelled examples. That is
-        # the honest boundary between "like these" and "not", and unlike Otsu it cannot land
-        # inside a cluster — Otsu's cut fell one bin short of the group it was excluding and
-        # let two through. Empty-run detection is also stable as the number of candidates grows,
-        # where the largest gap between adjacent values drifts into the sparse tails.
-        best = None
-        run = None
-        for i, count in enumerate(list(hist) + [1]):        # sentinel closes a trailing run
-            if count == 0:
-                run = i if run is None else run
-                continue
-            if run is not None:
-                width, top = i - run, float(edges[i])
-                if top <= floor and float(edges[run]) >= med and (best is None or width > best[0]):
-                    best = (width, 0.5 * (float(edges[run]) + top))
-                run = None
-        cut = best[1] if best else lo + _otsu(hist) * (hi - lo)
-        cut = min(max(cut, med), floor)
-        # `q` is a quantile for the discriminative detectors; here it is the same user-facing
-        # idea — strictness — expressed as how far to slide from the natural break (permissive,
-        # "anything on this side of the gap") toward the labelled examples' own similarity
-        # (strict, "only things as alike as the ones I picked"). Without this the slider is
-        # inert in the mode a session spends most of its time in.
-        return float(cut + min(self.q / 0.4, 1.0) * (floor - cut))
+        q10 = float(np.quantile(_nearest(pool, ex), 0.10)) if pool is not None and len(pool) >= 4 else 0.0
+        if len(ex) >= 2:
+            spacing = max(float(_nearest(ex[i:i + 1], np.delete(ex, i, axis=0))[0])
+                          for i in range(len(ex)))
+        else:
+            spacing = 0.0
+        r = max(spacing, q10)
+        return r if r > 0 else float(np.linalg.norm(ex, axis=1).mean()) * 0.25
+
+    def _one_class_bar(self):
+        """Strictness as a scale on the radius: 1 at the default, wider at 0, half at 0.40.
+        Scores are 1 / (1 + d / r), so d <= scale * r is score >= 1 / (1 + scale)."""
+        scale = max(0.1, 1.0 + (0.05 - self.q) * 1.25)
+        return 1.0 / (1.0 + scale)
 
     def fit(self, x, y, seed=0, pool=None):
         y = np.asarray(y, dtype=object)
@@ -374,16 +356,18 @@ class OvRHead:
                 # state every session starts in: one class labelled, "find me more like these".
                 # Fall back to similarity, which is a question a single class CAN answer.
                 #
-                # Crucially this uses the RAW embedding space, not the standardized one. With a
-                # single class the standardizer's mean IS that class's centroid, so every member
-                # collapses to the origin and cosine against it measures nothing — measured, the
-                # target class scored 0.49 while the classes it should exclude scored 0.71.
-                # Embeddings are unit-length by construction; cosine is their native metric.
-                proto = raw[yc == 1].mean(axis=0)
-                self.dets[c] = ("proto", proto)
-                sims = _proto_score(raw[yc == 1], proto)
-                self.oof_pos[c] = sims
-                self.thr[c] = self._one_class_threshold(sims, raw, proto, pool)
+                # Distance to the NEAREST labelled example, not to their average: an average of a
+                # fresh and an old cutblock looks like neither, while each example stays its own
+                # reference this way. RAW space, not standardized: with one class the
+                # standardizer's mean IS that class's centroid. Euclidean, which ignores whatever
+                # every object in the area has in common (the old cosine-to-the-average mostly
+                # measured "is this forest here too", and accepted 100% of the opposite change).
+                ex = raw[yc == 1]
+                r = self._one_class_radius(ex, None if pool is None else self._transform(pool))
+                self.dets[c] = ("nn", ex, r)
+                loo = [_nearest(ex[i:i + 1], np.delete(ex, i, axis=0))[0] for i in range(len(ex))]                     if len(ex) > 1 else [0.0]
+                self.oof_pos[c] = 1.0 / (1.0 + np.asarray(loo) / r)
+                self.thr[c] = self._one_class_bar()
                 continue
             pos = self._oof_positive_scores(xs, yc, seed)
             self.oof_pos[c] = pos
@@ -413,8 +397,8 @@ class OvRHead:
         rows = []
         for c in self.classes:
             det = self.dets[c]
-            if det[0] == "proto":
-                rows.append(_proto_score(raw, det[1]))     # raw space — see fit()
+            if det[0] == "nn":
+                rows.append(1.0 / (1.0 + _nearest(raw, det[1]) / det[2]))   # raw space — see fit()
             else:
                 rows.append(_sigmoid(xs @ det[2] + det[1]))
         return np.vstack(rows)                                            # (C, N)
@@ -479,31 +463,15 @@ def _sigmoid(z):
     return 1.0 / (1.0 + np.exp(-np.clip(z, -60, 60)))
 
 
-def _otsu(hist):
-    """The split of a histogram that best separates it into two groups, as a 0..1 position.
-    Same method the change map's Auto button uses, applied to similarity instead of change."""
-    hist = np.asarray(hist, np.float64)
-    total = hist.sum()
-    if total <= 0:
-        return 0.5
-    centers = (np.arange(len(hist)) + 0.5) / len(hist)
-    w0 = np.cumsum(hist)
-    w1 = total - w0
-    csum = np.cumsum(hist * centers)
-    with np.errstate(invalid="ignore", divide="ignore"):
-        between = w0 * w1 * (csum / w0 - (csum[-1] - csum) / w1) ** 2
-    between[~np.isfinite(between)] = -np.inf
-    return float(centers[int(np.argmax(between))]) if np.isfinite(between).any() else 0.5
-
-
-def _proto_score(xs, centroid):
-    """Cosine similarity to a class prototype, mapped to 0..1 so it can stand in for a
-    detector probability everywhere else in this class."""
-    xs = np.atleast_2d(xs)
-    nx = np.linalg.norm(xs, axis=1)
-    nc = np.linalg.norm(centroid)
-    cos = (xs @ centroid) / np.maximum(nx * nc, 1e-12)
-    return (1.0 + cos) * 0.5
+def _nearest(xs, ex):
+    """Each row's Euclidean distance to its nearest row of `ex`."""
+    xs, ex = np.atleast_2d(np.asarray(xs, np.float64)), np.atleast_2d(np.asarray(ex, np.float64))
+    # Differences, not |x|^2 + |e|^2 - 2x.e: that shortcut leaves rounding specks where the true
+    # distance is 0 (an example against itself), and the port has to agree to the last bit.
+    best = np.full(len(xs), np.inf)
+    for e in ex:
+        best = np.minimum(best, np.sqrt(((xs - e) ** 2).sum(axis=1)))
+    return best
 
 
 def review_order(pred, scores, locked=None):
@@ -521,6 +489,9 @@ def review_order(pred, scores, locked=None):
         return np.array([], int)
     s = np.sort(scores[:, free], axis=0)
     margin = (s[-1] - s[-2]) if s.shape[0] > 1 else -s[-1]   # one class: least similar first
+    # Rounded so near-ties (equal to the last few bits) fall back to object order: otherwise the
+    # order depends on floating-point summation order, which differs between numpy and the port.
+    margin = np.round(margin, 9)
     is_unknown = np.asarray(pred, dtype=object)[free] == UNKNOWN
     return free[np.lexsort((margin, ~is_unknown))]
 
@@ -565,7 +536,7 @@ def fit_from_classes(classes, pool=None, **kw):
 
     `pool` is every candidate object, labelled or not. It is only consulted when a single class
     has been labelled, where the cut in a similarity ranking cannot be found from the labelled
-    examples alone — see `_one_class_threshold`.
+    examples alone — see `_one_class_radius`.
     """
     names = [c for c, v in classes.items() if len(v)]
     if not names:

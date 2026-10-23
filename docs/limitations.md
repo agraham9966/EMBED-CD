@@ -39,17 +39,6 @@ The same averaging absorbs short-lived events. Floods, and fire scars that green
 year, are poorly served; permanent change is what this suits.
 
 
-## The first class you label accepts the opposite change
-
-With one class there is nothing to discriminate against, so objects are ranked by similarity to
-the average of your examples — and that average is dominated by what the place *was*. Label
-three cleared blocks and regrowth from the same forest baseline scores just as well.
-
-On a synthetic fixture — planted clusters, not real ground — **100% of the reverse change
-was accepted**, identically in all three feature modes.
-It is the first state every session is in. Label a second, contrasting class as early as you
-can — that is what switches the head to logistic regression.
-
 ## Classes do not travel well
 
 The model receives no coordinate information, which its authors speculate is why it needs far

@@ -413,7 +413,7 @@ class ClassifyPanel(QWidget):
         self.q_slider.setToolTip(
             "How sure a class has to be before it claims an object. Higher leaves more "
             "objects unknown rather than giving them a class they only half fit." + chr(10) * 2 +
-            "With ONE class it moves the cut in a similarity ranking. With several it raises "
+            "With ONE class it shrinks how close to your examples an object must be. With several it raises "
             "every class's confidence bar, roughly 0.5 at the left to 0.9 at the right." +
             chr(10) * 2 +
             "No effect while 'Prefer a best guess' is on — that mode never abstains.")
