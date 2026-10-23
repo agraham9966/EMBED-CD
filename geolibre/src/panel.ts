@@ -8,6 +8,7 @@ import { buildStep2 } from "./ui/step2";
 import { buildStep3 } from "./ui/step3";
 import { Accordion } from "./ui/accordion";
 import { el } from "./ui/dom";
+import { buildPhotos } from "./ui/photos";
 
 export const PANEL_ID = "embed-cd-panel";
 
@@ -49,7 +50,7 @@ export function registerPanel(app: GeoLibreAppAPI): () => void {
       acc.add(step2.root);
       acc.add(step3.root);
       refresh();
-      root.append(acc.root, step1.progressRow,
+      root.append(acc.root, step1.progressRow, buildPhotos(app),
         el("p", "ecd-muted", "Runs are temporary: they are discarded when GeoLibre closes. Use Save run to keep one as a file."));
       return () => {
         step3.dispose();

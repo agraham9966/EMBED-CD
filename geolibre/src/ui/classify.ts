@@ -6,6 +6,8 @@ import { UNKNOWN } from "../engine/head";
 import type { GeoLibreAppAPI } from "../host-api";
 import { Labeller, type CycleMode, type LabelState } from "../labeller";
 import { ClickTool } from "../map/clicktool";
+import { EOX_YEARS, nearestYear } from "../map/eox";
+import { CompareLens, MAX_R, MIN_R } from "../map/lens";
 import type { ObjectsLayer } from "../map/objectslayer";
 import { saveText } from "../export";
 import { el, row, select } from "./dom";
@@ -15,16 +17,24 @@ const CYCLES: [CycleMode, string][] = [["uncertain", "Least certain first"], ["u
   ["unknown", "Only unknown"], ["labelled", "Only labelled"], ["class", "Only the selected class"], ["all", "All objects"]];
 const BAR = 13;
 
+// The lens's settings, for this session only (nothing is stored on disk): kept here so they
+// survive the panel being closed and reopened.
+const lensPrefs = { on: false, size: 100, before: "", after: "" };
+
 export type ClassifyUi = {
   root: HTMLElement;
   /** Objects for a run were made or shown: classify them (labels on earlier objects carry over). */
   setObjects(vectors: Float32Array, n: number, layer: ObjectsLayer, state?: LabelState): void;
   clear(): void;
+  /** The panel is going: switch the lens and the click tool off. */
+  dispose(): void;
   status(): string;
   labeller: Labeller;
 };
 
-export function buildClassify(app: GeoLibreAppAPI, setStatus: (s: string) => void, onChange?: (state: LabelState) => void): ClassifyUi {
+export function buildClassify(app: GeoLibreAppAPI, setStatus: (s: string) => void, onChange?: (state: LabelState) => void,
+  /** The years of the change map on screen, for the lens's Auto. */
+  runYears: () => [number, number] | null = () => null): ClassifyUi {
   const L = new Labeller();
   let layer: ObjectsLayer | null = null;
   let current: number | null = null;                // the object the panel is talking about
@@ -70,7 +80,29 @@ export function buildClassify(app: GeoLibreAppAPI, setStatus: (s: string) => voi
   const loadSetB = el("button", "ecd-btn", "Load classes...") as HTMLButtonElement;
   sets.append(el("p", "ecd-muted", "A class set is just your labelled examples: save it and the same classes can be applied to another area."), row(saveSetB, loadSetB));
 
-  root.append(list, row(addB, delB, renB, inspectB, optsB, setsB), nameForm, opts, sets, labelB,
+  // The before/after lens: click toggles it, the arrow holds its years and size (QGIS keeps both
+  // on one button, next to the thing they configure).
+  const lensB = el("button", "ecd-btn ecd-small ecd-toggle", "Before/after lens") as HTMLButtonElement;
+  lensB.title = "Hover the map to see the before year's imagery under the cursor; hold A to see the after year. "
+    + "Shift+scroll resizes it.\n\nBrings its own imagery (Sentinel-2 cloudless, EOX), so no basemap needs to be open. "
+    + "Clicks still label as usual. The arrow sets the years and size.";
+  const lensSetB = btn("▾", "Lens years and size.");
+  const lensOpts = el("div", "ecd-options");
+  lensOpts.hidden = true;
+  const yearPick = (v: string) => {
+    const s = select([["", "Auto"], ...EOX_YEARS.map((y) => [String(y), String(y)] as [string, string])], v);
+    s.title = "Auto follows the current change map's years. Pick a year to override it.";
+    return s;
+  };
+  const lensBefore = yearPick(lensPrefs.before), lensAfter = yearPick(lensPrefs.after);
+  const lensSize = Object.assign(el("input", "ecd-number") as HTMLInputElement,
+    { type: "number", min: String(MIN_R), max: String(MAX_R), step: "10", value: String(lensPrefs.size) });
+  lensOpts.append(row(el("span", "", "Before"), lensBefore), row(el("span", "", "After"), lensAfter),
+    row(el("span", "", "Size"), lensSize, el("span", "", "px radius")));
+  const lens = new CompareLens(app);
+  lens.setRadius(lensPrefs.size);
+
+  root.append(list, row(addB, delB, renB, inspectB, optsB, setsB), nameForm, opts, sets, row(lensB, lensSetB), lensOpts, labelB,
     row(el("span", "", "Step through"), cycle, prevB, nextB), row(el("span", "", "This object"), objCls, undoB, discardB), detail);
 
   const tool = new ClickTool(app, () => layer?.fillLayerId ?? null, (r, right) => clicked(r, right));
@@ -301,6 +333,37 @@ export function buildClassify(app: GeoLibreAppAPI, setStatus: (s: string) => voi
     });
   }
 
+  // ---------------- the lens ----------------
+  /** The EOX years to show, Auto resolved; the Auto entries say what they picked. */
+  let lastRun: [number, number] = [2019, 2024];      // a new area with no run yet keeps the last years
+  function syncLens(): void {
+    const run = (lastRun = runYears() ?? lastRun);
+    const [b, a] = ([[lensBefore, run[0]], [lensAfter, run[1]]] as [HTMLSelectElement, number][]).map(([s, y]) => {
+      const got = nearestYear(y);
+      s.options[0].text = got === y ? `Auto (${got})` : `Auto (${got}, nearest to ${y})`;
+      return s.value ? Number(s.value) : got;
+    });
+    lens.setYears(b, a);
+  }
+  function setLens(on: boolean): void {
+    syncLens();
+    lens.setActive(on);
+    if (on && !lens.active) setStatus(lens.error || "The lens could not start.");
+    lensPrefs.on = lens.active;
+    lensB.classList.toggle("ecd-on", lens.active);
+  }
+  lensB.onclick = () => setLens(!lens.active);
+  lensSetB.onclick = () => { lensOpts.hidden = !lensOpts.hidden; };
+  lensBefore.onchange = lensAfter.onchange = () => {
+    lensPrefs.before = lensBefore.value;
+    lensPrefs.after = lensAfter.value;
+    syncLens();
+  };
+  lensSize.onchange = () => { lens.setRadius(Number(lensSize.value) || 100); lensPrefs.size = lens.radius; lensSize.value = String(lens.radius); };
+  lens.onRadiusChanged = (r) => { lensPrefs.size = r; lensSize.value = String(r); };
+  syncLens();
+  if (lensPrefs.on) setTimeout(() => setLens(true), 0);
+
   render();
   return {
     root,
@@ -311,6 +374,8 @@ export function buildClassify(app: GeoLibreAppAPI, setStatus: (s: string) => voi
       cycleAt = -1;
       L.setObjects(vectors, n);
       if (state) L.restore(state);
+      lens.setOutlines(l.data);
+      syncLens();
       cls ??= L.classes[0] ?? null;
       paint();
       render();
@@ -319,7 +384,13 @@ export function buildClassify(app: GeoLibreAppAPI, setStatus: (s: string) => voi
       tool.off();
       layer = null;
       current = null;
+      lens.setOutlines(null);
+      syncLens();
       render();
+    },
+    dispose() {
+      tool.off();
+      lens.dispose();
     },
     status: () => L.status,
   };

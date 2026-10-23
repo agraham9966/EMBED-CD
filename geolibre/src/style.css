@@ -43,3 +43,17 @@
 .ecd-acc-body { padding: 6px 2px 8px; }
 .ecd-runrow { display: flex; flex-direction: column; gap: 4px; }
 .ecd-runrow .ecd-progress { flex: 1; }
+/* Reference imagery strip */
+.ecd-rule { border: 0; border-top: 1px solid hsl(var(--border)); margin: 10px 0 4px; }
+.ecd-head { font-weight: 600; color: hsl(var(--muted-foreground)); margin: 0 0 4px; }
+.ecd-photo-row { gap: 2px; }
+.ecd-photo { min-width: 26px; padding: 3px 4px; }
+.ecd-credit { color: hsl(var(--muted-foreground)); font-size: 10px; margin: 4px 0 0; line-height: 1.3; }
+/* Before/after lens: over the map canvas, under its controls, never taking the pointer */
+.ecd-lens { position: absolute; inset: 0; pointer-events: none; z-index: 2; overflow: hidden; }
+.ecd-lens [hidden] { display: none !important; }
+.ecd-lens-clip { position: absolute; inset: 0; }
+.ecd-lens-map { width: 100%; height: 100%; }
+.ecd-lens-ring { position: absolute; box-sizing: border-box; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 0 1px rgba(0,0,0,0.35); }
+.ecd-lens-ring.ecd-lens-after { border-color: rgb(255,215,0); }
+.ecd-lens-tag { position: absolute; transform: translateX(-50%); background: rgba(0,0,0,0.67); color: #fff; font: 12px/1.3 system-ui, sans-serif; padding: 2px 6px; white-space: nowrap; }

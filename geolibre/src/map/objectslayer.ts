@@ -69,6 +69,11 @@ export class ObjectsLayer {
     return this.fc?.features[row] ?? null;
   }
 
+  /** All the objects as GeoJSON (lon/lat), or null before any are set. */
+  get data(): FeatureCollection | null {
+    return this.fc;
+  }
+
   /** The id MapLibre answers a click with, for the fill layer. */
   get fillLayerId(): string {
     return `${this.id}-fill`;

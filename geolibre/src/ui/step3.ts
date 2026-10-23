@@ -46,7 +46,8 @@ export function buildStep3(deps: Deps): { root: HTMLElement; runChanged(id: stri
   const status = el("p", "ecd-status", "");
   let shown: string | null = null;                  // the run whose objects the panel is showing
   const classify = buildClassify(deps.app, (s) => { status.textContent = s; },
-    (state) => { const r = shown ? deps.runs.get(shown) : null; if (r) r.labelState = state; });
+    (state) => { const r = shown ? deps.runs.get(shown) : null; if (r) r.labelState = state; },
+    () => { const id = deps.currentRun(), r = id ? deps.runs.get(id) : null; return r ? [r.meta.yearA, r.meta.yearB] : null; });
   root.append(row(makeBtn), row(el("span", "", "min size"), minArea, el("span", "", "ha")), count, bar, classify.root, status);
 
   let layer: ObjectsLayer | null = null;
@@ -127,6 +128,6 @@ export function buildStep3(deps: Deps): { root: HTMLElement; runChanged(id: stri
   return {
     root,
     runChanged: (id) => { cancel = true; status.textContent = ""; show(id); },
-    dispose: () => { cancel = true; classify.clear(); },          // runs' objects stay on the map
+    dispose: () => { cancel = true; classify.dispose(); },          // runs' objects stay on the map
   };
 }
