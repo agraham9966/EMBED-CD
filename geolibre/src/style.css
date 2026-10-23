@@ -65,3 +65,4 @@
 /* The "Next:" line after Generate, and the button it points at */
 .ecd-guide { border-left: 3px solid hsl(var(--primary, 210 70% 50%)); background: hsl(var(--muted, var(--background))); padding: 6px 8px; border-radius: 0 4px 4px 0; line-height: 1.4; }
 .ecd-btn.ecd-next { border-color: hsl(var(--primary, 210 70% 50%)); box-shadow: 0 0 0 2px hsl(var(--primary, 210 70% 50%) / 0.35); }
+.ecd-drawing .ecd-lens { display: none; }

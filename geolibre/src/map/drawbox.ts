@@ -27,6 +27,8 @@ export function removeArea(map: any): void {
 export function drawBox(map: any, onDone: (bbox: Bbox) => void): () => void {
   const canvas = map.getCanvas();
   canvas.style.cursor = "crosshair";
+  // Hides the before/after lens while drawing: it sits on the cursor, over the very box being drawn.
+  map.getContainer?.()?.classList.add("ecd-drawing");
   map.dragPan.disable();
   map.boxZoom.disable();
   let start: { lng: number; lat: number } | null = null;
@@ -40,6 +42,7 @@ export function drawBox(map: any, onDone: (bbox: Bbox) => void): () => void {
   const cleanup = () => {
     map.off("mousedown", down); map.off("mousemove", move); map.off("mouseup", up);
     canvas.style.cursor = "";
+    map.getContainer?.()?.classList.remove("ecd-drawing");
     map.dragPan.enable();
     map.boxZoom.enable();
   };
