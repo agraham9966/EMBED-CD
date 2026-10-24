@@ -60,7 +60,7 @@ test("a network blip is retried, so nothing is lost", async () => {
   expect((ev.at(-1) as any).failed).toBe(0);
 });
 
-test("a tile that keeps failing is counted and the run carries on", async () => {
+test("a tile whose download keeps failing is left out (not drawn as a missing year), counted, and the run carries on", async () => {
   let calls = 0;
   const down = async (url: string) => {
     if (url === "cog_b.tif" && calls++ < 3) throw new Error("network down");   // first tile: all 3 tries
@@ -70,7 +70,9 @@ test("a tile that keeps failing is counted and the run carries on", async () => 
     { index: fakeIndex(), open: down, tilePx: J.tile_px, retryDelaysMs: [0, 0] }));
   const end = ev.at(-1) as any;
   expect(end.failed).toBe(1);
-  expect(ev.filter((e) => e.type === "tile").length).toBe(J.runs["10"].tiles);
+  const tiles = ev.filter((e) => e.type === "tile") as any[];
+  expect(tiles.length).toBe(J.runs["10"].tiles - 1);
+  for (const t of tiles) expect(t.result.cov.includes(3)).toBe(false);   // nothing claims "no 2024 data"
 });
 
 test("cancelling after the first tile ends the run, marked cancelled", async () => {

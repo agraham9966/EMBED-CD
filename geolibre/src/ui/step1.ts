@@ -50,7 +50,9 @@ export function progressText(e: JobEvent, elapsed?: number): string {
     return `${e.done} of ${e.total} tiles${left}`;
   }
   if (e.cancelled) return "Cancelled. The finished tiles are kept.";
-  return e.failed > 0 ? `Done. ${e.failed} tile(s) could not be read and are left out.` : "Done.";
+  return e.failed > 0
+    ? `Done. ${e.failed} tile(s) could not be downloaded and are left out. Make the change map again to fill them in.`
+    : "Done.";
 }
 
 type Deps = {

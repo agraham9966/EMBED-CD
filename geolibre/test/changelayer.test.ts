@@ -98,3 +98,19 @@ test("the precomputed colours match the ramp, and a cutoff only hides pixels", (
   const px = [...scoreColours(score)].map((u) => [u & 255, (u >>> 8) & 255, (u >>> 16) & 255, u >>> 24]);
   expect(px).toEqual([[0, 0, 0, 0], ...[0, 0.2, 0.4, 0.8, 3].map((v) => scoreColour(v, -1))]);
 });
+
+test("each tile's canvas reaches one pixel into its right and bottom neighbour (no hairline between tiles)", () => {
+  const map: any = {
+    style: { _loaded: true }, on() {}, off() {}, once: (_: string, f: () => void) => f(), triggerRepaint() {},
+    addSource: vi.fn(), addLayer() {}, getLayer: () => false, getSource: () => undefined, setPaintProperty() {}, setLayoutProperty() {},
+  };
+  const app: any = { getMap: () => map, registerExternalNativeLayer() {}, unregisterExternalNativeLayer() {} };
+  const layer = new ChangeLayer(app, "r", "2019-2024", (f) => f());
+  const g: Grid = { crs: "EPSG:32610", x0: 500000, y0: 5500000, res: 10, width: 4, height: 2 };
+  const tile = (c0: number, c1: number) => ({ window: [0, 2, c0, c1] as any, score: new Float32Array(2 * (c1 - c0)).fill(0.5),
+    cov: new Uint8Array(2 * (c1 - c0)).fill(1), hist: new Float64Array(256) });
+  layer.addTile(g, tile(0, 2));
+  layer.addTile(g, tile(2, 4));
+  const canvases = map.addSource.mock.calls.filter((c: any[]) => c[0].includes("change")).map((c: any[]) => c[1].canvas);
+  expect(canvases.map((c: HTMLCanvasElement) => [c.width, c.height])).toEqual([[3, 2], [2, 2]]);   // the last column is the grid's edge
+});

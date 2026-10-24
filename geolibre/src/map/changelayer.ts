@@ -50,6 +50,8 @@ export function tileCorners(g: Grid, [r0, r1, c0, c1]: Window): [number, number]
 
 type Drawn = {
   result: TileResult; score: Float32Array; cov: Uint8Array;
+  /** What the canvas covers: the tile's window plus one pixel right and down (see addTile). */
+  win: Window;
   canvas: HTMLCanvasElement; covCanvas: HTMLCanvasElement; coordinates: [number, number][];
   /** Cutoff-free colour per pixel, and the image the cutoff is applied into (kept, not remade). */
   colours?: Uint32Array; img?: ImageData;
@@ -95,16 +97,20 @@ export class ChangeLayer {
     const i = this.tiles.length;
     this.bounds ??= transformBounds(grid.crs, "EPSG:4326",
       [grid.x0, grid.y0 - grid.height * grid.res, grid.x0 + grid.width * grid.res, grid.y0]);
+    // One pixel past the tile's own right and bottom edge, filled from the neighbour through the
+    // same mosaic rules: two image quads that merely touch can leave a hairline of map showing
+    // between them (it showed through the coverage layer as tile outlines).
     const [r0, r1, c0, c1] = result.window;
+    const win: Window = [r0, Math.min(r1 + 1, grid.height), c0, Math.min(c1 + 1, grid.width)];
     const canvas = document.createElement("canvas"), covCanvas = document.createElement("canvas");
-    canvas.width = covCanvas.width = c1 - c0;
-    canvas.height = covCanvas.height = r1 - r0;
+    canvas.width = covCanvas.width = win[3] - win[2];
+    canvas.height = covCanvas.height = win[1] - win[0];
     const all = [...this.tiles.map((t) => t.result), result];
-    const d: Drawn = { result, ...compose(result.window, all), canvas, covCanvas, coordinates: tileCorners(grid, result.window) };
+    const d: Drawn = { result, win, ...compose(win, all), canvas, covCanvas, coordinates: tileCorners(grid, win) };
     this.tiles.push(d);
     for (const t of this.tiles.slice(0, -1)) {
-      if (overlaps(t.result.window, result.window)) {
-        Object.assign(t, compose(t.result.window, all));
+      if (overlaps(t.win, result.window)) {
+        Object.assign(t, compose(t.win, all));
         this.paint(t);
         this.refresh(this.tiles.indexOf(t));
       }

@@ -36,7 +36,7 @@ async function tryFetch(deps: JobDeps, tile: Tile, year: number, factor: number,
   Promise<{ got: Fetched; failed: boolean }> {
   const row = deps.index.rowFor(tile, year);
   if (!row) return { got: null, failed: false };               // no COG for this year here
-  const delays = deps.retryDelaysMs ?? [1000, 3000];
+  const delays = deps.retryDelaysMs ?? [1000, 3000, 8000];
   for (let attempt = 0; ; attempt++) {
     try {
       return { got: await fetchTile(row, tile, factor, deps.open, signal), failed: false };
@@ -46,8 +46,6 @@ async function tryFetch(deps: JobDeps, tile: Tile, year: number, factor: number,
         await sleep(delays[attempt], signal);
         continue;
       }
-      // Python treats an unreadable year as missing; we do the same but COUNT it, so the user
-      // hears that part of the map is missing because of a failed download, not a data gap.
       return { got: null, failed: true };
     }
   }
@@ -59,7 +57,11 @@ async function processTile(tile: Tile, spec: JobSpec, grid: Grid, factor: number
     tryFetch(deps, tile, spec.yearA, factor, signal),
     tryFetch(deps, tile, spec.yearB, factor, signal),
   ]);
-  const failed = ra.failed || rb.failed ? 1 : 0;             // a TILE that could not be read, once
+  // A year that could not be DOWNLOADED is not a year with no data: drawn as "no data in 2019"
+  // it sent the user looking for a gap that does not exist (QGIS, reading through GDAL, almost
+  // never sees this). Leave the tile out and count it, so the end message says to run it again.
+  if (ra.failed || rb.failed) return { result: null, failed: 1 };
+  const failed = 0;
   const a = ra.got, b = rb.got;
   if (!a && !b) return { result: null, failed };
   const ref = (a ?? b)!;

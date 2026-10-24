@@ -37,24 +37,36 @@ export function drawBox(map: any, onDone: (bbox: Bbox) => void): () => void {
     const shift = (((west + 180) % 360) + 360) % 360 - 180 - west;    // back onto the main world copy
     return [west + shift, Math.min(a.lat, b.lat), Math.min(Math.max(a.lng, b.lng) + shift, 180), Math.max(a.lat, b.lat)];
   };
+  // Move and release are followed on the WINDOW, not the map: let go over a map button, the
+  // panel or past the map's edge and the map never hears the mouseup, so the box stayed half
+  // drawn and never finished. Outside the map the corner is clamped to its edge.
+  const at = (e: MouseEvent) => {
+    const r = canvas.getBoundingClientRect();
+    const x = Math.min(Math.max(e.clientX - r.left, 0), r.width), y = Math.min(Math.max(e.clientY - r.top, 0), r.height);
+    return map.unproject([x, y]);
+  };
   const down = (e: any) => { start = e.lngLat; };
-  const move = (e: any) => { if (start) showArea(map, box(start, e.lngLat)); };
+  const move = (e: MouseEvent) => { if (start) showArea(map, box(start, at(e))); };
   const cleanup = () => {
-    map.off("mousedown", down); map.off("mousemove", move); map.off("mouseup", up);
+    map.off("mousedown", down);
+    window.removeEventListener("mousemove", move);
+    window.removeEventListener("mouseup", up);
     canvas.style.cursor = "";
     map.getContainer?.()?.classList.remove("ecd-drawing");
     map.dragPan.enable();
     map.boxZoom.enable();
   };
-  function up(e: any) {
+  function up(e: MouseEvent) {
     if (!start) return;
-    const b = box(start, e.lngLat);
+    const b = box(start, at(e));
     start = null;
     if (b[0] === b[2] || b[1] === b[3]) return;                 // a click, not a drag
     cleanup();
     showArea(map, b);
     onDone(b);
   }
-  map.on("mousedown", down); map.on("mousemove", move); map.on("mouseup", up);
+  map.on("mousedown", down);
+  window.addEventListener("mousemove", move);
+  window.addEventListener("mouseup", up);
   return cleanup;
 }

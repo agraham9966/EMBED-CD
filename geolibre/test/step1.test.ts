@@ -19,7 +19,7 @@ test("progress reads busy, then counts tiles, then reports failures", () => {
   expect(progressText({ type: "tile", done: 1, total: 3 } as any)).toBe("1 of 3 tiles");
   expect(progressText({ type: "tile", done: 2, total: 12 } as any, 60)).toBe("2 of 12 tiles, about 5 min left");
   expect(progressText({ type: "tile", done: 12, total: 12 } as any, 60)).toBe("12 of 12 tiles");
-  expect(progressText({ type: "end", failed: 1, cancelled: false } as any)).toBe("Done. 1 tile(s) could not be read and are left out.");
+  expect(progressText({ type: "end", failed: 1, cancelled: false } as any)).toBe("Done. 1 tile(s) could not be downloaded and are left out. Make the change map again to fill them in.");
   expect(progressText({ type: "end", failed: 0, cancelled: true } as any)).toBe("Cancelled. The finished tiles are kept.");
   expect(progressText({ type: "end", failed: 0, cancelled: false } as any)).toBe("Done.");
 });
