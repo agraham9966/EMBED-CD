@@ -51,3 +51,17 @@ test("a failure to load the index is reported, not thrown", async () => {
   await startJob(spec, (e) => ev.push(e), broken).done;
   expect(ev).toEqual([{ type: "error", message: expect.stringContaining("offline") }]);
 });
+
+test("tile reads skip the browser's HTTP cache (it tripled a tile's read time)", async () => {
+  const { openNoStore } = await import("../src/workerlogic");
+  const seen: RequestInit[] = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (_u: unknown, init: RequestInit) => { seen.push(init); throw new Error("offline"); }) as any;
+  try {
+    await expect(openNoStore("https://example.com/x.tif")).rejects.toThrow();
+  } finally {
+    globalThis.fetch = real;
+  }
+  expect(seen.length).toBeGreaterThan(0);
+  expect(seen.every((i) => i.cache === "no-store")).toBe(true);
+});

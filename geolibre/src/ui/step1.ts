@@ -19,8 +19,21 @@ import type { Step2 } from "./step2";
 export const DETAIL: [string, number][] = [["10 m (full)", 10], ["20 m", 20], ["50 m", 50], ["75 m", 75], ["100 m", 100]];
 export const YEARS = [2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025];
 
+// Both years of one tile, measured here on a home connection: ~3-4 s at full detail and at coarse
+// Detail alike (QGIS's 11 s for a coarse tile does not hold for this reader). The live estimate
+// during a run replaces it with this connection's own speed.
+const SEC_PER_TILE = 4;
+
+export function durationText(sec: number): string {
+  const m = Math.round(sec / 60);
+  if (m < 1) return "under a minute";
+  if (m < 60) return `about ${m} min`;
+  return `about ${Math.floor(m / 60)} h` + (m % 60 ? ` ${m % 60} min` : "");
+}
+
 export function estimateText(e: { tiles: number; gb: number; px: number }, g: { width: number; height: number }): string {
-  return `${e.tiles} tiles, about ${e.gb.toFixed(1)} GB to read, output ${g.width} x ${g.height} px`;
+  const sec = e.tiles * SEC_PER_TILE;
+  return `${e.tiles} tiles, about ${e.gb.toFixed(1)} GB to read, ${durationText(sec)}, output ${g.width} x ${g.height} px`;
 }
 
 export function sizeWarning(px: number, detail: string): string {
@@ -29,9 +42,13 @@ export function sizeWarning(px: number, detail: string): string {
     : "";
 }
 
-export function progressText(e: JobEvent): string {
+/** `elapsed`: seconds since the run started, for the time left at this connection's own pace. */
+export function progressText(e: JobEvent, elapsed?: number): string {
   if (e.type === "plan") return "Starting: reading the first tile (the slowest one)...";
-  if (e.type === "tile") return `${e.done} of ${e.total} tiles`;
+  if (e.type === "tile") {
+    const left = e.done < e.total && elapsed ? `, ${durationText((elapsed / e.done) * (e.total - e.done))} left` : "";
+    return `${e.done} of ${e.total} tiles${left}`;
+  }
   if (e.cancelled) return "Cancelled. The finished tiles are kept.";
   return e.failed > 0 ? `Done. ${e.failed} tile(s) could not be read and are left out.` : "Done.";
 }
@@ -300,6 +317,7 @@ export function buildStep1(deps: Deps): {
     current = id;
     deps.onRunChanged?.(current);
     const hist = new Float64Array(HIST_BINS);
+    let started = performance.now();
     // Locked while running: switching area mid-run would send this job's tiles to another layer.
     picker.disabled = drawBtn.disabled = openBtn.disabled = saveBtn.disabled = true;
     bar.hidden = false;
@@ -312,7 +330,8 @@ export function buildStep1(deps: Deps): {
         status.textContent = `The job stopped: ${e.message}`;
         return;
       }
-      status.textContent = progressText(e);
+      if (e.type === "plan") started = performance.now();
+      status.textContent = progressText(e, (performance.now() - started) / 1000);
       if (e.type === "plan") {
         meta.grid = e.grid;
         refreshPicker(id);

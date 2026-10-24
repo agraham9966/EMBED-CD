@@ -2,7 +2,10 @@ import { estimateText, progressText, sizeWarning } from "../src/ui/step1";
 
 test("the estimate reads like QGIS", () => {
   expect(estimateText({ tiles: 4, gb: 0.536, px: 1_000_000 }, { width: 1000, height: 1000 }))
-    .toBe("4 tiles, about 0.5 GB to read, output 1000 x 1000 px");
+    .toBe("4 tiles, about 0.5 GB to read, under a minute, output 1000 x 1000 px");
+  expect(estimateText({ tiles: 40, gb: 5.4, px: 1 }, { width: 1, height: 1 })).toContain("about 3 min");
+  expect(estimateText({ tiles: 1000, gb: 1, px: 1 }, { width: 1, height: 1 })).toContain("about 1 h 7 min");   // ~4 s a tile
+  expect(estimateText({ tiles: 900, gb: 1, px: 1 }, { width: 1, height: 1 })).toContain("about 1 h,");
 });
 
 test("a very large map warns but does not block", () => {
@@ -14,6 +17,8 @@ test("a very large map warns but does not block", () => {
 test("progress reads busy, then counts tiles, then reports failures", () => {
   expect(progressText({ type: "plan", tiles: 3 } as any)).toBe("Starting: reading the first tile (the slowest one)...");
   expect(progressText({ type: "tile", done: 1, total: 3 } as any)).toBe("1 of 3 tiles");
+  expect(progressText({ type: "tile", done: 2, total: 12 } as any, 60)).toBe("2 of 12 tiles, about 5 min left");
+  expect(progressText({ type: "tile", done: 12, total: 12 } as any, 60)).toBe("12 of 12 tiles");
   expect(progressText({ type: "end", failed: 1, cancelled: false } as any)).toBe("Done. 1 tile(s) could not be read and are left out.");
   expect(progressText({ type: "end", failed: 0, cancelled: true } as any)).toBe("Cancelled. The finished tiles are kept.");
   expect(progressText({ type: "end", failed: 0, cancelled: false } as any)).toBe("Done.");

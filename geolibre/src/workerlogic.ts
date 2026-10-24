@@ -1,5 +1,5 @@
 // What the job worker does, separate from the Worker wiring so tests can run it in-process.
-import { fromUrl, type GeoTIFF } from "geotiff";
+import { BaseClient, BaseResponse, fromCustomClient, type GeoTIFF } from "geotiff";
 import { runJob, type JobEvent, type JobSpec } from "./engine/job";
 import { TileIndex } from "./engine/tileindex";
 
@@ -11,7 +11,24 @@ export type WorkerDeps = {
   tilePx?: number;
 };
 
-const defaultDeps: WorkerDeps = { loadIndex: () => TileIndex.load(), open: (url) => fromUrl(url) };
+// Tile reads skip the browser's HTTP cache. A tile is read once per run, never again, yet the
+// browser was writing every range of it to its disk cache: measured on one full tile, 8.6 s with
+// the cache against 2.8-3.2 s without (QGIS takes ~4.5 s). geotiff's own fetch client, plus
+// `cache: "no-store"`.
+class NoStoreResponse extends BaseResponse {
+  constructor(private r: Response) { super(); }
+  get status() { return this.r.status; }
+  getHeader(name: string) { return this.r.headers.get(name) ?? undefined; }
+  getData() { return this.r.arrayBuffer(); }
+}
+class NoStoreClient extends BaseClient {
+  async request({ headers, signal }: { headers?: HeadersInit; signal?: AbortSignal } = {}) {
+    return new NoStoreResponse(await fetch(this.url, { headers, signal, cache: "no-store" }));
+  }
+}
+export const openNoStore = (url: string) => fromCustomClient(new NoStoreClient(url) as any);
+
+const defaultDeps: WorkerDeps = { loadIndex: () => TileIndex.load(), open: openNoStore };
 
 export function createHandler(post: (msg: WorkerOut, transfer?: Transferable[]) => void, deps = defaultDeps) {
   let index: Promise<TileIndex> | null = null;     // kept for the worker's life: 4 MB, once
