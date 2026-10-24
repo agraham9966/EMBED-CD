@@ -9,17 +9,27 @@ import type { GeoLibreAppAPI } from "../host-api";
 
 export const CHANGE_OPACITY = 0.85;
 type RGBA = [number, number, number, number];
-const RAMP: [number, [number, number, number]][] = [[0, [0, 210, 235]], [0.4, [255, 225, 40]], [0.8, [235, 30, 30]]];
-const COVERAGE: RGBA[] = [[45, 50, 60, 60], [0, 0, 0, 0], [214, 60, 200, 220], [60, 170, 235, 220], [255, 255, 255, 230]];
+const TOP = 0.8;                                  // the ramp's top colour from this score up
+// "No data in either year" (mostly open sea) is a translucent grey, not near-white: white vanished
+// on GeoLibre's light default basemap and glared on imagery.
+const COVERAGE: RGBA[] = [[45, 50, 60, 60], [0, 0, 0, 0], [214, 60, 200, 220], [60, 170, 235, 220], [110, 115, 125, 170]];
 
-/** Cyan -> yellow -> red over 0..0.8; transparent at or below the cutoff and for no data. */
+/** Google's Turbo colormap (Mikhailov 2019, polynomial fit), t in 0..1: the ramp QGIS ships as
+ *  "Turbo". Dark blue, cyan, green, yellow, orange, dark red: every step visible on light basemaps
+ *  and on imagery alike, where the old cyan-yellow-red washed out on light ground. */
+export function turbo(t: number): [number, number, number] {
+  const x = Math.min(1, Math.max(0, t));
+  const r = 0.13572138 + x * (4.6153926 + x * (-42.66032258 + x * (132.13108234 + x * (-152.94239396 + x * 59.28637943))));
+  const g = 0.09140261 + x * (2.19418839 + x * (4.84296658 + x * (-14.18503333 + x * (4.27729857 + x * 2.82956604))));
+  const b = 0.1066733 + x * (12.64194608 + x * (-60.58204836 + x * (110.36276771 + x * (-89.90310912 + x * 27.34824973))));
+  return [r, g, b].map((v) => Math.round(255 * Math.min(1, Math.max(0, v)))) as [number, number, number];
+}
+
+/** Turbo over 0..0.8, from a tenth of the way in: the fit's first tenth is near-black, and Auto
+ *  cutoffs are often that low. Transparent at or below the cutoff and for no data. */
 export function scoreColour(v: number, cutoff: number): RGBA {
   if (v === NODATA || !(v > cutoff)) return [0, 0, 0, 0];
-  if (v >= RAMP[2][0]) return [...RAMP[2][1], 255];
-  const i = v < RAMP[1][0] ? 0 : 1;
-  const [a, ca] = RAMP[i], [b, cb] = RAMP[i + 1];
-  const t = (Math.max(v, 0) - a) / (b - a);
-  return [0, 1, 2].map((k) => Math.round(ca[k] + (cb[k] - ca[k]) * t)).concat(255) as RGBA;
+  return [...turbo(0.1 + 0.9 * Math.min(Math.max(v, 0) / TOP, 1)), 255];
 }
 
 export const coverageColour = (code: number): RGBA => COVERAGE[code] ?? [0, 0, 0, 0];
@@ -27,7 +37,7 @@ export const coverageColour = (code: number): RGBA => COVERAGE[code] ?? [0, 0, 0
 /** RGBA as one little-endian 32-bit pixel, for writing an ImageData through a Uint32Array. */
 const pack = ([r, g, b, a]: RGBA) => (r | (g << 8) | (b << 16) | (a << 24)) >>> 0;
 // The ramp in steps of 0.001 (indistinguishable on screen); everything past 0.8 is the top colour.
-const LUT_STEPS = 1000 * RAMP[2][0];
+const LUT_STEPS = 1000 * TOP;
 const SCORE_LUT = Uint32Array.from({ length: LUT_STEPS + 1 }, (_, i) => pack(scoreColour(i / 1000, -Infinity)));
 const COVERAGE_PX = COVERAGE.map(pack);
 

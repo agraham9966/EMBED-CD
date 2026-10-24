@@ -66,6 +66,8 @@ type Deps = {
   onChange?: () => void;
   /** A new area was drawn: the steps may move forward again once it has a result. */
   onAreaDrawn?: () => void;
+  /** A run is starting: put its after year's imagery under it (unless already there). */
+  onRunStart?: (yearB: number) => void;
 };
 
 export function buildStep1(deps: Deps): {
@@ -327,6 +329,7 @@ export function buildStep1(deps: Deps): {
     status.textContent = "Checking coverage...";
     runBtn.disabled = true;
     cancelBtn.hidden = false;
+    deps.onRunStart?.(spec.yearB);
     job = deps.startJob(spec, (e) => {
       if (e.type === "error") {
         status.textContent = `The job stopped: ${e.message}`;

@@ -24,10 +24,11 @@ test("labels and predictions are written onto the objects; the current one is hi
   L.update(["cutblock", "unknown"], new Map([[0, "cutblock"]]), { cutblock: "#d85a30" }, Float64Array.from([0.9, 0.4]));
   expect(data.features.map((f: any) => [f.properties.predicted, f.properties.label, f.properties.confidence])).toEqual(
     [["cutblock", "cutblock", 0.9], ["unknown", "", 0.4]]);
-  expect(layers.map((l) => l.id)).toEqual(["ecd-r-objects-fill", "ecd-r-objects-line", "ecd-r-objects-labelled", "ecd-r-objects-current"]);
-  expect(layers[1].filter).toEqual(["==", ["get", "label"], ""]);
-  expect(layers[2].filter).toEqual(["!=", ["get", "label"], ""]);
-  expect(layers[2].paint["line-dasharray"]).toBeTruthy();
+  expect(layers.map((l) => l.id)).toEqual(["ecd-r-objects-fill", "ecd-r-objects-casing", "ecd-r-objects-line", "ecd-r-objects-labelled", "ecd-r-objects-current"]);
+  expect(layers[1].paint["line-color"]).toMatch(/^rgba\(20,22,28/);   // a dark edge under every outline
+  expect(layers[2].filter).toEqual(["==", ["get", "label"], ""]);
+  expect(layers[3].filter).toEqual(["!=", ["get", "label"], ""]);
+  expect(layers[3].paint["line-dasharray"]).toBeTruthy();
   L.highlight(1);
-  expect(layers[3].filter).toEqual(["==", ["get", "id"], 2]);
+  expect(layers[4].filter).toEqual(["==", ["get", "id"], 2]);
 });

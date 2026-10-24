@@ -8,7 +8,7 @@ import { buildStep2 } from "./ui/step2";
 import { buildStep3 } from "./ui/step3";
 import { Accordion } from "./ui/accordion";
 import { el } from "./ui/dom";
-import { buildPhotos } from "./ui/photos";
+import { buildPhotos, showPhoto } from "./ui/photos";
 
 export const PANEL_ID = "embed-cd-panel";
 
@@ -45,7 +45,10 @@ export function registerPanel(app: GeoLibreAppAPI): () => void {
       step1 = buildStep1({ app, runs: sessionRuns, step2, loadIndex: () => TileIndex.load(), startJob,
         onRunChanged: (id) => { step3.runChanged(id); refresh(); },
         onChange: refresh,
-        onAreaDrawn: () => { acc.resetFold("step1"); acc.resetFold("step2"); acc.open(0); } });
+        onAreaDrawn: () => { acc.resetFold("step1"); acc.resetFold("step2"); acc.open(0); },
+        // The after year's imagery under the result: the default basemap is light, and the change
+        // map and outlines all but vanished on it. Imagery is also what you check a change against.
+        onRunStart: (yearB) => showPhoto(app, yearB) });
       acc.add(step1.root);
       acc.add(step2.root);
       acc.add(step3.root);

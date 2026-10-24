@@ -80,5 +80,5 @@ test("outlines are drawn a hair thicker than before (2.6 px)", async () => {
   const layers: any[] = [];
   const map: any = { style: { _loaded: true }, on() {}, off() {}, getSource: () => undefined, addSource() {}, addLayer: (l: any) => layers.push(l) };
   new ObjectsLayer({ getMap: () => map } as any, "r", "x").set([], { crs: "EPSG:32610", x0: 0, y0: 0, res: 10, width: 1, height: 1 });
-  expect(layers.find((l) => l.type === "line").paint["line-width"].at(-1)).toBe(2.6);   // not classified yet
+  expect(layers.find((l) => l.id.endsWith("-line")).paint["line-width"].at(-1)).toBe(2.6);   // not classified yet
 });

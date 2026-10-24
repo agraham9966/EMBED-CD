@@ -123,3 +123,23 @@ test("reference imagery: each year is its own layer at the bottom of the Layers 
   clearPhotos(app);
   expect(layers.map((l) => l.id)).toEqual(["bg", "change"]);
 });
+
+test("Make change map adds the after year's imagery once, and not when that EOX year is already open", async () => {
+  const { showPhoto } = await import("../src/ui/photos");
+  const layers: { id: string; type: string }[] = [{ id: "bg", type: "background" }];
+  const added: string[] = [];
+  const app: any = {
+    listLayers: () => layers,
+    addTileLayer: (name: string) => { added.push(name); layers.push({ id: `p${added.length}`, type: "raster" }); return `p${added.length}`; },
+    removeLayer: (id: string) => layers.splice(layers.findIndex((l) => l.id === id), 1),
+  };
+  const root = buildPhotos(app);
+  showPhoto(app, 2024);
+  showPhoto(app, 2024);                                          // a second run with the same years
+  expect(added).toEqual(["Sentinel-2 cloudless 2024 (EOX)"]);
+  expect([...root.querySelectorAll(".ecd-on")].map((b) => b.textContent)).toEqual(["24"]);
+  [...root.querySelectorAll("button")].find((b) => b.textContent === "17")!.click();   // 2016 mosaic
+  showPhoto(app, 2016);
+  expect(added).toEqual(["Sentinel-2 cloudless 2024 (EOX)", "Sentinel-2 cloudless 2016 (EOX)"]);
+  clearPhotos(app);
+});

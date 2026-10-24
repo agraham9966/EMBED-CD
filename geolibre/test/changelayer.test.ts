@@ -1,13 +1,14 @@
-import { scoreColour, scoreColours, coverageColour, tileCorners, ChangeLayer, CHANGE_OPACITY } from "../src/map/changelayer";
+import { turbo, scoreColour, scoreColours, coverageColour, tileCorners, ChangeLayer, CHANGE_OPACITY } from "../src/map/changelayer";
 import { transformer } from "../src/engine/crs";
 import type { Grid } from "../src/engine/grid";
 
-test("the score ramp matches the QGIS layer", () => {
-  expect(scoreColour(0.0, -1)).toEqual([0, 210, 235, 255]);
-  expect(scoreColour(0.2, -1)).toEqual([128, 218, 138, 255]);
-  expect(scoreColour(0.4, -1)).toEqual([255, 225, 40, 255]);
-  expect(scoreColour(0.8, -1)).toEqual([235, 30, 30, 255]);
-  expect(scoreColour(1.0, -1)).toEqual([235, 30, 30, 255]);
+test("the score ramp is Turbo (blue, cyan, green, yellow, red) over 0..0.8", () => {
+  expect(turbo(0.5)).toEqual([150, 250, 80]);                  // the fit's green-yellow middle
+  expect(scoreColour(0.0, -1)).toEqual([...turbo(0.1), 255]);  // starts at blue, not near-black
+  const [r, g, b] = scoreColour(0.0, -1);
+  expect(b).toBeGreaterThan(r + 100);
+  expect(scoreColour(0.8, -1)).toEqual([...turbo(1), 255]);
+  expect(scoreColour(1.0, -1)).toEqual([...turbo(1), 255]);
   expect(CHANGE_OPACITY).toBe(0.85);
 });
 
@@ -19,7 +20,7 @@ test("at or below the cutoff, and nodata, are transparent", () => {
 
 test("coverage colours match the QGIS legend", () => {
   expect([0, 1, 2, 3, 4].map(coverageColour)).toEqual([
-    [45, 50, 60, 60], [0, 0, 0, 0], [214, 60, 200, 220], [60, 170, 235, 220], [255, 255, 255, 230]]);
+    [45, 50, 60, 60], [0, 0, 0, 0], [214, 60, 200, 220], [60, 170, 235, 220], [110, 115, 125, 170]]);
 });
 
 test("tile corners are the window corners in lon/lat", () => {

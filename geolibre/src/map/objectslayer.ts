@@ -61,7 +61,7 @@ export class ObjectsLayer {
 
   private onStyle = () => this.addToMap();
   private get layerIds() {
-    return [`${this.id}-fill`, `${this.id}-line`, `${this.id}-labelled`, `${this.id}-current`];
+    return [`${this.id}-fill`, `${this.id}-casing`, `${this.id}-line`, `${this.id}-labelled`, `${this.id}-current`];
   }
 
   /** Object `row` as GeoJSON (lon/lat), or null. */
@@ -116,6 +116,7 @@ export class ObjectsLayer {
       map.setPaintProperty(l, "line-color", s.lineColor);
       map.setPaintProperty(l, "line-width", s.lineWidth);
     }
+    map.setPaintProperty(`${this.id}-casing`, "line-width", ["+", s.lineWidth, 2]);
   }
 
   private addToMap(): void {
@@ -125,6 +126,10 @@ export class ObjectsLayer {
     const s = objectStyle(this.colors);
     map.addSource(this.id, { type: "geojson", data: this.fc });
     map.addLayer({ id: `${this.id}-fill`, type: "fill", source: this.id, layout, paint: { "fill-color": s.fill } });
+    // A thin dark edge under every outline, so the white "not classified" lines still show on a
+    // light basemap (and class colours keep an edge on bright imagery).
+    map.addLayer({ id: `${this.id}-casing`, type: "line", source: this.id, layout,
+      paint: { "line-color": "rgba(20,22,28,0.55)", "line-width": ["+", s.lineWidth, 2] } });
     map.addLayer({ id: `${this.id}-line`, type: "line", source: this.id, layout, filter: ["==", ["get", "label"], ""],
       paint: { "line-color": s.lineColor, "line-width": s.lineWidth } });
     map.addLayer({ id: `${this.id}-labelled`, type: "line", source: this.id, layout, filter: ["!=", ["get", "label"], ""],

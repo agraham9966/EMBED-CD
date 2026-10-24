@@ -18,6 +18,31 @@ function prune(app: GeoLibreAppAPI): void {
   for (const [y, id] of photoIds) if (!have.has(id)) photoIds.delete(y);
 }
 
+/** Strips on screen re-read the loaded years through this (one panel at a time). */
+let resync: (() => void) | null = null;
+
+/** Make sure `year`'s imagery is on the map (Make change map puts the after year under the
+ *  result). Nothing is added when the same EOX year is already loaded, from the strip or an
+ *  earlier run: 2017 and 2016 are one mosaic. */
+export function showPhoto(app: GeoLibreAppAPI, year: number): void {
+  prune(app);
+  const got = nearestYear(year);
+  if ([...photoIds.keys()].some((y) => nearestYear(y) === got)) return;
+  addPhoto(app, year);
+  resync?.();
+}
+
+function addPhoto(app: GeoLibreAppAPI, y: number): void {
+  if (typeof (app as any).addTileLayer !== "function") return;
+  const got = nearestYear(y);
+  // Bottom of the panel, just above the basemap: a backdrop to check the change map against,
+  // never a cover over it.
+  const bottom = layers(app).find((l) => l.type !== "background")?.id;
+  photoIds.set(y, (app as any).addTileLayer(layerName(got), tileUrl(got), {
+    attribution: ATTRIBUTION, maxzoom: ZMAX, ...(bottom ? { beforeLayerId: bottom } : {}),
+  }));
+}
+
 /** Remove every photo layer (the plugin is being switched off). */
 export function clearPhotos(app: GeoLibreAppAPI): void {
   for (const id of photoIds.values()) (app as any).removeLayer?.(id);
@@ -62,13 +87,8 @@ export function buildPhotos(app: GeoLibreAppAPI): HTMLElement {
       photoIds.delete(y);
     } else {
       const got = nearestYear(y);
-      // Bottom of the panel, just above the basemap: a backdrop to check the change map against,
-      // never a cover over it.
-      const bottom = layers(app).find((l) => l.type !== "background")?.id;
       try {
-        photoIds.set(y, (app as any).addTileLayer(layerName(got), tileUrl(got), {
-          attribution: ATTRIBUTION, maxzoom: ZMAX, ...(bottom ? { beforeLayerId: bottom } : {}),
-        }));
+        addPhoto(app, y);
         setStatus(got === y ? "" : `No ${y} mosaic: showing ${got}.`);
       } catch (e) {
         setStatus(`Could not add ${got} imagery: ${(e as Error)?.message ?? e}`);
@@ -77,6 +97,7 @@ export function buildPhotos(app: GeoLibreAppAPI): HTMLElement {
     sync();
   }
 
+  resync = sync;
   sync();
   return root;
 }
