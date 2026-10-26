@@ -19,8 +19,8 @@ const outputPath = join(bundleDir, `${manifest.id}-${manifest.version}.zip`);
 const distFiles = (await readdir(join(bundleDir, "dist"))).sort();
 const entryCode = await readFile(join(bundleDir, manifest.entry), "utf8");
 const relative = entryCode.match(/(?:from\s*|import\s*\()\s*["'`]\.\.?\//);
-if (distFiles.join(",") !== "index.js,style.css" || relative) {
-  console.error(`Refusing to package: dist/ must hold only index.js and style.css with no relative imports. ` +
+if (distFiles.join(",") !== "index.js" || relative) {
+  console.error(`Refusing to package: dist/ must hold only index.js (the CSS is inlined into it) with no relative imports. ` +
     `Found: ${distFiles.join(", ")}${relative ? `; relative import "${relative[0]}"` : ""}`);
   process.exit(1);
 }
