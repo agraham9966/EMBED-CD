@@ -70,12 +70,21 @@ type Drawn = {
 /** The style has its JSON (sources and layers can be added). */
 export const styleReady = (map: any): boolean => !!map?.style?._loaded;
 
+/** The user removed layer `id` in the Layers panel (false where GeoLibre cannot say). */
+export function removedByUser(app: GeoLibreAppAPI, id: string): boolean {
+  const listed = (app as any).listLayers?.() as { id: string }[] | undefined;
+  return !!listed && !listed.some((l) => l.id === id);
+}
+
 export class ChangeLayer {
   private tiles: Drawn[] = [];
   private cutoff = 0.15;
   private pending = false;
   private visible = { change: true, coverage: true };
   private bounds: Bbox | null = null;            // lon/lat, for GeoLibre's Zoom to layer
+  private registered = false;
+  /** Change or coverage, removed by the user in the Layers panel: never put back by this layer. */
+  private dropped = new Set<string>();
   /** The run's Layers-panel group, set before the first tile is registered. */
   groupId?: string;
   readonly changeId: string;
@@ -94,7 +103,32 @@ export class ChangeLayer {
     this.map?.on?.("style.load", this.onStyle);
   }
 
-  private onStyle = () => this.tiles.forEach((_, i) => this.addToMap(i));
+  private onStyle = () => {
+    this.prune();
+    this.tiles.forEach((_, i) => this.addToMap(i));
+  };
+
+  /** Notice layers the user removed, and take what is left of them off the map. */
+  private prune(): void {
+    if (!this.registered) return;
+    for (const base of [this.changeId, this.coverageId]) {
+      if (this.dropped.has(base) || !removedByUser(this.app, base)) continue;
+      this.dropped.add(base);
+      this.removeNative(base);
+    }
+  }
+
+  /** Both layers still on the map. */
+  get intact(): boolean {
+    this.prune();
+    return this.dropped.size === 0;
+  }
+
+  /** Either layer still on the map. */
+  get shown(): boolean {
+    this.prune();
+    return this.dropped.size < 2;
+  }
 
   private get map(): any {
     return (this.app as any).getMap?.();
@@ -104,6 +138,7 @@ export class ChangeLayer {
   addTile(grid: Grid, result: TileResult): void {
     const map = this.map;
     if (!map) return;
+    this.prune();
     const i = this.tiles.length;
     this.bounds ??= transformBounds(grid.crs, "EPSG:4326",
       [grid.x0, grid.y0 - grid.height * grid.res, grid.x0 + grid.width * grid.res, grid.y0]);
@@ -133,18 +168,23 @@ export class ChangeLayer {
   /** Add tile i's sources and layers, unless the style is mid-swap (style.load re-adds them). */
   private addToMap(i: number): void {
     const map = this.map, t = this.tiles[i];
-    if (!map || !t || !styleReady(map) || map.getSource(`${this.changeId}-${i}`)) return;
+    if (!map || !t || !styleReady(map)) return;
     const { coordinates } = t;
-    map.addSource(`${this.coverageId}-${i}`, { type: "canvas", canvas: t.covCanvas, coordinates, animate: false });
-    map.addSource(`${this.changeId}-${i}`, { type: "canvas", canvas: t.canvas, coordinates, animate: false });
-    // Coverage goes under every change tile; change tiles stack on top.
-    map.addLayer({ id: `${this.coverageId}-${i}`, type: "raster", source: `${this.coverageId}-${i}`,
-      layout: { visibility: this.visible.coverage ? "visible" : "none" },
-      paint: { "raster-fade-duration": 0, "raster-resampling": "nearest" } },
-      map.getLayer(`${this.changeId}-0`) ? `${this.changeId}-0` : undefined);
-    map.addLayer({ id: `${this.changeId}-${i}`, type: "raster", source: `${this.changeId}-${i}`,
-      layout: { visibility: this.visible.change ? "visible" : "none" },
-      paint: { "raster-opacity": CHANGE_OPACITY, "raster-fade-duration": 0, "raster-resampling": "nearest" } });
+    const cov = `${this.coverageId}-${i}`, chg = `${this.changeId}-${i}`;
+    if (!this.dropped.has(this.coverageId) && !map.getSource(cov)) {
+      map.addSource(cov, { type: "canvas", canvas: t.covCanvas, coordinates, animate: false });
+      // Coverage goes under every change tile; change tiles stack on top.
+      map.addLayer({ id: cov, type: "raster", source: cov,
+        layout: { visibility: this.visible.coverage ? "visible" : "none" },
+        paint: { "raster-fade-duration": 0, "raster-resampling": "nearest" } },
+        map.getLayer(`${this.changeId}-0`) ? `${this.changeId}-0` : undefined);
+    }
+    if (!this.dropped.has(this.changeId) && !map.getSource(chg)) {
+      map.addSource(chg, { type: "canvas", canvas: t.canvas, coordinates, animate: false });
+      map.addLayer({ id: chg, type: "raster", source: chg,
+        layout: { visibility: this.visible.change ? "visible" : "none" },
+        paint: { "raster-opacity": CHANGE_OPACITY, "raster-fade-duration": 0, "raster-resampling": "nearest" } });
+    }
   }
 
   /** Coalesced to one recolour per frame: dragging the slider never queues work up. */
@@ -212,6 +252,7 @@ export class ChangeLayer {
       [this.changeId, `Change ${this.label}`, "change", CHANGE_OPACITY],
       [this.coverageId, `Data coverage ${this.label}`, "coverage", 1],
     ] as const) {
+      if (this.dropped.has(id)) continue;
       reg.call(this.app, {
         id, name, type: "raster", nativeLayerIds: this.ids(id), sourceIds: this.ids(id), opacity,
         metadata: this.bounds ? { bounds: this.bounds } : {}, groupId: this.groupId,
@@ -225,17 +266,22 @@ export class ChangeLayer {
         },
       } as any);
     }
+    this.registered = true;
+  }
+
+  private removeNative(base: string): void {
+    const map = this.map;
+    for (const id of this.ids(base)) {
+      if (map?.getLayer(id)) map.removeLayer(id);
+      if (map?.getSource(id)) map.removeSource(id);
+    }
   }
 
   /** Remove every layer and source this run added. */
   clear(): void {
-    const map = this.map;
-    map?.off?.("style.load", this.onStyle);
+    this.map?.off?.("style.load", this.onStyle);
     for (const base of [this.changeId, this.coverageId]) {
-      for (const id of this.ids(base)) {
-        if (map?.getLayer(id)) map.removeLayer(id);
-        if (map?.getSource(id)) map.removeSource(id);
-      }
+      this.removeNative(base);
       this.app.unregisterExternalNativeLayer?.(base);
     }
     this.tiles = [];

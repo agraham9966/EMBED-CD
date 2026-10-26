@@ -12,7 +12,7 @@ import { ChangeLayer } from "../map/changelayer";
 import { drawBox, showArea } from "../map/drawbox";
 import { saveBinary } from "../export";
 import { cellsOf, readRunFile, runFileName, writeRunFile } from "../runfile";
-import { autoName, groupName, resolveGroup, runLabel, runName, type RunRecord, type SessionRuns } from "../runs";
+import { autoName, ensureGroup, groupName, resolveGroup, runLabel, runName, type RunRecord, type SessionRuns } from "../runs";
 import { el, row, select } from "./dom";
 import type { Step2 } from "./step2";
 
@@ -112,7 +112,10 @@ export function buildStep1(deps: Deps): {
   const saveBtn = el("button", "ecd-btn", "Save run...") as HTMLButtonElement;
   saveBtn.title = "Runs are temporary. Save one to a file to keep it; Open run brings it back.";
   const openBtn = el("button", "ecd-btn", "Open run...") as HTMLButtonElement;
-  root.append(row(el("span", "", "Area"), picker), row(drawBtn, openBtn, saveBtn), row(el("span", "", "Name"), nameIn),
+  const discardBtn = el("button", "ecd-btn", "Discard run") as HTMLButtonElement;
+  discardBtn.title = "Remove this run from EMBED-CD and its layers from the map. A file you saved it to is not touched.\n\n"
+    + "Removing its layers in the Layers panel only takes it off the map: it stays in the Area list.";
+  root.append(row(el("span", "", "Area"), picker), row(drawBtn, openBtn, saveBtn, discardBtn), row(el("span", "", "Name"), nameIn),
     row(el("span", "", "From"), yearA, el("span", "", "To"), yearB),
     row(el("span", "", "Detail"), detail), est, warn, row(runBtn));
 
@@ -145,10 +148,15 @@ export function buildStep1(deps: Deps): {
 
   let current: string | null = null;              // the run on the map
   function refreshPicker(select_?: string) {
-    picker.replaceChildren(new Option("New area", ""), ...runs.list().map((r) => new Option(runLabel(r), r.id)));
+    picker.replaceChildren(new Option("New area", ""), ...runs.list().map((r) => new Option(runLabel(r, !runs.onMap(r.id)), r.id)));
     picker.value = select_ ?? "";
-    saveBtn.disabled = !current || !!job;
+    saveBtn.disabled = discardBtn.disabled = !current || !!job;
   }
+  // Layers removed in the Layers panel send no event: read the map afresh as the list opens. A
+  // run off the map is not left selected, so choosing it is a change that puts it back.
+  picker.onpointerdown = picker.onfocus = () => {
+    if (!job) refreshPicker(picker.value && runs.onMap(picker.value) ? picker.value : undefined);
+  };
 
   function show(meta: RunRecord, tiles: TileResult[]) {
     bbox = meta.bbox;
@@ -156,15 +164,17 @@ export function buildStep1(deps: Deps): {
     nameIn.value = meta.userName ?? "";
     nameIn.placeholder = autoName(meta.bbox);
     current = meta.id;
-    deps.onRunChanged?.(current);
     yearA.value = String(meta.yearA);
     yearB.value = String(meta.yearB);
     detail.value = DETAIL.find(([, v]) => v === meta.resM)?.[0] ?? detail.value;
     showArea(map(), bbox);
     const r = runs.get(meta.id)!;
+    // Some of it removed in the Layers panel: choosing the run puts its layers back (as in QGIS).
+    if (r.change && !r.change.intact) { r.change.clear(); r.change = undefined; }
     const fresh = !r.change;                         // already on the map: reuse, never add twice
     layer = layerFor(meta);
     if (fresh) for (const t of tiles) layer.addTile(meta.grid, t);
+    deps.onRunChanged?.(current);                    // after the change map, so objects go on top of it
     step2.setHist(Float64Array.from(meta.histTotal.length ? meta.histTotal : sumHist(tiles)));
     layer!.setCutoff(step2.cutoff());
     void refreshEstimate();
@@ -183,7 +193,7 @@ export function buildStep1(deps: Deps): {
       current = null;
       layer = null;
       deps.onRunChanged?.(null);
-      saveBtn.disabled = true;
+      saveBtn.disabled = discardBtn.disabled = true;
     }
     bbox = b;
     nameIn.placeholder = autoName(b);
@@ -222,11 +232,7 @@ export function buildStep1(deps: Deps): {
   function layerFor(meta: RunRecord): ChangeLayer {
     const r = runs.get(meta.id)!;
     if (!r.change) {
-      if (!meta.groupId) {
-        const taken = ((app as any).listLayerGroups?.() ?? []).map((g: { name: string }) => g.name);
-        meta.group = resolveGroup(groupName(meta.userName ?? "", autoName(meta.bbox), meta.yearA, meta.yearB), taken);
-        meta.groupId = (app as any).addLayerGroup?.(meta.group) ?? undefined;
-      }
+      ensureGroup(app, meta);
       r.change = new ChangeLayer(app, meta.id, `${meta.yearA}-${meta.yearB}`);
       r.change.groupId = meta.groupId;
     }
@@ -266,6 +272,7 @@ export function buildStep1(deps: Deps): {
       const file = runFileName(r.meta);
       const blob = await writeRunFile(r.meta, r.tiles, cellsOf(r.tiles, r.cells), { objects: r.objects, labelState: r.labelState });
       const res = await saveBinary(file, blob, { "application/zip": [".zip"] });
+      if (res.method !== "cancelled") r.meta.saved = true;
       status.textContent = { picker: `Saved ${file}.`, download: `Sent as a download: ${file}.`, host: `Saved ${file}.`, cancelled: "Not saved." }[res.method];
     } catch (e) {
       status.textContent = `Could not save the run: ${(e as Error)?.message ?? e}`;
@@ -281,6 +288,7 @@ export function buildStep1(deps: Deps): {
       if (!f) return;
       try {
         const { meta, tiles, cells, objects, labelState } = await readRunFile(await f.arrayBuffer());
+        meta.saved = true;
         if (!runs.get(meta.id)) {
           meta.groupId = undefined;                   // a fresh session: its group is made anew
           runs.start(meta);
@@ -300,6 +308,27 @@ export function buildStep1(deps: Deps): {
       }
     };
     input.click();
+  };
+
+  // An unsaved run cannot be brought back: the first click says so, a second within 5 s discards.
+  let armed = 0;
+  discardBtn.onclick = () => {
+    const r = current ? runs.get(current) : null;
+    if (!r || job) return;
+    if (!r.meta.saved && Date.now() - armed > 5000) {
+      armed = Date.now();
+      status.textContent = "This run was never saved, so it cannot be brought back. Click Discard run again to discard it.";
+      return;
+    }
+    armed = 0;
+    runs.remove(r.meta.id);
+    if (r.meta.groupId) (app as any).removeLayerGroup?.(r.meta.groupId);
+    current = null;
+    layer = null;
+    deps.onRunChanged?.(null);
+    refreshPicker();
+    status.textContent = `Discarded ${runLabel(r.meta)}.`;
+    deps.onChange?.();
   };
 
   cancelBtn.onclick = () => {
@@ -323,7 +352,7 @@ export function buildStep1(deps: Deps): {
     const hist = new Float64Array(HIST_BINS);
     let started = performance.now();
     // Locked while running: switching area mid-run would send this job's tiles to another layer.
-    picker.disabled = drawBtn.disabled = openBtn.disabled = saveBtn.disabled = true;
+    picker.disabled = drawBtn.disabled = openBtn.disabled = saveBtn.disabled = discardBtn.disabled = true;
     bar.hidden = false;
     bar.removeAttribute("value");                    // busy until the first tile lands
     status.textContent = "Checking coverage...";

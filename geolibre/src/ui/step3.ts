@@ -7,7 +7,7 @@ import type { GeoLibreAppAPI } from "../host-api";
 import { ObjectsLayer } from "../map/objectslayer";
 import { buildClassify } from "./classify";
 import { cellsOf } from "../runfile";
-import type { SessionRuns } from "../runs";
+import { ensureGroup, type SessionRuns } from "../runs";
 import { el, row } from "./dom";
 
 export class Cancelled extends Error {}
@@ -109,11 +109,15 @@ export function buildStep3(deps: Deps): { root: HTMLElement; runChanged(id: stri
     count.textContent = "";
     const r = id ? deps.runs.get(id) : null;
     if (!r?.objects) return;
+    // Removed in the Layers panel: choosing the run, or making objects again, puts them back.
+    if (r.objectsLayer && !r.objectsLayer.intact) { r.objectsLayer.clear(); r.objectsLayer = undefined; }
+    if (!r.objectsLayer || recut) ensureGroup(deps.app, r.meta);
     if (!r.objectsLayer) {
       r.objectsLayer = new ObjectsLayer(deps.app, r.meta.id, `${r.meta.yearA}-${r.meta.yearB}`);
       r.objectsLayer.groupId = r.meta.groupId;
       r.objectsLayer.set(r.objects.polys, r.meta.grid);
     } else if (recut) {
+      r.objectsLayer.groupId = r.meta.groupId;
       r.objectsLayer.set(r.objects.polys, r.meta.grid);
     }
     layer = r.objectsLayer;

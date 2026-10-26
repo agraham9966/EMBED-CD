@@ -82,3 +82,24 @@ test("outlines are drawn a hair thicker than before (2.6 px)", async () => {
   new ObjectsLayer({ getMap: () => map } as any, "r", "x").set([], { crs: "EPSG:32610", x0: 0, y0: 0, res: 10, width: 1, height: 1 });
   expect(layers.find((l) => l.id.endsWith("-line")).paint["line-width"].at(-1)).toBe(2.6);   // not classified yet
 });
+
+test("objects removed in the Layers panel are not put back by labelling; Generate again shows them", async () => {
+  const { ObjectsLayer } = await import("../src/map/objectslayer");
+  const sources = new Set<string>(), store = new Set<string>();
+  const map: any = { style: { _loaded: true }, on() {}, off() {}, getSource: (id: string) => (sources.has(id) ? { setData() {} } : undefined),
+    addSource: (id: string) => sources.add(id), addLayer() {}, getLayer: () => true, removeLayer() {},
+    removeSource: (id: string) => sources.delete(id), setPaintProperty() {}, setFilter() {} };
+  const app: any = { getMap: () => map, registerExternalNativeLayer: (r: any) => store.add(r.id),
+    unregisterExternalNativeLayer: (id: string) => store.delete(id), listLayers: () => [...store].map((id) => ({ id })) };
+  const grid = { crs: "EPSG:32610", x0: 500000, y0: 5500000, res: 10, width: 10, height: 10 };
+  const polys = [{ rings: [[[500000, 5500000], [500000, 5499990], [500010, 5499990], [500000, 5500000]] as [number, number][]], areaHa: 0.01, chgMean: 0.4, chgMax: 0.5, nPx: 1 }];
+  const layer = new ObjectsLayer(app, "r", "2019-2024");
+  layer.set(polys, grid);
+  store.clear();                                                  // the user deletes it
+  layer.update(["cut"], new Map([[0, "cut"]]), { cut: "#ff0000" });
+  expect(store.size).toBe(0);
+  expect(sources.size).toBe(0);
+  expect(layer.data!.features[0].properties!.label).toBe("cut");  // labelling itself goes on
+  layer.set(polys, grid);
+  expect(store.has("ecd-r-objects")).toBe(true);
+});

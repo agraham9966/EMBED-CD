@@ -7,7 +7,7 @@ import { transformer } from "../engine/crs";
 import type { Grid } from "../engine/grid";
 import type { ObjectPoly } from "../engine/objects";
 import type { GeoLibreAppAPI } from "../host-api";
-import { styleReady } from "./changelayer";
+import { removedByUser, styleReady } from "./changelayer";
 
 export function objectsGeoJSON(polys: ObjectPoly[], grid: Grid): FeatureCollection {
   const f = transformer(grid.crs, "EPSG:4326");
@@ -47,6 +47,9 @@ export class ObjectsLayer {
   private visible = true;
   private colors: Record<string, string> = {};
   private current: number | null = null;
+  private registered = false;
+  /** Removed by the user in the Layers panel: labelling goes on, but the layer is never put back. */
+  private dropped = false;
   /** The run's Layers-panel group. */
   groupId?: string;
 
@@ -59,7 +62,16 @@ export class ObjectsLayer {
     return (this.app as any).getMap?.();
   }
 
-  private onStyle = () => this.addToMap();
+  private onStyle = () => { if (this.intact) this.addToMap(); };
+
+  /** Still on the map (the user can remove it in the Layers panel). */
+  get intact(): boolean {
+    if (this.registered && !this.dropped && removedByUser(this.app, this.id)) {
+      this.dropped = true;
+      this.removeNative();
+    }
+    return !this.dropped;
+  }
   private get layerIds() {
     return [`${this.id}-fill`, `${this.id}-casing`, `${this.id}-line`, `${this.id}-labelled`, `${this.id}-current`];
   }
@@ -79,8 +91,10 @@ export class ObjectsLayer {
     return `${this.id}-fill`;
   }
 
+  /** New objects (Generate again): shown even if the old ones were removed from the map. */
   set(polys: ObjectPoly[], grid: Grid): void {
     this.fc = objectsGeoJSON(polys, grid);
+    this.dropped = false;
     this.push();
     this.register();
   }
@@ -92,6 +106,7 @@ export class ObjectsLayer {
     this.fc.features.forEach((f, i) => {
       Object.assign(f.properties!, { predicted: pred?.[i] ?? "", label: labels.get(i) ?? "", confidence: conf ? conf[i] : 0 });
     });
+    if (!this.intact) return;
     this.push();
     this.restyle();
     this.register();
@@ -155,13 +170,18 @@ export class ObjectsLayer {
         },
       },
     } as any);
+    this.registered = true;
+  }
+
+  private removeNative(): void {
+    const map = this.map;
+    for (const l of [...this.layerIds].reverse()) if (map?.getLayer(l)) map.removeLayer(l);
+    if (map?.getSource(this.id)) map.removeSource(this.id);
   }
 
   clear(): void {
-    const map = this.map;
-    map?.off?.("style.load", this.onStyle);
-    for (const l of [...this.layerIds].reverse()) if (map?.getLayer(l)) map.removeLayer(l);
-    if (map?.getSource(this.id)) map.removeSource(this.id);
+    this.map?.off?.("style.load", this.onStyle);
+    this.removeNative();
     this.app.unregisterExternalNativeLayer?.(this.id);
     this.fc = null;
   }

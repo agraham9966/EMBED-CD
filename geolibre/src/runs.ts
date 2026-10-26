@@ -19,6 +19,8 @@ export type RunRecord = {
   group?: string; groupId?: string;
   bbox: Bbox; yearA: number; yearB: number; resM: number; grid: Grid;
   histTotal: number[]; complete: boolean; failed: number; tiles: number;
+  /** Written to a file, or opened from one: discarding it loses nothing. */
+  saved?: boolean;
 };
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -48,8 +50,18 @@ export function resolveGroup(base: string, taken: string[]): string {
 const detailLabel = (resM: number) => (resM === 10 ? "10 m (full)" : `${resM} m`);
 
 /** How the Area list names a run (dock.py _refresh_run_combo). */
-export const runLabel = (r: Pick<RunRecord, "userName" | "bbox" | "yearA" | "yearB" | "resM" | "complete">) =>
-  `${r.userName?.trim() || autoName(r.bbox)} · ${r.yearA}→${r.yearB} · ${detailLabel(r.resM)}` + (r.complete ? "" : " (incomplete)");
+export const runLabel = (r: Pick<RunRecord, "userName" | "bbox" | "yearA" | "yearB" | "resM" | "complete">, offMap = false) =>
+  `${r.userName?.trim() || autoName(r.bbox)} · ${r.yearA}→${r.yearB} · ${detailLabel(r.resM)}`
+  + (r.complete ? "" : " (incomplete)") + (offMap ? " (off the map)" : "");
+
+/** The run's Layers-panel group, made again if the user removed it. */
+export function ensureGroup(app: any, meta: RunRecord): void {
+  if (!app.addLayerGroup) return;
+  const groups = app.listLayerGroups?.() as { id: string; name: string }[] | undefined;
+  if (meta.groupId && (!groups || groups.some((g) => g.id === meta.groupId))) return;
+  meta.group = resolveGroup(groupName(meta.userName ?? "", autoName(meta.bbox), meta.yearA, meta.yearB), (groups ?? []).map((g) => g.name));
+  meta.groupId = app.addLayerGroup?.(meta.group) ?? undefined;
+}
 
 /** A run in this session, with the map layers showing it (they outlive the panel being closed). */
 export type SessionRun = {
@@ -83,6 +95,20 @@ export class SessionRuns {
 
   get(id: string) {
     return this.runs.get(id);
+  }
+
+  /** Any of the run's layers still on the map (the user can remove them in the Layers panel). */
+  onMap(id: string): boolean {
+    const r = this.runs.get(id);
+    return !!r && (!!r.change?.shown || !!r.objectsLayer?.intact);
+  }
+
+  /** Forget a run and take its layers off the map (Discard run). */
+  remove(id: string): void {
+    const r = this.runs.get(id);
+    r?.change?.clear();
+    r?.objectsLayer?.clear();
+    this.runs.delete(id);
   }
 
   /** Remove every run's layers from the map (the plugin is being switched off). */
