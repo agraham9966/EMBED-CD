@@ -23,7 +23,7 @@ function setup() {
     { crs: "EPSG:32610", x0: 0, y0: 0, res: 10, width: 1, height: 1 });
   ui.setObjects(vecs, N, layer);
   const click = (ev = "click", row = 2) => { hit = row; for (const f of handlers[ev] ?? []) f({ point: { x: 1, y: 1 }, preventDefault() {} }); };
-  const button = (t: string) => [...ui.root.querySelectorAll("button")].find((b) => b.textContent === t)!;
+  const button = (t: string) => [...ui.root.querySelectorAll("button")].find((b) => (b.textContent || b.getAttribute("aria-label")) === t)!;
   return { ui, click, button, status: () => status };
 }
 
@@ -79,14 +79,14 @@ test("stepping walks objects and reports the position", () => {
   addClass(ui, button, "cutblock");
   button("Label by clicking the map").click();
   click("click", 2);
-  button("▶").click();
+  button("Next object").click();
   expect(status()).toMatch(/^1 of \d+ {2}\(least certain first\)$/);
 });
 
 test("after Generate a Next line walks you through it and lights the button it means", () => {
   const { ui, click, button } = setup();
   const guide = () => ui.root.querySelector(".ecd-guide")!.textContent!;
-  const lit = () => [...ui.root.querySelectorAll(".ecd-next")].map((b) => b.textContent);
+  const lit = () => [...ui.root.querySelectorAll(".ecd-next")].map((b) => b.textContent || b.getAttribute("aria-label"));
   expect(guide()).toMatch(/^Next: Click Add/);
   expect(lit()).toEqual(["Add"]);
   addClass(ui, button, "cutblock");
@@ -101,7 +101,7 @@ test("after Generate a Next line walks you through it and lights the button it m
   expect(lit()).toEqual(["Add"]);
   addClass(ui, button, "other");
   expect(guide()).toContain("step through the least certain");
-  expect(lit()).toEqual(["▶"]);
+  expect(lit()).toEqual(["Next object"]);
 });
 
 test("the lens shortcut (L by default, settable) toggles it, but not while typing, and not once the panel is gone", async () => {

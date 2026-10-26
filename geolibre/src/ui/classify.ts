@@ -44,20 +44,21 @@ export function buildClassify(app: GeoLibreAppAPI, setStatus: (s: string) => voi
   const root = el("div", "ecd-classify");
   const list = el("div", "ecd-classes");
   const btn = (text: string, title: string) => { const b = el("button", "ecd-btn ecd-small", text) as HTMLButtonElement; b.title = title; return b; };
-  const addB = btn("Add", "Add a class"), delB = btn("Delete", "Delete the selected class"), renB = btn("Rename", "Rename the selected class");
+  const addB = withIcon(btn("Add", "Add a class"), "add"), delB = withIcon(btn("Delete", "Delete the selected class"), "delete");
+  const renB = withIcon(btn("Rename", "Rename the selected class"), "rename");
   const inspectB = withIcon(btn("Inspect", "Inspect: click a polygon to see the model's scores for it, without labelling it."), "inspect");
-  const optsB = btn("Options", "Classifier options: mode, bulk assign, pause, best guess, strictness.");
-  const setsB = btn("Class set", "Save or load a class set, to reuse it on another area.");
+  const optsB = withIcon(btn("Options", "Classifier options: mode, bulk assign, pause, best guess, strictness."), "options");
+  const setsB = withIcon(btn("Class set", "Save or load a class set, to reuse it on another area."), "classset");
   const nameForm = el("div", "ecd-nameform");
   const labelB = withIcon(el("button", "ecd-btn ecd-toggle", "Label by clicking the map") as HTMLButtonElement, "label");
   labelB.title = "Turn this on, then click polygons on the map to put them in the selected class. Right-click removes a label.";
   const cycle = select(CYCLES.map(([k, l]) => [k, l]));
-  const prevB = btn("◀", "Step to the previous object in the list. The map pans to it and keeps your zoom.");
-  const nextB = btn("▶", "Step to the next object in the list. The map pans to it and keeps your zoom.");
+  const prevB = withIcon(btn("", "Step to the previous object in the list. The map pans to it and keeps your zoom."), "prev", "Previous object");
+  const nextB = withIcon(btn("", "Step to the next object in the list. The map pans to it and keeps your zoom."), "next", "Next object");
   const objCls = select([]);
   objCls.title = "The class of the object you are looking at. Changing it relabels that object.";
-  const undoB = btn("Undo", "Undo the last labelling action. A bulk assign comes back as one step.");
-  const discardB = btn("Discard", "Remove this object's label.");
+  const undoB = withIcon(btn("Undo", "Undo the last labelling action. A bulk assign comes back as one step."), "undo");
+  const discardB = withIcon(btn("Discard", "Remove this object's label."), "discard");
   const detail = el("div", "ecd-detail");
 
   // Options (QGIS keeps these behind the gear: real, but rarely touched mid-session).
@@ -88,7 +89,7 @@ export function buildClassify(app: GeoLibreAppAPI, setStatus: (s: string) => voi
   lensB.title = "Hover the map to see the before year's imagery under the cursor; hold A to see the after year. "
     + "Shift+scroll resizes it.\n\nBrings its own imagery (Sentinel-2 cloudless, EOX), so no basemap needs to be open. "
     + "Clicks still label as usual. The arrow sets the years, size and shortcut key.";
-  const lensSetB = btn("▾", "Lens years, size and shortcut key.");
+  const lensSetB = withIcon(btn("", "Lens years, size and shortcut key."), "more", "Lens settings");
   const lensOpts = el("div", "ecd-options");
   lensOpts.hidden = true;
   const yearPick = (v: string) => {

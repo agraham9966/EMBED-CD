@@ -11,7 +11,8 @@
 .ecd-h { font-size: 13px; font-weight: 600; margin: 0; }
 .ecd-status { margin: 0; line-height: 1.4; }
 .ecd-select { background: hsl(var(--background)); color: hsl(var(--foreground)); border: 1px solid hsl(var(--border)); border-radius: 4px; padding: 3px 4px; max-width: 100%; }
-.ecd-btn { background: hsl(var(--background)); color: hsl(var(--foreground)); border: 1px solid hsl(var(--border)); border-radius: 4px; padding: 5px 8px; cursor: pointer; text-align: left; }
+.ecd-btn { background: hsl(var(--background)); color: hsl(var(--foreground)); border: 1px solid hsl(var(--border)); border-radius: 4px; padding: 5px 8px; cursor: pointer; text-align: left;
+  display: inline-flex; align-items: center; gap: 5px; line-height: 18px; box-sizing: border-box; }
 .ecd-btn:hover:not(:disabled) { background: hsl(var(--accent, var(--border))); }
 .ecd-btn:disabled { opacity: 0.5; cursor: default; }
 .ecd-primary { font-weight: 600; }
@@ -26,7 +27,7 @@
 .ecd-class.ecd-selected { background: hsl(var(--accent, var(--border))); font-weight: 600; }
 .ecd-unknown { color: hsl(var(--muted-foreground)); cursor: default; }
 .ecd-swatch { width: 18px; height: 18px; padding: 0; border: 1px solid hsl(var(--border)); border-radius: 3px; background: none; cursor: pointer; }
-.ecd-small { padding: 3px 6px; font-size: 12px; }
+.ecd-small { padding: 3px 6px; font-size: 12px; line-height: 16px; min-height: 24px; justify-content: center; }
 .ecd-toggle.ecd-on, .ecd-small.ecd-on { background: hsl(var(--primary, 210 70% 50%)); color: hsl(var(--primary-foreground, 0 0% 100%)); }
 .ecd-options, .ecd-nameform:not(:empty) { border: 1px solid hsl(var(--border)); border-radius: 4px; padding: 6px 8px; display: flex; flex-direction: column; gap: 6px; }
 .ecd-check { display: flex; align-items: center; gap: 4px; }
@@ -64,8 +65,8 @@
 .ecd-inspecting .maplibregl-canvas { cursor: help !important; }
 /* The "Next:" line after Generate, and the button it points at */
 .ecd-guide { border-left: 3px solid hsl(var(--primary, 210 70% 50%)); background: hsl(var(--muted, var(--background))); padding: 6px 8px; border-radius: 0 4px 4px 0; line-height: 1.4; }
-.ecd-icon { width: 14px; height: 14px; vertical-align: -2px; margin-right: 5px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.ecd-keyhint { margin-left: 6px; padding: 0 4px; border: 1px solid hsl(var(--border)); border-radius: 3px; font-size: 0.85em; opacity: 0.75; }
+.ecd-icon { display: block; flex: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ecd-keyhint { padding: 0 4px; line-height: 14px; border: 1px solid hsl(var(--border)); border-radius: 3px; font-size: 0.85em; opacity: 0.75; }
 .ecd-key { width: 3em; text-align: center; text-transform: uppercase; }
 .ecd-btn.ecd-next { border-color: hsl(var(--primary, 210 70% 50%)); box-shadow: 0 0 0 2px hsl(var(--primary, 210 70% 50%) / 0.35); }
 .ecd-drawing .ecd-lens { display: none; }
