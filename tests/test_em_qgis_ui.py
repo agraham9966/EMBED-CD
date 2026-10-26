@@ -1357,8 +1357,8 @@ def test_switching_between_areas_restores_each_one():
     assert len(groups) == len(set(groups)) == 2, f"duplicate or missing groups: {groups}"
     for g in root.children():
         if hasattr(g, "children"):
-            assert len(g.children()) == 3, \
-                f"{g.name()} holds {[c.name() for c in g.children()]}, expected 3 layers"
+            assert len(g.children()) == 4, \
+                f"{g.name()} holds {[c.name() for c in g.children()]}, expected 4 layers (change, coverage, extent, objects)"
     dock.cleanup()
     QgsProject.instance().clear()
     print(f"ok switched back to Area A: {a_objs} objects and {len(a_labels)} labels restored")
@@ -2017,9 +2017,9 @@ def test_carried_over_examples_are_named_as_such():
     print("ok examples carried from an earlier run are named as carried over")
 
 
-def test_the_change_ramp_is_turbo_from_the_cutoff_to_half():
-    """Same colours as GeoLibre: Turbo from just over the cutoff (blue) to 0.5 (dark red), and
-    it follows the cutoff, so whatever shows uses the whole ramp."""
+def test_the_change_ramp_is_turbo_over_0_to_half_whatever_the_cutoff():
+    """Same colours as GeoLibre: Turbo over 0..0.5, fixed, so a pixel keeps its colour as the
+    cutoff moves. The run's extent is its own outline layer, with no fill."""
     from osgeo import gdal
     from qgis.core import QgsRasterLayer, QgsSingleBandPseudoColorRenderer
     from embed_cd_qgis.dock import ChangeDock, _turbo
@@ -2040,22 +2040,36 @@ def test_the_change_ramp_is_turbo_from_the_cutoff_to_half():
 
         class Stub:
             slider, layer_id = Slider(), layer.id()
+            year_a = year_b = type("Y", (), {"currentText": lambda self: "2019"})()
             _style = ChangeDock._style
             _apply_threshold = ChangeDock._apply_threshold
             _threshold = ChangeDock._threshold
+            _add_extent = ChangeDock._add_extent
+            def _add_to_group(self, lyr, bottom=False):
+                QgsProject.instance().addMapLayer(lyr)
+                self.added = lyr
 
         stub = Stub()
         stub._style(layer)
         r = layer.renderer()
         assert isinstance(r, QgsSingleBandPseudoColorRenderer)
         items = r.shader().rasterShaderFunction().colorRampItemList()
-        assert abs(items[0].value - 0.2) < 1e-9 and items[0].color == _turbo(0.1), items[0].value
+        assert items[0].value == 0.0 and items[0].color == _turbo(0.1), items[0].value
         assert abs(items[-1].value - 0.5) < 1e-9 and items[-1].color == _turbo(1.0)
-        assert (r.classificationMin(), r.classificationMax()) == (items[0].value, 0.5)
+        assert (r.classificationMin(), r.classificationMax()) == (0.0, 0.5)
         stub.slider.v = 35
         stub._apply_threshold()
-        items = layer.renderer().shader().rasterShaderFunction().colorRampItemList()
-        assert abs(items[0].value - 0.35) < 1e-9 and items[0].color == _turbo(0.1)
+        again = layer.renderer().shader().rasterShaderFunction().colorRampItemList()
+        assert [(i.value, i.color) for i in again] == [(i.value, i.color) for i in items]
+        stub._add_extent(layer)
+        ext = stub.added
+        assert ext.featureCount() == 1 and ext.name().startswith("extent")
+        assert ext.getFeature(1).geometry().boundingBox() == layer.extent()
+        sym = ext.renderer().symbol()
+        assert sym.symbolLayerCount() == 2
+        from qgis.PyQt.QtCore import Qt
+        assert all(sym.symbolLayer(i).brushStyle() == Qt.BrushStyle.NoBrush for i in range(2))    # no fill
+        QgsProject.instance().removeMapLayer(ext.id())
         # A render after the restyle, to be sure the shader swap left nothing dangling.
         ms = QgsMapSettings()
         ms.setLayers([layer]); ms.setExtent(layer.extent()); ms.setOutputSize(QSize(8, 8))
@@ -2098,5 +2112,5 @@ if __name__ == "__main__":
     test_the_output_crs_must_be_able_to_express_metres()
     test_the_panel_and_the_job_agree_on_the_output_size()
     test_clicking_labels_a_polygon_when_the_canvas_crs_differs_from_the_layer()
-    test_the_change_ramp_is_turbo_from_the_cutoff_to_half()
+    test_the_change_ramp_is_turbo_over_0_to_half_whatever_the_cutoff()
     print("all ok")

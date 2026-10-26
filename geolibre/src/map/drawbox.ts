@@ -1,16 +1,15 @@
 // Click-and-drag a box on the map. Pattern from GeoLibre's maplibre-satellite-embeddings.ts (MIT).
 import type { Bbox } from "../engine/crs";
 
-const SRC = "ecd-area", FILL = "ecd-area-fill", LINE = "ecd-area-line";
+const SRC = "ecd-area", LINE = "ecd-area-line";
 
 const ring = ([w, s, e, n]: Bbox) => [[w, s], [e, s], [e, n], [w, n], [w, s]];
 
-/** Show (or with null, hide) the area outline, on top of everything: a run puts opaque imagery
- *  and its change map over it, and a box you could not see read as a box that never drew. */
+/** Show (or with null, hide) the box being chosen: an outline only, no fill, on top of everything
+ *  (imagery from an earlier run must not bury it). Once a run starts, its extent layer replaces it. */
 export function showArea(map: any, bbox: Bbox | null): void {
   if (!map?.style?._loaded) return;              // mid basemap swap: step 1 re-shows it on style.load
   if (!map.getSource(SRC)) map.addSource(SRC, { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-  if (!map.getLayer(FILL)) map.addLayer({ id: FILL, type: "fill", source: SRC, paint: { "fill-color": "#ffd700", "fill-opacity": 0.06 } });
   if (!map.getLayer(LINE)) map.addLayer({ id: LINE, type: "line", source: SRC, paint: { "line-color": "#ffd700", "line-width": 2, "line-dasharray": [2, 1] } });
   raise(map);
   map.getSource(SRC).setData({
@@ -24,9 +23,7 @@ function raise(map: any): void {
   if (!map.getLayer?.(LINE) || !map.moveLayer) return;
   const order: string[] = map.getLayersOrder?.() ?? [];
   const top = order.find((id) => id.startsWith("geolibre-highlight"));
-  const at = order.indexOf(LINE);
-  if (at > 0 && order[at - 1] === FILL && order[at + 1] === top) return;
-  map.moveLayer(FILL, top);
+  if (order.length && order[order.indexOf(LINE) + 1] === top) return;
   map.moveLayer(LINE, top);
 }
 
@@ -47,7 +44,7 @@ export function keepAreaOnTop(map: any): () => void {
 
 export function removeArea(map: any): void {
   if (!map) return;
-  for (const id of [LINE, FILL]) if (map.getLayer(id)) map.removeLayer(id);
+  if (map.getLayer(LINE)) map.removeLayer(LINE);
   if (map.getSource(SRC)) map.removeSource(SRC);
 }
 

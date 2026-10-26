@@ -65,19 +65,14 @@ def _turbo(t):
     return QColor(*(round(255 * min(1.0, max(0.0, v))) for v in (r, g, b)))
 
 
-def _ramp_range(cutoff):
-    lo = min(max(cutoff, 0.0), _TOP - 0.001)
-    return lo, _TOP
-
-
-def _ramp_items(cutoff, n=8):
-    """Turbo from just over the cutoff (blue) to _TOP (dark red), so whatever shows uses the
-    whole ramp. Starts a tenth of the way in, where the fit is blue rather than near-black.
-    Same colours as the GeoLibre plugin."""
-    lo, hi = _ramp_range(cutoff)
+def _ramp_items(n=8):
+    """Turbo over 0.._TOP, fixed: a pixel keeps its colour as the cutoff moves, and red means
+    the same score in every run. Starts a tenth of the way in, where the fit is blue rather than
+    near-black. Same colours as the GeoLibre plugin."""
     return [QgsColorRampShader.ColorRampItem(
-        lo + (hi - lo) * i / n, _turbo(0.1 + 0.9 * i / n),
+        _TOP * i / n, _turbo(0.1 + 0.9 * i / n),
         "least changed" if i == 0 else "most changed" if i == n else "") for i in range(n + 1)]
+
 
 class ChangeDock(QDockWidget):
     def __init__(self, iface):
@@ -1533,12 +1528,29 @@ class ChangeDock(QDockWidget):
             self._style(layer)
             self._add_to_group(layer)
             self.layer_id = layer.id()
-            self._clear_area_band()      # the raster now shows the extent; outline is clutter
+            self._add_extent(layer)
+            self._clear_area_band()      # the run's extent layer replaces the drawn outline
             self._sync()
         elif layer.source() != self.vrt_path:
             layer.setDataSource(self.vrt_path, layer.name(), "gdal")
             self._style(layer)               # also re-applies the current threshold
             layer.triggerRepaint()
+
+    def _add_extent(self, raster):
+        """The run's extent as its own layer in the group: a thin white line on a dark edge, no
+        fill, readable on any basemap. The drawn outline goes; this one stays with the run."""
+        from qgis.core import (QgsFeature, QgsFillSymbol, QgsGeometry, QgsSimpleFillSymbolLayer,
+                               QgsSingleSymbolRenderer, QgsVectorLayer)
+        a, b = self.year_a.currentText(), self.year_b.currentText()
+        ext = QgsVectorLayer(f"Polygon?crs={raster.crs().authid()}", f"extent {a}→{b}", "memory")
+        f = QgsFeature()
+        f.setGeometry(QgsGeometry.fromRect(raster.extent()))
+        ext.dataProvider().addFeatures([f])
+        sym = QgsFillSymbol.createSimple({"style": "no", "outline_color": "20,22,28,140", "outline_width": "0.9"})
+        sym.appendSymbolLayer(QgsSimpleFillSymbolLayer.create(
+            {"style": "no", "outline_color": "255,255,255,230", "outline_width": "0.4"}))
+        ext.setRenderer(QgsSingleSymbolRenderer(sym))
+        self._add_to_group(ext)
 
     def _style_coverage(self, layer, year_a, year_b):
         """Band 2 as a thematic map of WHY a pixel has no answer. 'data in both years' is
@@ -1564,11 +1576,17 @@ class ChangeDock(QDockWidget):
         layer.triggerRepaint()
 
     def _style(self, layer):
+        ramp = QgsColorRampShader(0.0, _TOP)
+        ramp.setColorRampType(_scoped(QgsColorRampShader, "Type", "Interpolated"))
+        ramp.setColorRampItemList(_ramp_items())
         shader = QgsRasterShader()
-        shader.setRasterShaderFunction(QgsColorRampShader())
-        layer.setRenderer(QgsSingleBandPseudoColorRenderer(layer.dataProvider(), 1, shader))
+        shader.setRasterShaderFunction(ramp)
+        r = QgsSingleBandPseudoColorRenderer(layer.dataProvider(), 1, shader)
+        r.setClassificationMin(0.0)
+        r.setClassificationMax(_TOP)
+        layer.setRenderer(r)
         layer.setOpacity(0.85)
-        self._apply_threshold(layer)        # also sets the ramp, which starts at the cutoff
+        self._apply_threshold(layer)
 
     def _threshold(self):
         return self.slider.value() / 100.0
@@ -1586,14 +1604,6 @@ class ChangeDock(QDockWidget):
                           if self.layer_id else None)
         if layer is None:
             return
-        r = layer.renderer()
-        if isinstance(r, QgsSingleBandPseudoColorRenderer):    # not if the user restyled it
-            ramp = QgsColorRampShader(*_ramp_range(self._threshold()))
-            ramp.setColorRampType(_scoped(QgsColorRampShader, "Type", "Interpolated"))
-            ramp.setColorRampItemList(_ramp_items(self._threshold()))
-            r.shader().setRasterShaderFunction(ramp)
-            r.setClassificationMin(ramp.minimumValue())
-            r.setClassificationMax(ramp.maximumValue())
         px = QgsRasterTransparency.TransparentSingleValuePixel()
         px.min = -2.0                      # also hides the -1 nodata
         px.max = self._threshold()

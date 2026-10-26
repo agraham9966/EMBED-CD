@@ -1,16 +1,14 @@
-import { turbo, scoreColour, scoreLut, splitWindow, coverageColour, tileCorners, ChangeLayer, CHANGE_OPACITY } from "../src/map/changelayer";
+import { turbo, scoreColour, splitWindow, coverageColour, tileCorners, ChangeLayer, CHANGE_OPACITY } from "../src/map/changelayer";
 import { transformer } from "../src/engine/crs";
 import type { Grid } from "../src/engine/grid";
 
-test("the score ramp is Turbo (blue, cyan, green, yellow, red) from the cutoff to 0.5", () => {
+test("the score ramp is Turbo (blue, cyan, green, yellow, red) over 0..0.5, whatever the cutoff", () => {
   expect(turbo(0.5)).toEqual([150, 250, 80]);                  // the fit's green-yellow middle
-  expect(scoreColour(0.0001, 0)).toEqual([...turbo(0.1), 255]); // starts at blue, not near-black
-  const [r, , b] = scoreColour(0.2001, 0.2);
-  expect(b).toBeGreaterThan(r + 100);                          // a higher cutoff starts blue too
-  expect(scoreColour(0.35, 0.2)).toEqual([...turbo(0.55), 255]); // halfway, cutoff to top
-  expect(scoreColour(0.5, 0.2)).toEqual([...turbo(1), 255]);
-  expect(scoreColour(1.0, 0.2)).toEqual([...turbo(1), 255]);
-  expect(scoreColour(0.7, 0.6)).toEqual([...turbo(1), 255]);   // a cutoff past the top: all red
+  expect(scoreColour(0.0001, -1)).toEqual([...turbo(0.1), 255]); // starts at blue, not near-black
+  expect(scoreColour(0.25, 0)).toEqual([...turbo(0.55), 255]);  // halfway
+  expect(scoreColour(0.25, 0.2)).toEqual(scoreColour(0.25, 0)); // moving the cutoff keeps the colour
+  expect(scoreColour(0.5, 0)).toEqual([...turbo(1), 255]);
+  expect(scoreColour(1.0, 0)).toEqual([...turbo(1), 255]);
   expect(CHANGE_OPACITY).toBe(0.85);
 });
 
@@ -69,15 +67,15 @@ test("tiles wait for the style, and come back after a basemap switch replaces it
   expect(sources.size).toBe(0);                       // style not ready: nothing added, nothing thrown
   map.style._loaded = true;
   handlers["style.load"].forEach((f) => f());
-  expect([...sources].sort()).toEqual(["ecd-r-change-0", "ecd-r-coverage-0"]);
+  expect([...sources].sort()).toEqual(["ecd-r-change-0", "ecd-r-coverage-0", "ecd-r-extent"]);
   sources.clear();                                     // a basemap switch wipes the style
   handlers["style.load"].forEach((f) => f());
-  expect(sources.size).toBe(2);
+  expect(sources.size).toBe(3);
   layer.clear();
   expect(handlers["style.load"].length).toBe(0);
 });
 
-test("both layers tell GeoLibre their lon/lat extent, so Zoom to layer works", () => {
+test("all three layers tell GeoLibre their lon/lat extent, so Zoom to layer works", () => {
   const reg: any[] = [];
   const map: any = { style: { _loaded: true }, on() {}, off() {}, addSource() {}, addLayer() {}, getLayer: () => false,
     getSource: () => undefined, triggerRepaint() {} };
@@ -93,14 +91,7 @@ test("both layers tell GeoLibre their lon/lat extent, so Zoom to layer works", (
     expect(b[2]).toBeGreaterThanOrEqual(e - 1e-9); expect(b[3]).toBeGreaterThanOrEqual(n - 1e-9);
     expect(b[2] - b[0]).toBeLessThan(0.05);
   }
-  expect(reg.map((r) => r.id).sort()).toEqual(["ecd-r-change", "ecd-r-coverage"]);
-});
-
-test("the lookup table matches the ramp for its cutoff", () => {
-  const lut = scoreLut(0.2);
-  const px = [0.25, 0.4, 0.5].map((v) => lut[v * 1000]).map((u) => [u & 255, (u >>> 8) & 255, (u >>> 16) & 255, u >>> 24]);
-  expect(px).toEqual([0.25, 0.4, 0.5].map((v) => scoreColour(v, 0.2)));
-  expect(lut.length).toBe(501);
+  expect(reg.map((r) => r.id).sort()).toEqual(["ecd-r-change", "ecd-r-coverage", "ecd-r-extent"]);
 });
 
 test("each tile's canvas reaches one pixel into its right and bottom neighbour (no hairline between tiles)", () => {
@@ -143,4 +134,28 @@ test("each piece is stretched flat, not in perspective", () => {
   const g: Grid = { crs: "EPSG:32610", x0: 500000, y0: 5500000, res: 10, width: 2, height: 2 };
   layer.addTile(g, { window: [0, 2, 0, 2], score: new Float32Array(4).fill(0.5), cov: new Uint8Array(4).fill(1), hist: new Float64Array(256) } as any);
   expect(warps).toEqual(["flat", "flat"]);
+});
+
+test("the run's extent is an outline of the grid's corners, in the run's group, and goes with the run", () => {
+  const sources = new Map<string, any>(), layers: any[] = [], regs: any[] = [], gone: string[] = [];
+  const map: any = {
+    style: { _loaded: true }, on() {}, off() {}, once: (_: string, f: () => void) => f(), triggerRepaint() {},
+    addSource: (id: string, src: any) => sources.set(id, src), getSource: (id: string) => sources.has(id) ? { play() {}, pause() {} } : undefined,
+    addLayer: (l: any) => layers.push(l), getLayer: (id: string) => layers.some((l) => l.id === id),
+    removeLayer: (id: string) => gone.push(id), removeSource: (id: string) => sources.delete(id),
+  };
+  const app: any = { getMap: () => map, registerExternalNativeLayer: (r: any) => regs.push(r), unregisterExternalNativeLayer() {} };
+  const layer = new ChangeLayer(app, "r", "2019-2024", (f) => f());
+  layer.groupId = "g1";
+  const g: Grid = { crs: "EPSG:32610", x0: 500000, y0: 5500000, res: 10, width: 2, height: 1 };
+  layer.addTile(g, { window: [0, 1, 0, 2], score: Float32Array.from([0.5, 0.5]), cov: Uint8Array.from([1, 1]), hist: new Float64Array(256) });
+  const line = sources.get("ecd-r-extent").data.geometry.coordinates;
+  expect(line).toHaveLength(5);
+  expect(line[4]).toEqual(line[0]);
+  expect(line[0]).toEqual(tileCorners(g, [0, 1, 0, 2])[0]);
+  expect(layers.filter((l) => l.source === "ecd-r-extent").every((l) => l.type === "line")).toBe(true);   // no fill
+  expect(regs.find((r) => r.id === "ecd-r-extent")).toMatchObject({ name: "Extent 2019-2024", groupId: "g1" });
+  layer.clear();
+  expect(sources.has("ecd-r-extent")).toBe(false);
+  expect(gone).toContain("ecd-r-extent-line");
 });

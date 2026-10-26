@@ -183,7 +183,7 @@ export function buildStep1(deps: Deps): {
     layer = layerFor(meta);
     if (fresh) for (const t of tiles) layer.addTile(meta.grid, t);
     deps.onRunChanged?.(current);                    // after the change map, so objects go on top of it
-    showArea(map(), bbox);
+    showArea(map(), null);                           // a run shows its own extent layer instead
     step2.setHist(Float64Array.from(meta.histTotal.length ? meta.histTotal : sumHist(tiles)));
     layer!.setCutoff(step2.cutoff());
     void refreshEstimate();
@@ -226,7 +226,7 @@ export function buildStep1(deps: Deps): {
       groups.filter((g) => g.id !== meta.groupId).map((g) => g.name));
     if (next !== meta.group && (app as any).addLayerGroup) {
       const id = (app as any).addLayerGroup(next);
-      const ids = [r.change?.changeId, r.change?.coverageId, r.objectsLayer?.id].filter(Boolean) as string[];
+      const ids = [r.change?.changeId, r.change?.coverageId, r.change?.extentId, r.objectsLayer?.id].filter(Boolean) as string[];
       (app as any).moveLayersToGroup?.(ids, id);
       if (meta.groupId) (app as any).removeLayerGroup?.(meta.groupId);
       meta.group = next;
@@ -369,6 +369,7 @@ export function buildStep1(deps: Deps): {
     runBtn.disabled = true;
     cancelBtn.hidden = false;
     deps.onRunStart?.(spec.yearB);
+    showArea(map(), null);                           // the run's extent layer takes over from the box
     job = deps.startJob(spec, (e) => {
       if (e.type === "error") {
         status.textContent = `The job stopped: ${e.message}`;
@@ -408,7 +409,7 @@ export function buildStep1(deps: Deps): {
   };
 
   // A basemap switch replaces the map style and drops our outline; put it back.
-  const reShow = () => showArea(map(), bbox);
+  const reShow = () => showArea(map(), current ? null : bbox);
   map()?.on?.("style.load", reShow);
   const stopKeeping = keepAreaOnTop(map());
 

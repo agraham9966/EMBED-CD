@@ -6,7 +6,7 @@ function harness() {
   const sources = new Set<string>(), added: string[] = [], regs: any[] = [], groups: { id: string; name: string }[] = [];
   const map: any = {
     style: { _loaded: true }, on() {}, off() {}, once: (_: string, f: () => void) => f(), triggerRepaint() {},
-    getSource: (id: string) => (sources.has(id) ? { setData() {}, play() {}, pause() {} } : undefined),
+    getSource: (id: string) => (sources.has(id) ? { setData: (d: any) => data.set(id, d), play() {}, pause() {} } : undefined),
     addSource: (id: string) => { sources.add(id); added.push(id); }, getLayer: () => true,
     addLayer: (l: { id: string }) => seq.push(`add ${l.id}`), moveLayer: (id: string) => seq.push(`top ${id}`),
     removeLayer() {}, removeSource: (id: string) => sources.delete(id),
@@ -22,7 +22,7 @@ function harness() {
     moveLayersToGroup: (ids: string[], gid: string) => moved.push([ids, gid]),
     removeLayerGroup: (id: string) => { removedGroups.push(id); groups.splice(groups.findIndex((g) => g.id === id), 1); },
   };
-  const moved: [string[], string][] = [], removedGroups: string[] = [], store = new Set<string>(), seq: string[] = [];
+  const moved: [string[], string][] = [], removedGroups: string[] = [], store = new Set<string>(), seq: string[] = [], data = new Map<string, any>();
   const grid = { crs: "EPSG:32610", x0: 500000, y0: 5500000, res: 10, width: 2, height: 1 };
   const startJob = (_spec: any, on: (e: any) => void) => {
     queueMicrotask(() => {
@@ -34,7 +34,7 @@ function harness() {
   };
   const runs = new SessionRuns();
   const s1 = buildStep1({ app, runs, step2: buildStep2(() => {}), loadIndex: () => new Promise(() => {}), startJob });
-  return { s1, runs, sources, added, regs, groups, moved, removedGroups, store, seq };
+  return { s1, runs, sources, added, regs, groups, moved, removedGroups, store, seq, data };
 }
 
 async function makeRun(h: ReturnType<typeof harness>, bbox: [number, number, number, number]) {
@@ -184,4 +184,13 @@ test("Discard run asks for 5 s, then goes back to asking", async () => {
   discard.click();                                      // asks again: a late click never discards
   expect(h.runs.list()).toHaveLength(1);
   vi.useRealTimers();
+});
+
+test("the drawn box shows until the run starts; then the run's own extent layer replaces it", async () => {
+  const h = harness();
+  (h.s1 as any).setArea([-125.34, 49.63, -125.24, 49.71]);
+  expect(h.data.get("ecd-area").features).toHaveLength(1);
+  await makeRun(h, [-125.34, 49.63, -125.24, 49.71]);
+  expect(h.data.get("ecd-area").features).toHaveLength(0);
+  expect(h.regs.some((r) => r.id.endsWith("-extent"))).toBe(true);
 });

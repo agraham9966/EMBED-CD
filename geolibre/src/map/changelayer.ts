@@ -25,19 +25,16 @@ export function turbo(t: number): [number, number, number] {
   return [r, g, b].map((v) => Math.round(255 * Math.min(1, Math.max(0, v)))) as [number, number, number];
 }
 
-/** Turbo from just over the cutoff (blue) to TOP (dark red), so whatever shows uses the whole
- *  ramp. TOP is fixed, not per run: red means the same score in every run. Starts a tenth of the
- *  way in, where the fit is blue rather than near-black. */
-function ramp(v: number, cutoff: number): RGBA {
-  const lo = Math.max(cutoff, 0);
-  const t = lo < TOP ? (v - lo) / (TOP - lo) : 1;
-  return [...turbo(0.1 + 0.9 * Math.min(Math.max(t, 0), 1)), 255];
+/** Turbo over 0..TOP, fixed: a pixel keeps its colour as the cutoff moves, and red means the same
+ *  score in every run. Starts a tenth of the way in, where the fit is blue rather than near-black. */
+function ramp(v: number): RGBA {
+  return [...turbo(0.1 + 0.9 * Math.min(Math.max(v, 0) / TOP, 1)), 255];
 }
 
 /** Transparent at or below the cutoff and for no data. */
 export function scoreColour(v: number, cutoff: number): RGBA {
   if (v === NODATA || !(v > cutoff)) return [0, 0, 0, 0];
-  return ramp(v, cutoff);
+  return ramp(v);
 }
 
 export const coverageColour = (code: number): RGBA => COVERAGE[code] ?? [0, 0, 0, 0];
@@ -46,9 +43,7 @@ export const coverageColour = (code: number): RGBA => COVERAGE[code] ?? [0, 0, 0
 const pack = ([r, g, b, a]: RGBA) => (r | (g << 8) | (b << 16) | (a << 24)) >>> 0;
 // The ramp in steps of 0.001 (indistinguishable on screen); everything past TOP is the top colour.
 const LUT_STEPS = 1000 * TOP;
-/** The ramp for one cutoff: 500 colours, remade when the cutoff moves. */
-export const scoreLut = (cutoff: number) =>
-  Uint32Array.from({ length: LUT_STEPS + 1 }, (_, i) => pack(ramp(i / 1000, cutoff)));
+const SCORE_LUT = Uint32Array.from({ length: LUT_STEPS + 1 }, (_, i) => pack(ramp(i / 1000)));
 const COVERAGE_PX = COVERAGE.map(pack);
 
 /** The window's corners in lon/lat, in MapLibre's order: top-left, top-right, bottom-right, bottom-left. */
@@ -119,9 +114,8 @@ export function removedByUser(app: GeoLibreAppAPI, id: string): boolean {
 export class ChangeLayer {
   private tiles: Drawn[] = [];
   private cutoff = 0.15;
-  private lut = scoreLut(0.15);
   private pending = false;
-  private visible = { change: true, coverage: true };
+  private visible = { change: true, coverage: true, extent: true };
   private bounds: Bbox | null = null;            // lon/lat, for GeoLibre's Zoom to layer
   private registered = false;
   /** Change or coverage, removed by the user in the Layers panel: never put back by this layer. */
@@ -130,6 +124,9 @@ export class ChangeLayer {
   groupId?: string;
   readonly changeId: string;
   readonly coverageId: string;
+  /** The run's extent as a thin outline: the grid's four corners, in lon/lat. */
+  readonly extentId: string;
+  private extent: [number, number][] | null = null;
 
   constructor(
     private app: GeoLibreAppAPI,
@@ -139,6 +136,7 @@ export class ChangeLayer {
   ) {
     this.changeId = `ecd-${runId}-change`;
     this.coverageId = `ecd-${runId}-coverage`;
+    this.extentId = `ecd-${runId}-extent`;
     // GeoLibre swaps the whole style on a basemap change (setStyle, diff: false), which drops
     // every source and layer a plugin added. Put ours back each time.
     this.map?.on?.("style.load", this.onStyle);
@@ -147,28 +145,29 @@ export class ChangeLayer {
   private onStyle = () => {
     this.prune();
     this.tiles.forEach((_, i) => this.addToMap(i));
+    this.addExtent();
   };
 
   /** Notice layers the user removed, and take what is left of them off the map. */
   private prune(): void {
     if (!this.registered) return;
-    for (const base of [this.changeId, this.coverageId]) {
+    for (const base of [this.changeId, this.coverageId, this.extentId]) {
       if (this.dropped.has(base) || !removedByUser(this.app, base)) continue;
       this.dropped.add(base);
-      this.removeNative(base);
+      if (base === this.extentId) this.removeExtent(); else this.removeNative(base);
     }
   }
 
-  /** Both layers still on the map. */
+  /** All three layers still on the map. */
   get intact(): boolean {
     this.prune();
     return this.dropped.size === 0;
   }
 
-  /** Either layer still on the map. */
+  /** The change map or its coverage still on the map. */
   get shown(): boolean {
     this.prune();
-    return this.dropped.size < 2;
+    return !this.dropped.has(this.changeId) || !this.dropped.has(this.coverageId);
   }
 
   private get map(): any {
@@ -182,6 +181,11 @@ export class ChangeLayer {
     this.prune();
     this.bounds ??= transformBounds(grid.crs, "EPSG:4326",
       [grid.x0, grid.y0 - grid.height * grid.res, grid.x0 + grid.width * grid.res, grid.y0]);
+    if (!this.extent) {
+      const c = tileCorners(grid, [0, grid.height, 0, grid.width]);
+      this.extent = [...c, c[0]];
+      this.addExtent();
+    }
     const all = [...this.tiles.map((t) => t.result), result];
     for (const t of this.tiles) {
       if (overlaps(t.win, result.window)) {
@@ -230,10 +234,25 @@ export class ChangeLayer {
     }
   }
 
+  /** The extent outline: a thin white line on a dark edge, readable on any basemap, no fill. */
+  private addExtent(): void {
+    const map = this.map, id = this.extentId;
+    if (!map || !this.extent || this.dropped.has(id) || !styleReady(map) || map.getSource(id)) return;
+    const layout = { visibility: this.visible.extent ? "visible" : "none" };
+    map.addSource(id, { type: "geojson", data: { type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: this.extent } } });
+    map.addLayer({ id: `${id}-casing`, type: "line", source: id, layout, paint: { "line-color": "rgba(20,22,28,0.55)", "line-width": 3.5 } });
+    map.addLayer({ id: `${id}-line`, type: "line", source: id, layout, paint: { "line-color": "rgba(255,255,255,0.9)", "line-width": 1.5 } });
+  }
+
+  private removeExtent(): void {
+    const map = this.map, id = this.extentId;
+    for (const l of [`${id}-line`, `${id}-casing`]) if (map?.getLayer(l)) map.removeLayer(l);
+    if (map?.getSource(id)) map.removeSource(id);
+  }
+
   /** Coalesced to one recolour per frame: dragging the slider never queues work up. */
   setCutoff(t: number): void {
     this.cutoff = t;
-    this.lut = scoreLut(t);
     if (this.pending) return;
     this.pending = true;
     this.schedule(() => {
@@ -267,7 +286,7 @@ export class ChangeLayer {
     const ctx = t.canvas.getContext("2d");
     if (!ctx) return;
     t.img ??= ctx.createImageData(t.canvas.width, t.canvas.height);
-    const px = new Uint32Array(t.img.data.buffer), s = t.score, lut = this.lut, c = this.cutoff;
+    const px = new Uint32Array(t.img.data.buffer), s = t.score, lut = SCORE_LUT, c = this.cutoff;
     for (let p = 0; p < s.length; p++) px[p] = s[p] > c ? lut[Math.min(LUT_STEPS, Math.round(s[p] * 1000))] : 0;
     ctx.putImageData(t.img, 0, 0);
   }
@@ -309,6 +328,21 @@ export class ChangeLayer {
         },
       } as any);
     }
+    const ext = [`${this.extentId}-casing`, `${this.extentId}-line`];
+    if (this.extent && !this.dropped.has(this.extentId)) {
+      reg.call(this.app, {
+        id: this.extentId, name: `Extent ${this.label}`, type: "geojson", nativeLayerIds: ext, sourceIds: [this.extentId],
+        geojson: { type: "FeatureCollection", features: [{ type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [this.extent] } }] },
+        metadata: this.bounds ? { bounds: this.bounds } : {}, groupId: this.groupId, paintMode: "plugin",
+        paintBridge: {
+          setOpacity: (o: number) => ext.forEach((l) => this.map?.setPaintProperty(l, "line-opacity", o)),
+          setVisibility: (v: boolean) => {
+            this.visible.extent = v;
+            ext.forEach((l) => this.map?.setLayoutProperty(l, "visibility", v ? "visible" : "none"));
+          },
+        },
+      } as any);
+    }
     this.registered = true;
   }
 
@@ -327,6 +361,8 @@ export class ChangeLayer {
       this.removeNative(base);
       this.app.unregisterExternalNativeLayer?.(base);
     }
+    this.removeExtent();
+    this.app.unregisterExternalNativeLayer?.(this.extentId);
     this.tiles = [];
   }
 

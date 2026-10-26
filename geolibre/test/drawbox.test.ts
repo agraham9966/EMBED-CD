@@ -64,7 +64,7 @@ test("the area outline goes back on top each time it is shown, under GeoLibre's 
   order.unshift("sentinel-2024");
   order.splice(order.indexOf("geolibre-highlight-fill"), 0, "ecd-run-change-0");   // a run, added on top
   showArea(map, [1, 2, 3, 4]);
-  expect(order).toEqual(["sentinel-2024", "ecd-run-change-0", "ecd-area-fill", "ecd-area-line", "geolibre-highlight-fill"]);
+  expect(order).toEqual(["sentinel-2024", "ecd-run-change-0", "ecd-area-line", "geolibre-highlight-fill"]);
 });
 
 test("after GeoLibre re-places its layers over the outline, the outline is raised again on the next frame, once", async () => {
@@ -75,11 +75,11 @@ test("after GeoLibre re-places its layers over the outline, the outline is raise
   map.moves = 0;
   map.fire("styledata"); map.fire("styledata");
   await new Promise((r) => requestAnimationFrame(r));
-  expect(order.slice(-2)).toEqual(["ecd-area-fill", "ecd-area-line"]);
-  expect(map.moves).toBe(2);
+  expect(order.at(-1)).toBe("ecd-area-line");
+  expect(map.moves).toBe(1);
   map.fire("styledata");                                            // our own move: already on top
   await new Promise((r) => requestAnimationFrame(r));
-  expect(map.moves).toBe(2);
+  expect(map.moves).toBe(1);
   stop();
   order.push("later");
   map.fire("styledata");
