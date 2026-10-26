@@ -13,7 +13,7 @@ import { nearestYear, tileUrl, ZMAX } from "./eox";
 export const MIN_R = 40, MAX_R = 400;
 const EMPTY: FeatureCollection = { type: "FeatureCollection", features: [] };
 
-const editable = (t: EventTarget | null) =>
+export const editable = (t: EventTarget | null) =>
   t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
 
 export class CompareLens {

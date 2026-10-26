@@ -1,14 +1,16 @@
-import { turbo, scoreColour, scoreColours, coverageColour, tileCorners, ChangeLayer, CHANGE_OPACITY } from "../src/map/changelayer";
+import { turbo, scoreColour, scoreLut, splitWindow, coverageColour, tileCorners, ChangeLayer, CHANGE_OPACITY } from "../src/map/changelayer";
 import { transformer } from "../src/engine/crs";
 import type { Grid } from "../src/engine/grid";
 
-test("the score ramp is Turbo (blue, cyan, green, yellow, red) over 0..0.8", () => {
+test("the score ramp is Turbo (blue, cyan, green, yellow, red) from the cutoff to 0.5", () => {
   expect(turbo(0.5)).toEqual([150, 250, 80]);                  // the fit's green-yellow middle
-  expect(scoreColour(0.0, -1)).toEqual([...turbo(0.1), 255]);  // starts at blue, not near-black
-  const [r, g, b] = scoreColour(0.0, -1);
-  expect(b).toBeGreaterThan(r + 100);
-  expect(scoreColour(0.8, -1)).toEqual([...turbo(1), 255]);
-  expect(scoreColour(1.0, -1)).toEqual([...turbo(1), 255]);
+  expect(scoreColour(0.0001, 0)).toEqual([...turbo(0.1), 255]); // starts at blue, not near-black
+  const [r, , b] = scoreColour(0.2001, 0.2);
+  expect(b).toBeGreaterThan(r + 100);                          // a higher cutoff starts blue too
+  expect(scoreColour(0.35, 0.2)).toEqual([...turbo(0.55), 255]); // halfway, cutoff to top
+  expect(scoreColour(0.5, 0.2)).toEqual([...turbo(1), 255]);
+  expect(scoreColour(1.0, 0.2)).toEqual([...turbo(1), 255]);
+  expect(scoreColour(0.7, 0.6)).toEqual([...turbo(1), 255]);   // a cutoff past the top: all red
   expect(CHANGE_OPACITY).toBe(0.85);
 });
 
@@ -94,10 +96,11 @@ test("both layers tell GeoLibre their lon/lat extent, so Zoom to layer works", (
   expect(reg.map((r) => r.id).sort()).toEqual(["ecd-r-change", "ecd-r-coverage"]);
 });
 
-test("the precomputed colours match the ramp, and a cutoff only hides pixels", () => {
-  const score = Float32Array.from([-1, 0, 0.2, 0.4, 0.8, 3]);
-  const px = [...scoreColours(score)].map((u) => [u & 255, (u >>> 8) & 255, (u >>> 16) & 255, u >>> 24]);
-  expect(px).toEqual([[0, 0, 0, 0], ...[0, 0.2, 0.4, 0.8, 3].map((v) => scoreColour(v, -1))]);
+test("the lookup table matches the ramp for its cutoff", () => {
+  const lut = scoreLut(0.2);
+  const px = [0.25, 0.4, 0.5].map((v) => lut[v * 1000]).map((u) => [u & 255, (u >>> 8) & 255, (u >>> 16) & 255, u >>> 24]);
+  expect(px).toEqual([0.25, 0.4, 0.5].map((v) => scoreColour(v, 0.2)));
+  expect(lut.length).toBe(501);
 });
 
 test("each tile's canvas reaches one pixel into its right and bottom neighbour (no hairline between tiles)", () => {
@@ -114,4 +117,30 @@ test("each tile's canvas reaches one pixel into its right and bottom neighbour (
   layer.addTile(g, tile(2, 4));
   const canvases = map.addSource.mock.calls.filter((c: any[]) => c[0].includes("change")).map((c: any[]) => c[1].canvas);
   expect(canvases.map((c: HTMLCanvasElement) => [c.width, c.height])).toEqual([[3, 2], [2, 2]]);   // the last column is the grid's edge
+});
+
+test("big tiles are split so the change map stays on the objects; 10 m tiles are not", () => {
+  // North Vancouver Island, UTM 10 (the grid of a whole-island run), a full 1024-pixel tile.
+  const at = (res: number): Grid => ({ crs: "EPSG:32610", x0: 260000, y0: 5600000, res, width: 1024, height: 1024 });
+  expect(splitWindow(at(10), [0, 1024, 0, 1024])).toEqual([[0, 1024, 0, 1024]]);
+  const pieces = splitWindow(at(75), [0, 546, 0, 546]);       // 75 m Detail: 40 m tiles, 41 km
+  expect(pieces.length).toBe(4);
+  expect(splitWindow(at(160), [0, 1024, 0, 1024]).length).toBe(16);
+  // The pieces cover the window exactly once.
+  const n = pieces.reduce((a, [r0, r1, c0, c1]) => a + (r1 - r0) * (c1 - c0), 0);
+  expect(n).toBe(546 * 546);
+  expect(pieces[3]).toEqual([273, 546, 273, 546]);
+});
+
+test("each piece is stretched flat, not in perspective", () => {
+  const warps: string[] = [];
+  const map: any = { style: { _loaded: true }, on() {}, off() {}, addSource() {}, addLayer() {}, getLayer: () => false,
+    triggerRepaint() {}, once() {} };
+  const added = new Set<string>();
+  map.getSource = (id: string) => (added.has(id) ? { setWarp: (w: string) => warps.push(w), play() {}, pause() {} } : undefined);
+  map.addSource = (id: string) => { added.add(id); };
+  const layer = new ChangeLayer({ getMap: () => map } as any, "r", "x", (f) => f());
+  const g: Grid = { crs: "EPSG:32610", x0: 500000, y0: 5500000, res: 10, width: 2, height: 2 };
+  layer.addTile(g, { window: [0, 2, 0, 2], score: new Float32Array(4).fill(0.5), cov: new Uint8Array(4).fill(1), hist: new Float64Array(256) } as any);
+  expect(warps).toEqual(["flat", "flat"]);
 });

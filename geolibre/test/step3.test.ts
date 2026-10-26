@@ -68,11 +68,17 @@ test("after cutting, the change map is switched off so only the outlines show (a
   runs.start({ id: "r", grid, yearA: 2019, yearB: 2024 } as any);
   runs.addTile("r", { window: [0, 1, 0, 2], score: Float32Array.from([0.9, 0.9]), cov: Uint8Array.from([1, 1]), hist: new Float64Array(256), cells });
   const s3 = buildStep3({ app, runs, currentRun: () => "r", cutoff: () => 0.5, onObjectsMade: () => hidden.push("change") });
+  const make = s3.root.querySelector("button") as HTMLButtonElement, guide = s3.root.querySelector(".ecd-guide") as HTMLElement;
+  expect(guide.hidden).toBe(false);                    // no objects yet: Generate comes first, and is lit
+  expect(guide.textContent).toContain("Generate Embedded Vector Set");
+  expect(make.classList.contains("ecd-next")).toBe(true);
   (s3.root.querySelector("input") as HTMLInputElement).value = "0";
-  (s3.root.querySelector("button") as HTMLButtonElement).click();
+  make.click();
   await new Promise((r) => setTimeout(r, 50));
   expect(s3.root.textContent).toContain("1 objects at cutoff 0.50.");
   expect(hidden).toEqual(["change"]);
+  expect(guide.hidden).toBe(true);
+  expect(make.classList.contains("ecd-next")).toBe(false);
 });
 
 test("outlines are drawn a hair thicker than before (2.6 px)", async () => {

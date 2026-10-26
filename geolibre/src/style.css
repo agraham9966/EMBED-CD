@@ -64,5 +64,8 @@
 .ecd-inspecting .maplibregl-canvas { cursor: help !important; }
 /* The "Next:" line after Generate, and the button it points at */
 .ecd-guide { border-left: 3px solid hsl(var(--primary, 210 70% 50%)); background: hsl(var(--muted, var(--background))); padding: 6px 8px; border-radius: 0 4px 4px 0; line-height: 1.4; }
+.ecd-icon { width: 14px; height: 14px; vertical-align: -2px; margin-right: 5px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ecd-keyhint { margin-left: 6px; padding: 0 4px; border: 1px solid hsl(var(--border)); border-radius: 3px; font-size: 0.85em; opacity: 0.75; }
+.ecd-key { width: 3em; text-align: center; text-transform: uppercase; }
 .ecd-btn.ecd-next { border-color: hsl(var(--primary, 210 70% 50%)); box-shadow: 0 0 0 2px hsl(var(--primary, 210 70% 50%) / 0.35); }
 .ecd-drawing .ecd-lens { display: none; }

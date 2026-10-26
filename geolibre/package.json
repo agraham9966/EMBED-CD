@@ -1,6 +1,6 @@
 {
   "name": "embed-cd-geolibre",
-  "version": "0.8.6",
+  "version": "0.8.7",
   "private": true,
   "description": "EMBED-CD for GeoLibre: change maps from satellite embeddings.",
   "license": "GPL-2.0-or-later",

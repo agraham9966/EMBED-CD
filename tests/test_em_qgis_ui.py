@@ -2017,6 +2017,54 @@ def test_carried_over_examples_are_named_as_such():
     print("ok examples carried from an earlier run are named as carried over")
 
 
+def test_the_change_ramp_is_turbo_from_the_cutoff_to_half():
+    """Same colours as GeoLibre: Turbo from just over the cutoff (blue) to 0.5 (dark red), and
+    it follows the cutoff, so whatever shows uses the whole ramp."""
+    from osgeo import gdal
+    from qgis.core import QgsRasterLayer, QgsSingleBandPseudoColorRenderer
+    from embed_cd_qgis.dock import ChangeDock, _turbo
+    d = tempfile.mkdtemp()
+    try:
+        path = os.path.join(d, "s.tif")
+        ds = gdal.GetDriverByName("GTiff").Create(path, 4, 4, 1, gdal.GDT_Float32)
+        ds.SetGeoTransform([500000, 10, 0, 5500000, 0, -10])
+        ds.GetRasterBand(1).Fill(0.3)
+        ds = None
+        layer = QgsRasterLayer(path, "change")
+        QgsProject.instance().addMapLayer(layer)
+
+        class Slider:
+            v = 20
+            def value(self):
+                return self.v
+
+        class Stub:
+            slider, layer_id = Slider(), layer.id()
+            _style = ChangeDock._style
+            _apply_threshold = ChangeDock._apply_threshold
+            _threshold = ChangeDock._threshold
+
+        stub = Stub()
+        stub._style(layer)
+        r = layer.renderer()
+        assert isinstance(r, QgsSingleBandPseudoColorRenderer)
+        items = r.shader().rasterShaderFunction().colorRampItemList()
+        assert abs(items[0].value - 0.2) < 1e-9 and items[0].color == _turbo(0.1), items[0].value
+        assert abs(items[-1].value - 0.5) < 1e-9 and items[-1].color == _turbo(1.0)
+        assert (r.classificationMin(), r.classificationMax()) == (items[0].value, 0.5)
+        stub.slider.v = 35
+        stub._apply_threshold()
+        items = layer.renderer().shader().rasterShaderFunction().colorRampItemList()
+        assert abs(items[0].value - 0.35) < 1e-9 and items[0].color == _turbo(0.1)
+        # A render after the restyle, to be sure the shader swap left nothing dangling.
+        ms = QgsMapSettings()
+        ms.setLayers([layer]); ms.setExtent(layer.extent()); ms.setOutputSize(QSize(8, 8))
+        job = QgsMapRendererParallelJob(ms); job.start(); job.waitForFinished()
+        QgsProject.instance().removeMapLayer(layer.id())
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 if __name__ == "__main__":
     test_carried_over_examples_are_named_as_such()
     test_a_rewritten_vrt_is_only_seen_at_a_new_path()
@@ -2050,4 +2098,5 @@ if __name__ == "__main__":
     test_the_output_crs_must_be_able_to_express_metres()
     test_the_panel_and_the_job_agree_on_the_output_size()
     test_clicking_labels_a_polygon_when_the_canvas_crs_differs_from_the_layer()
+    test_the_change_ramp_is_turbo_from_the_cutoff_to_half()
     print("all ok")

@@ -52,6 +52,33 @@ _SEC_PER_TILE = 4.5
 _SEC_PER_COARSE_TILE = 11.0
 
 
+
+_TOP = 0.5      # the ramp's top colour from this score up; the same in every run
+
+
+def _turbo(t):
+    """Google's Turbo colormap (Mikhailov 2019, polynomial fit), t in 0..1."""
+    x = min(1.0, max(0.0, t))
+    r = 0.13572138 + x * (4.6153926 + x * (-42.66032258 + x * (132.13108234 + x * (-152.94239396 + x * 59.28637943))))
+    g = 0.09140261 + x * (2.19418839 + x * (4.84296658 + x * (-14.18503333 + x * (4.27729857 + x * 2.82956604))))
+    b = 0.1066733 + x * (12.64194608 + x * (-60.58204836 + x * (110.36276771 + x * (-89.90310912 + x * 27.34824973))))
+    return QColor(*(round(255 * min(1.0, max(0.0, v))) for v in (r, g, b)))
+
+
+def _ramp_range(cutoff):
+    lo = min(max(cutoff, 0.0), _TOP - 0.001)
+    return lo, _TOP
+
+
+def _ramp_items(cutoff, n=8):
+    """Turbo from just over the cutoff (blue) to _TOP (dark red), so whatever shows uses the
+    whole ramp. Starts a tenth of the way in, where the fit is blue rather than near-black.
+    Same colours as the GeoLibre plugin."""
+    lo, hi = _ramp_range(cutoff)
+    return [QgsColorRampShader.ColorRampItem(
+        lo + (hi - lo) * i / n, _turbo(0.1 + 0.9 * i / n),
+        "least changed" if i == 0 else "most changed" if i == n else "") for i in range(n + 1)]
+
 class ChangeDock(QDockWidget):
     def __init__(self, iface):
         super().__init__("EMBED-CD", iface.mainWindow())
@@ -1537,23 +1564,11 @@ class ChangeDock(QDockWidget):
         layer.triggerRepaint()
 
     def _style(self, layer):
-        ramp = QgsColorRampShader()
-        ramp.setColorRampType(_scoped(QgsColorRampShader, "Type", "Interpolated"))
-        # Cyan -> yellow -> red. The previous pale brown vanished against the greens and
-        # greys of satellite imagery, which is the only thing this is ever drawn on top of.
-        ramp.setColorRampItemList([
-            QgsColorRampShader.ColorRampItem(0.0, QColor(0, 210, 235), "least changed"),
-            QgsColorRampShader.ColorRampItem(0.4, QColor(255, 225, 40), ""),
-            QgsColorRampShader.ColorRampItem(0.8, QColor(235, 30, 30), "most changed"),
-        ])
         shader = QgsRasterShader()
-        shader.setRasterShaderFunction(ramp)
-        r = QgsSingleBandPseudoColorRenderer(layer.dataProvider(), 1, shader)
-        r.setClassificationMin(0.0)
-        r.setClassificationMax(0.8)
-        layer.setRenderer(r)
+        shader.setRasterShaderFunction(QgsColorRampShader())
+        layer.setRenderer(QgsSingleBandPseudoColorRenderer(layer.dataProvider(), 1, shader))
         layer.setOpacity(0.85)
-        self._apply_threshold(layer)
+        self._apply_threshold(layer)        # also sets the ramp, which starts at the cutoff
 
     def _threshold(self):
         return self.slider.value() / 100.0
@@ -1571,6 +1586,14 @@ class ChangeDock(QDockWidget):
                           if self.layer_id else None)
         if layer is None:
             return
+        r = layer.renderer()
+        if isinstance(r, QgsSingleBandPseudoColorRenderer):    # not if the user restyled it
+            ramp = QgsColorRampShader(*_ramp_range(self._threshold()))
+            ramp.setColorRampType(_scoped(QgsColorRampShader, "Type", "Interpolated"))
+            ramp.setColorRampItemList(_ramp_items(self._threshold()))
+            r.shader().setRasterShaderFunction(ramp)
+            r.setClassificationMin(ramp.minimumValue())
+            r.setClassificationMax(ramp.maximumValue())
         px = QgsRasterTransparency.TransparentSingleValuePixel()
         px.min = -2.0                      # also hides the -1 nodata
         px.max = self._threshold()

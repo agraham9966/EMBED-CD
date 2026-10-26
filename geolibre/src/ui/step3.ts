@@ -48,10 +48,21 @@ export function buildStep3(deps: Deps): { root: HTMLElement; runChanged(id: stri
   const classify = buildClassify(deps.app, (s) => { status.textContent = s; },
     (state) => { const r = shown ? deps.runs.get(shown) : null; if (r) r.labelState = state; },
     () => { const id = deps.currentRun(), r = id ? deps.runs.get(id) : null; return r ? [r.meta.yearA, r.meta.yearB] : null; });
-  root.append(row(makeBtn), row(el("span", "", "min size"), minArea, el("span", "", "ha")), count, bar, classify.root, status);
+  // Before any objects exist, the classes below have nothing to work on: say Generate comes first.
+  const guide = el("div", "ecd-guide");
+  guide.append(el("b", "", "Next: "), "Click Generate Embedded Vector Set to cut the change map into objects. "
+    + "Classes and labelling work on those objects.");
+  root.append(guide, row(makeBtn), row(el("span", "", "min size"), minArea, el("span", "", "ha")), count, bar, classify.root, status);
 
   let layer: ObjectsLayer | null = null;
   let cancel = false, busy = false;
+
+  function nudge(): void {
+    const id = deps.currentRun(), r = id ? deps.runs.get(id) : null;
+    const on = !busy && !!r && !r.objects;
+    guide.hidden = !on;
+    makeBtn.classList.toggle("ecd-next", on);
+  }
 
   makeBtn.onclick = async () => {
     if (busy) { cancel = true; return; }
@@ -64,6 +75,7 @@ export function buildStep3(deps: Deps): { root: HTMLElement; runChanged(id: stri
     }
     const cutoff = deps.cutoff(), min = Math.max(0, Number(minArea.value) || 0);
     busy = true; cancel = false;
+    nudge();
     makeBtn.textContent = "Cancel";
     bar.hidden = false;
     bar.removeAttribute("value");
@@ -97,6 +109,7 @@ export function buildStep3(deps: Deps): { root: HTMLElement; runChanged(id: stri
       busy = false;
       makeBtn.textContent = "Generate Embedded Vector Set";
       bar.hidden = true;
+      nudge();
     }
   };
 
@@ -129,9 +142,10 @@ export function buildStep3(deps: Deps): { root: HTMLElement; runChanged(id: stri
     classify.setObjects(r.objects.vectors, r.objects.polys.length, layer, state);
   }
 
+  nudge();
   return {
     root,
-    runChanged: (id) => { cancel = true; status.textContent = ""; show(id); },
+    runChanged: (id) => { cancel = true; status.textContent = ""; show(id); nudge(); },
     dispose: () => { cancel = true; classify.dispose(); },          // runs' objects stay on the map
   };
 }

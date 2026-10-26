@@ -9,7 +9,7 @@ import type { GeoLibreAppAPI } from "../host-api";
 
 export const CHANGE_OPACITY = 0.85;
 type RGBA = [number, number, number, number];
-const TOP = 0.8;                                  // the ramp's top colour from this score up
+const TOP = 0.5;                                  // the ramp's top colour from this score up
 // "No data in either year" (mostly open sea) is a translucent grey, not near-white: white vanished
 // on GeoLibre's light default basemap and glared on imagery.
 const COVERAGE: RGBA[] = [[45, 50, 60, 60], [0, 0, 0, 0], [214, 60, 200, 220], [60, 170, 235, 220], [110, 115, 125, 170]];
@@ -25,31 +25,31 @@ export function turbo(t: number): [number, number, number] {
   return [r, g, b].map((v) => Math.round(255 * Math.min(1, Math.max(0, v)))) as [number, number, number];
 }
 
-/** Turbo over 0..0.8, from a tenth of the way in: the fit's first tenth is near-black, and Auto
- *  cutoffs are often that low. Transparent at or below the cutoff and for no data. */
+/** Turbo from just over the cutoff (blue) to TOP (dark red), so whatever shows uses the whole
+ *  ramp. TOP is fixed, not per run: red means the same score in every run. Starts a tenth of the
+ *  way in, where the fit is blue rather than near-black. */
+function ramp(v: number, cutoff: number): RGBA {
+  const lo = Math.max(cutoff, 0);
+  const t = lo < TOP ? (v - lo) / (TOP - lo) : 1;
+  return [...turbo(0.1 + 0.9 * Math.min(Math.max(t, 0), 1)), 255];
+}
+
+/** Transparent at or below the cutoff and for no data. */
 export function scoreColour(v: number, cutoff: number): RGBA {
   if (v === NODATA || !(v > cutoff)) return [0, 0, 0, 0];
-  return [...turbo(0.1 + 0.9 * Math.min(Math.max(v, 0) / TOP, 1)), 255];
+  return ramp(v, cutoff);
 }
 
 export const coverageColour = (code: number): RGBA => COVERAGE[code] ?? [0, 0, 0, 0];
 
 /** RGBA as one little-endian 32-bit pixel, for writing an ImageData through a Uint32Array. */
 const pack = ([r, g, b, a]: RGBA) => (r | (g << 8) | (b << 16) | (a << 24)) >>> 0;
-// The ramp in steps of 0.001 (indistinguishable on screen); everything past 0.8 is the top colour.
+// The ramp in steps of 0.001 (indistinguishable on screen); everything past TOP is the top colour.
 const LUT_STEPS = 1000 * TOP;
-const SCORE_LUT = Uint32Array.from({ length: LUT_STEPS + 1 }, (_, i) => pack(scoreColour(i / 1000, -Infinity)));
+/** The ramp for one cutoff: 500 colours, remade when the cutoff moves. */
+export const scoreLut = (cutoff: number) =>
+  Uint32Array.from({ length: LUT_STEPS + 1 }, (_, i) => pack(ramp(i / 1000, cutoff)));
 const COVERAGE_PX = COVERAGE.map(pack);
-
-/** Each pixel's colour ignoring the cutoff (nodata transparent): worked out once per tile. */
-export function scoreColours(score: Float32Array): Uint32Array {
-  const out = new Uint32Array(score.length);
-  for (let p = 0; p < score.length; p++) {
-    const v = score[p];
-    if (v !== NODATA && v >= 0) out[p] = SCORE_LUT[Math.min(LUT_STEPS, Math.round(v * 1000))];
-  }
-  return out;
-}
 
 /** The window's corners in lon/lat, in MapLibre's order: top-left, top-right, bottom-right, bottom-left. */
 export function tileCorners(g: Grid, [r0, r1, c0, c1]: Window): [number, number][] {
@@ -58,14 +58,54 @@ export function tileCorners(g: Grid, [r0, r1, c0, c1]: Window): [number, number]
   return [f(x(c0), y(r0)), f(x(c1), y(r0)), f(x(c1), y(r1)), f(x(c0), y(r1))];
 }
 
+/** MapLibre stretches each canvas between its four corners in web-map space, where the grid's UTM
+ *  lines are slightly curved, so a big tile drifts off its true place between the corners: half a
+ *  pixel at 75 m Detail, four at 160 m (the objects, drawn point by point, do not). The drift
+ *  grows with the square of the tile's size, so split a window k x k until it is under a third of
+ *  a pixel. 10 m tiles are never split. */
+export function splitWindow(g: Grid, w: Window): Window[] {
+  const [r0, r1, c0, c1] = w;
+  const f = transformer(g.crs, "EPSG:4326");
+  // Web Mercator in metres at the tile's latitude (one scale for the whole tile).
+  const R = 6378137 * Math.cos((f(g.x0 + ((c0 + c1) / 2) * g.res, g.y0 - ((r0 + r1) / 2) * g.res)[1] * Math.PI) / 180);
+  const at = (r: number, c: number) => {
+    const [lon, lat] = f(g.x0 + c * g.res, g.y0 - r * g.res);
+    return [(R * lon * Math.PI) / 180, R * Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360))];
+  };
+  const C = [at(r0, c0), at(r0, c1), at(r1, c1), at(r1, c0)];
+  let drift = 0;
+  for (const u of [0, 0.25, 0.5, 0.75, 1]) {
+    for (const v of [0, 0.25, 0.5, 0.75, 1]) {
+      const flat = [0, 1].map((q) => (1 - u) * (1 - v) * C[0][q] + u * (1 - v) * C[1][q] + u * v * C[2][q] + (1 - u) * v * C[3][q]);
+      const [x, y] = at(r0 + v * (r1 - r0), c0 + u * (c1 - c0));
+      drift = Math.max(drift, Math.hypot(flat[0] - x, flat[1] - y));
+    }
+  }
+  const k = Math.max(1, Math.ceil(Math.sqrt(drift / (g.res / 3))));
+  const cut = (a: number, b: number, i: number) => a + Math.round(((b - a) * i) / k);
+  const out: Window[] = [];
+  for (let i = 0; i < k; i++) {
+    for (let j = 0; j < k; j++) {
+      const s: Window = [cut(r0, r1, i), cut(r0, r1, i + 1), cut(c0, c1, j), cut(c0, c1, j + 1)];
+      if (s[1] > s[0] && s[3] > s[2]) out.push(s);
+    }
+  }
+  return out;
+}
+
 type Drawn = {
   result: TileResult; score: Float32Array; cov: Uint8Array;
   /** What the canvas covers: the tile's window plus one pixel right and down (see addTile). */
   win: Window;
   canvas: HTMLCanvasElement; covCanvas: HTMLCanvasElement; coordinates: [number, number][];
-  /** Cutoff-free colour per pixel, and the image the cutoff is applied into (kept, not remade). */
-  colours?: Uint32Array; img?: ImageData;
+  /** The image the colours are drawn into (kept, not remade). */
+  img?: ImageData;
 };
+
+/** Stretch the image evenly between its corners. MapLibre 6 otherwise reads a quad that is a hair
+ *  wider at the top as a picture seen in perspective, and squeezes its middle: a UTM tile is just
+ *  such a quad in web-map space, and the change map sat a pixel off the objects. */
+const flat = (map: any, id: string) => map.getSource(id)?.setWarp?.("flat");
 
 /** The style has its JSON (sources and layers can be added). */
 export const styleReady = (map: any): boolean => !!map?.style?._loaded;
@@ -79,6 +119,7 @@ export function removedByUser(app: GeoLibreAppAPI, id: string): boolean {
 export class ChangeLayer {
   private tiles: Drawn[] = [];
   private cutoff = 0.15;
+  private lut = scoreLut(0.15);
   private pending = false;
   private visible = { change: true, coverage: true };
   private bounds: Bbox | null = null;            // lon/lat, for GeoLibre's Zoom to layer
@@ -139,29 +180,29 @@ export class ChangeLayer {
     const map = this.map;
     if (!map) return;
     this.prune();
-    const i = this.tiles.length;
     this.bounds ??= transformBounds(grid.crs, "EPSG:4326",
       [grid.x0, grid.y0 - grid.height * grid.res, grid.x0 + grid.width * grid.res, grid.y0]);
-    // One pixel past the tile's own right and bottom edge, filled from the neighbour through the
-    // same mosaic rules: two image quads that merely touch can leave a hairline of map showing
-    // between them (it showed through the coverage layer as tile outlines).
-    const [r0, r1, c0, c1] = result.window;
-    const win: Window = [r0, Math.min(r1 + 1, grid.height), c0, Math.min(c1 + 1, grid.width)];
-    const canvas = document.createElement("canvas"), covCanvas = document.createElement("canvas");
-    canvas.width = covCanvas.width = win[3] - win[2];
-    canvas.height = covCanvas.height = win[1] - win[0];
     const all = [...this.tiles.map((t) => t.result), result];
-    const d: Drawn = { result, win, ...compose(win, all), canvas, covCanvas, coordinates: tileCorners(grid, win) };
-    this.tiles.push(d);
-    for (const t of this.tiles.slice(0, -1)) {
+    for (const t of this.tiles) {
       if (overlaps(t.win, result.window)) {
         Object.assign(t, compose(t.win, all));
         this.paint(t);
         this.refresh(this.tiles.indexOf(t));
       }
     }
-    this.paint(d);
-    this.addToMap(i);
+    for (const [r0, r1, c0, c1] of splitWindow(grid, result.window)) {
+      // One pixel past the piece's own right and bottom edge, filled from the neighbour through
+      // the same mosaic rules: two image quads that merely touch can leave a hairline of map
+      // showing between them (it showed through the coverage layer as tile outlines).
+      const win: Window = [r0, Math.min(r1 + 1, grid.height), c0, Math.min(c1 + 1, grid.width)];
+      const canvas = document.createElement("canvas"), covCanvas = document.createElement("canvas");
+      canvas.width = covCanvas.width = win[3] - win[2];
+      canvas.height = covCanvas.height = win[1] - win[0];
+      const d: Drawn = { result, win, ...compose(win, all), canvas, covCanvas, coordinates: tileCorners(grid, win) };
+      this.tiles.push(d);
+      this.paint(d);
+      this.addToMap(this.tiles.length - 1);
+    }
     this.register();
   }
 
@@ -173,6 +214,7 @@ export class ChangeLayer {
     const cov = `${this.coverageId}-${i}`, chg = `${this.changeId}-${i}`;
     if (!this.dropped.has(this.coverageId) && !map.getSource(cov)) {
       map.addSource(cov, { type: "canvas", canvas: t.covCanvas, coordinates, animate: false });
+      flat(map, cov);
       // Coverage goes under every change tile; change tiles stack on top.
       map.addLayer({ id: cov, type: "raster", source: cov,
         layout: { visibility: this.visible.coverage ? "visible" : "none" },
@@ -181,6 +223,7 @@ export class ChangeLayer {
     }
     if (!this.dropped.has(this.changeId) && !map.getSource(chg)) {
       map.addSource(chg, { type: "canvas", canvas: t.canvas, coordinates, animate: false });
+      flat(map, chg);
       map.addLayer({ id: chg, type: "raster", source: chg,
         layout: { visibility: this.visible.change ? "visible" : "none" },
         paint: { "raster-opacity": CHANGE_OPACITY, "raster-fade-duration": 0, "raster-resampling": "nearest" } });
@@ -190,6 +233,7 @@ export class ChangeLayer {
   /** Coalesced to one recolour per frame: dragging the slider never queues work up. */
   setCutoff(t: number): void {
     this.cutoff = t;
+    this.lut = scoreLut(t);
     if (this.pending) return;
     this.pending = true;
     this.schedule(() => {
@@ -206,9 +250,8 @@ export class ChangeLayer {
     });
   }
 
-  /** New or recomposed pixels: work out their colours, then draw both canvases. */
+  /** New or recomposed pixels: draw both canvases. */
   private paint(t: Drawn): void {
-    t.colours = scoreColours(t.score);
     t.img = undefined;
     this.paintScore(t);
     const ctx = t.covCanvas.getContext("2d");
@@ -219,13 +262,13 @@ export class ChangeLayer {
     ctx.putImageData(img, 0, 0);
   }
 
-  /** The slider's whole cost: one comparison per pixel, into an image kept from last time. */
+  /** The slider's whole cost: one table lookup per pixel, into an image kept from last time. */
   private paintScore(t: Drawn): void {
     const ctx = t.canvas.getContext("2d");
-    if (!ctx || !t.colours) return;
+    if (!ctx) return;
     t.img ??= ctx.createImageData(t.canvas.width, t.canvas.height);
-    const px = new Uint32Array(t.img.data.buffer), s = t.score, col = t.colours, c = this.cutoff;
-    for (let p = 0; p < s.length; p++) px[p] = s[p] > c ? col[p] : 0;
+    const px = new Uint32Array(t.img.data.buffer), s = t.score, lut = this.lut, c = this.cutoff;
+    for (let p = 0; p < s.length; p++) px[p] = s[p] > c ? lut[Math.min(LUT_STEPS, Math.round(s[p] * 1000))] : 0;
     ctx.putImageData(t.img, 0, 0);
   }
 

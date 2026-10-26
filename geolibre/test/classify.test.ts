@@ -103,3 +103,40 @@ test("after Generate a Next line walks you through it and lights the button it m
   expect(guide()).toContain("step through the least certain");
   expect(lit()).toEqual(["▶"]);
 });
+
+test("the lens shortcut (L by default, settable) toggles it, but not while typing, and not once the panel is gone", async () => {
+  const { CompareLens } = await import("../src/map/lens");
+  // Earlier tests' panels are never disposed, so their listeners are still on the window: count
+  // only this panel's lens (the last one made; buildClassify sets its radius straight away).
+  let mine: unknown = null;
+  const calls: boolean[] = [];
+  const spy = vi.spyOn(CompareLens.prototype, "setActive").mockImplementation(function (this: unknown, on: boolean) { if (this === mine) calls.push(on); });
+  const spyR = vi.spyOn(CompareLens.prototype, "setRadius").mockImplementation(function (this: unknown) { mine = this; });
+  const { ui } = setup();
+  const lensB = [...ui.root.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Before/after lens"))!;
+  expect(lensB.textContent).toBe("Before/after lensL");               // the key shows on the button
+  const keyBox = ui.root.querySelector(".ecd-key") as HTMLInputElement;
+  document.body.append(ui.root);
+  const press = (key: string, target: EventTarget = document.body, extra: KeyboardEventInit = {}) =>
+    target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...extra }));
+  press("l");
+  expect(calls).toEqual([true]);
+  press("l", document.body, { ctrlKey: true });          // Ctrl+L is the browser's, not ours
+  keyBox.value = "a"; keyBox.dispatchEvent(new Event("input"));
+  expect(keyBox.value).toBe("");                        // A is the lens's own after-year key
+  keyBox.value = "k"; keyBox.dispatchEvent(new Event("input"));
+  expect(keyBox.value).toBe("K");
+  expect(lensB.textContent).toBe("Before/after lensK");
+  press("k", keyBox);                                   // typing in a box is not a shortcut
+  press("l");                                           // the old key does nothing now
+  expect(calls).toEqual([true]);
+  press("K");
+  expect(calls).toEqual([true, true]);
+  ui.dispose();
+  calls.length = 0;
+  press("k");                                           // gone with the panel
+  expect(calls).toEqual([]);
+  ui.root.remove();
+  spy.mockRestore();
+  spyR.mockRestore();
+});
