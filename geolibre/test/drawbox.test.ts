@@ -1,4 +1,4 @@
-import { drawBox } from "../src/map/drawbox";
+import { drawBox, keepAreaOnTop, showArea } from "../src/map/drawbox";
 
 function setup() {
   const handlers: Record<string, ((e: any) => void)[]> = {};
@@ -36,4 +36,53 @@ test("letting go over a map button, the panel or past the edge still finishes th
   down(100, 100);
   win("mouseup", 900, 600);                                      // far right and below the map
   expect(got).toEqual([[10, -30, 40, -10]]);                     // corner clamped to (400, 300)
+});
+
+function layerMap() {
+  const order: string[] = [], sources = new Set<string>(), handlers: Record<string, (() => void)[]> = {};
+  const map: any = {
+    style: { _loaded: true },
+    getSource: (id: string) => (sources.has(id) ? { setData() {} } : undefined), addSource: (id: string) => sources.add(id),
+    getLayer: (id: string) => order.includes(id), addLayer: (l: { id: string }) => order.push(l.id),
+    getLayersOrder: () => [...order], moves: 0,
+    moveLayer: (id: string, before?: string) => {
+      map.moves++;
+      order.splice(order.indexOf(id), 1);
+      order.splice(before ? order.indexOf(before) : order.length, 0, id);
+    },
+    on: (ev: string, f: () => void) => (handlers[ev] ??= []).push(f),
+    off: (ev: string, f: () => void) => (handlers[ev] = handlers[ev].filter((g) => g !== f)),
+    fire: (ev: string) => (handlers[ev] ?? []).forEach((f) => f()),
+  };
+  return { map, order };
+}
+
+test("the area outline goes back on top each time it is shown, under GeoLibre's highlight", () => {
+  const { map, order } = layerMap();
+  order.push("geolibre-highlight-fill");
+  showArea(map, [1, 2, 3, 4]);
+  order.unshift("sentinel-2024");
+  order.splice(order.indexOf("geolibre-highlight-fill"), 0, "ecd-run-change-0");   // a run, added on top
+  showArea(map, [1, 2, 3, 4]);
+  expect(order).toEqual(["sentinel-2024", "ecd-run-change-0", "ecd-area-fill", "ecd-area-line", "geolibre-highlight-fill"]);
+});
+
+test("after GeoLibre re-places its layers over the outline, the outline is raised again on the next frame, once", async () => {
+  const { map, order } = layerMap();
+  const stop = keepAreaOnTop(map);
+  showArea(map, [1, 2, 3, 4]);
+  order.push("sentinel-2024", "ecd-run-change-0");                 // GeoLibre's sync, after ours
+  map.moves = 0;
+  map.fire("styledata"); map.fire("styledata");
+  await new Promise((r) => requestAnimationFrame(r));
+  expect(order.slice(-2)).toEqual(["ecd-area-fill", "ecd-area-line"]);
+  expect(map.moves).toBe(2);
+  map.fire("styledata");                                            // our own move: already on top
+  await new Promise((r) => requestAnimationFrame(r));
+  expect(map.moves).toBe(2);
+  stop();
+  order.push("later");
+  map.fire("styledata");
+  await new Promise((r) => requestAnimationFrame(r));
+  expect(order.at(-1)).toBe("later");
 });

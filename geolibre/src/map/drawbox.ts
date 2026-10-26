@@ -5,16 +5,44 @@ const SRC = "ecd-area", FILL = "ecd-area-fill", LINE = "ecd-area-line";
 
 const ring = ([w, s, e, n]: Bbox) => [[w, s], [e, s], [e, n], [w, n], [w, s]];
 
-/** Show (or with null, hide) the area outline. */
+/** Show (or with null, hide) the area outline, on top of everything: a run puts opaque imagery
+ *  and its change map over it, and a box you could not see read as a box that never drew. */
 export function showArea(map: any, bbox: Bbox | null): void {
   if (!map?.style?._loaded) return;              // mid basemap swap: step 1 re-shows it on style.load
   if (!map.getSource(SRC)) map.addSource(SRC, { type: "geojson", data: { type: "FeatureCollection", features: [] } });
   if (!map.getLayer(FILL)) map.addLayer({ id: FILL, type: "fill", source: SRC, paint: { "fill-color": "#ffd700", "fill-opacity": 0.06 } });
   if (!map.getLayer(LINE)) map.addLayer({ id: LINE, type: "line", source: SRC, paint: { "line-color": "#ffd700", "line-width": 2, "line-dasharray": [2, 1] } });
+  raise(map);
   map.getSource(SRC).setData({
     type: "FeatureCollection",
     features: bbox ? [{ type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [ring(bbox)] } }] : [],
   });
+}
+
+/** The outline straight under GeoLibre's own highlight layers (or on top), unless it is there. */
+function raise(map: any): void {
+  if (!map.getLayer?.(LINE) || !map.moveLayer) return;
+  const order: string[] = map.getLayersOrder?.() ?? [];
+  const top = order.find((id) => id.startsWith("geolibre-highlight"));
+  const at = order.indexOf(LINE);
+  if (at > 0 && order[at - 1] === FILL && order[at + 1] === top) return;
+  map.moveLayer(FILL, top);
+  map.moveLayer(LINE, top);
+}
+
+/** GeoLibre re-places every layer it manages after each change (layer-sync), which buries the
+ *  outline under a run's imagery and change map a moment after we raised it. Put it back once a
+ *  frame, after any style change. Returns the function that stops this. */
+export function keepAreaOnTop(map: any): () => void {
+  let queued = false;
+  const check = () => { queued = false; raise(map); };
+  const onStyle = () => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(check);
+  };
+  map?.on?.("styledata", onStyle);
+  return () => map?.off?.("styledata", onStyle);
 }
 
 export function removeArea(map: any): void {

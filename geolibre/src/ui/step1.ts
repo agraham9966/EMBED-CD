@@ -9,7 +9,7 @@ import { listTiles, type TileIndex } from "../engine/tileindex";
 import type { GeoLibreAppAPI } from "../host-api";
 import type { ClientEvent } from "../jobclient";
 import { ChangeLayer } from "../map/changelayer";
-import { drawBox, showArea } from "../map/drawbox";
+import { drawBox, keepAreaOnTop, showArea } from "../map/drawbox";
 import { saveBinary } from "../export";
 import { cellsOf, readRunFile, runFileName, writeRunFile } from "../runfile";
 import { autoName, ensureGroup, groupName, resolveGroup, runLabel, runName, type RunRecord, type SessionRuns } from "../runs";
@@ -147,10 +147,19 @@ export function buildStep1(deps: Deps): {
   }
 
   let current: string | null = null;              // the run on the map
+  // Discard run's "Click again to discard" state (see discardBtn.onclick).
+  let disarm = 0;
+  function arm(on: boolean): void {
+    clearTimeout(disarm);
+    discardBtn.textContent = on ? "Click again to discard" : "Discard run";
+    discardBtn.classList.toggle("ecd-danger", on);
+    if (on) disarm = window.setTimeout(() => arm(false), 5000);
+  }
   function refreshPicker(select_?: string) {
     picker.replaceChildren(new Option("New area", ""), ...runs.list().map((r) => new Option(runLabel(r, !runs.onMap(r.id)), r.id)));
     picker.value = select_ ?? "";
     saveBtn.disabled = discardBtn.disabled = !current || !!job;
+    arm(false);
   }
   // Layers removed in the Layers panel send no event: read the map afresh as the list opens. A
   // run off the map is not left selected, so choosing it is a change that puts it back.
@@ -167,7 +176,6 @@ export function buildStep1(deps: Deps): {
     yearA.value = String(meta.yearA);
     yearB.value = String(meta.yearB);
     detail.value = DETAIL.find(([, v]) => v === meta.resM)?.[0] ?? detail.value;
-    showArea(map(), bbox);
     const r = runs.get(meta.id)!;
     // Some of it removed in the Layers panel: choosing the run puts its layers back (as in QGIS).
     if (r.change && !r.change.intact) { r.change.clear(); r.change = undefined; }
@@ -175,6 +183,7 @@ export function buildStep1(deps: Deps): {
     layer = layerFor(meta);
     if (fresh) for (const t of tiles) layer.addTile(meta.grid, t);
     deps.onRunChanged?.(current);                    // after the change map, so objects go on top of it
+    showArea(map(), bbox);
     step2.setHist(Float64Array.from(meta.histTotal.length ? meta.histTotal : sumHist(tiles)));
     layer!.setCutoff(step2.cutoff());
     void refreshEstimate();
@@ -194,6 +203,7 @@ export function buildStep1(deps: Deps): {
       layer = null;
       deps.onRunChanged?.(null);
       saveBtn.disabled = discardBtn.disabled = true;
+      arm(false);
     }
     bbox = b;
     nameIn.placeholder = autoName(b);
@@ -310,17 +320,17 @@ export function buildStep1(deps: Deps): {
     input.click();
   };
 
-  // An unsaved run cannot be brought back: the first click says so, a second within 5 s discards.
-  let armed = 0;
+  // An unsaved run cannot be brought back: the first click turns the button itself into the
+  // question for 5 s (a message in the status line below went unseen), a second click discards.
   discardBtn.onclick = () => {
     const r = current ? runs.get(current) : null;
     if (!r || job) return;
-    if (!r.meta.saved && Date.now() - armed > 5000) {
-      armed = Date.now();
-      status.textContent = "This run was never saved, so it cannot be brought back. Click Discard run again to discard it.";
+    if (!r.meta.saved && !discardBtn.classList.contains("ecd-danger")) {
+      arm(true);
+      status.textContent = "This run was never saved, so it cannot be brought back.";
       return;
     }
-    armed = 0;
+    arm(false);
     runs.remove(r.meta.id);
     if (r.meta.groupId) (app as any).removeLayerGroup?.(r.meta.groupId);
     current = null;
@@ -400,6 +410,7 @@ export function buildStep1(deps: Deps): {
   // A basemap switch replaces the map style and drops our outline; put it back.
   const reShow = () => showArea(map(), bbox);
   map()?.on?.("style.load", reShow);
+  const stopKeeping = keepAreaOnTop(map());
 
   runBtn.disabled = true;
   refreshPicker();
@@ -413,6 +424,7 @@ export function buildStep1(deps: Deps): {
     hasResult: () => !!layer && layer.count > 0,
     dispose() {
       map()?.off?.("style.load", reShow);
+      stopKeeping();
       cancelDraw?.();
       job?.cancel();
     },

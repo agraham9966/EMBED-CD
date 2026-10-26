@@ -7,7 +7,8 @@ function harness() {
   const map: any = {
     style: { _loaded: true }, on() {}, off() {}, once: (_: string, f: () => void) => f(), triggerRepaint() {},
     getSource: (id: string) => (sources.has(id) ? { setData() {}, play() {}, pause() {} } : undefined),
-    addSource: (id: string) => { sources.add(id); added.push(id); }, addLayer() {}, getLayer: () => true,
+    addSource: (id: string) => { sources.add(id); added.push(id); }, getLayer: () => true,
+    addLayer: (l: { id: string }) => seq.push(`add ${l.id}`), moveLayer: (id: string) => seq.push(`top ${id}`),
     removeLayer() {}, removeSource: (id: string) => sources.delete(id),
     getCanvas: () => ({ style: {} }), dragPan: { disable() {}, enable() {} }, boxZoom: { disable() {}, enable() {} },
   };
@@ -21,7 +22,7 @@ function harness() {
     moveLayersToGroup: (ids: string[], gid: string) => moved.push([ids, gid]),
     removeLayerGroup: (id: string) => { removedGroups.push(id); groups.splice(groups.findIndex((g) => g.id === id), 1); },
   };
-  const moved: [string[], string][] = [], removedGroups: string[] = [], store = new Set<string>();
+  const moved: [string[], string][] = [], removedGroups: string[] = [], store = new Set<string>(), seq: string[] = [];
   const grid = { crs: "EPSG:32610", x0: 500000, y0: 5500000, res: 10, width: 2, height: 1 };
   const startJob = (_spec: any, on: (e: any) => void) => {
     queueMicrotask(() => {
@@ -33,7 +34,7 @@ function harness() {
   };
   const runs = new SessionRuns();
   const s1 = buildStep1({ app, runs, step2: buildStep2(() => {}), loadIndex: () => new Promise(() => {}), startJob });
-  return { s1, runs, sources, added, regs, groups, moved, removedGroups, store };
+  return { s1, runs, sources, added, regs, groups, moved, removedGroups, store, seq };
 }
 
 async function makeRun(h: ReturnType<typeof harness>, bbox: [number, number, number, number]) {
@@ -159,11 +160,28 @@ test("Discard run: an unsaved run asks first, then leaves the Area list, the map
   expect(discard.disabled).toBe(false);
   discard.click();
   expect(h.runs.list()).toHaveLength(1);
-  expect(h.s1.progressRow.textContent).toContain("never saved");
+  // The question is on the button itself, where you are looking, not in the status line below.
+  expect(discard.textContent).toBe("Click again to discard");
+  expect(discard.classList.contains("ecd-danger")).toBe(true);
   discard.click();
   expect(h.runs.list()).toEqual([]);
   expect(h.store.size).toBe(0);
   expect(h.removedGroups).toContain(run.groupId);
   expect(h.s1.current()).toBe(null);
   expect(discard.disabled).toBe(true);
+  expect(discard.textContent).toBe("Discard run");
+  expect(discard.classList.contains("ecd-danger")).toBe(false);
+});
+
+test("Discard run asks for 5 s, then goes back to asking", async () => {
+  const h = harness();
+  await makeRun(h, [-125.34, 49.63, -125.24, 49.71]);
+  vi.useFakeTimers();
+  const discard = [...h.s1.root.querySelectorAll("button")].find((b) => b.textContent === "Discard run")!;
+  discard.click();
+  vi.advanceTimersByTime(5001);
+  expect(discard.textContent).toBe("Discard run");
+  discard.click();                                      // asks again: a late click never discards
+  expect(h.runs.list()).toHaveLength(1);
+  vi.useRealTimers();
 });

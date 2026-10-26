@@ -15,6 +15,7 @@
   display: inline-flex; align-items: center; gap: 5px; line-height: 18px; box-sizing: border-box; }
 .ecd-btn:hover:not(:disabled) { background: hsl(var(--accent, var(--border))); }
 .ecd-btn:disabled { opacity: 0.5; cursor: default; }
+.ecd-btn.ecd-danger { background: hsl(0 70% 45%); border-color: hsl(0 70% 45%); color: #fff; }
 .ecd-primary { font-weight: 600; }
 .ecd-progress { width: 100%; height: 8px; }
 .ecd-slider { flex: 1; min-width: 120px; }
