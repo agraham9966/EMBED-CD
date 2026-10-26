@@ -6,8 +6,6 @@ import { UNKNOWN } from "../engine/head";
 import type { GeoLibreAppAPI } from "../host-api";
 import { Labeller, type CycleMode, type LabelState } from "../labeller";
 import { ClickTool } from "../map/clicktool";
-import { EOX_YEARS, nearestYear } from "../map/eox";
-import { CompareLens, editable, MAX_R, MIN_R } from "../map/lens";
 import type { ObjectsLayer } from "../map/objectslayer";
 import { saveText } from "../export";
 import { el, row, select, withIcon } from "./dom";
@@ -17,24 +15,19 @@ const CYCLES: [CycleMode, string][] = [["uncertain", "Least certain first"], ["u
   ["unknown", "Only unknown"], ["labelled", "Only labelled"], ["class", "Only the selected class"], ["all", "All objects"]];
 const BAR = 13;
 
-// The lens's settings, for this session only (nothing is stored on disk): kept here so they
-// survive the panel being closed and reopened.
-const lensPrefs = { on: false, size: 100, before: "", after: "", key: "L" };
 
 export type ClassifyUi = {
   root: HTMLElement;
   /** Objects for a run were made or shown: classify them (labels on earlier objects carry over). */
   setObjects(vectors: Float32Array, n: number, layer: ObjectsLayer, state?: LabelState): void;
   clear(): void;
-  /** The panel is going: switch the lens and the click tool off. */
+  /** The panel is going: switch the click tool off. */
   dispose(): void;
   status(): string;
   labeller: Labeller;
 };
 
-export function buildClassify(app: GeoLibreAppAPI, setStatus: (s: string) => void, onChange?: (state: LabelState) => void,
-  /** The years of the change map on screen, for the lens's Auto. */
-  runYears: () => [number, number] | null = () => null): ClassifyUi {
+export function buildClassify(app: GeoLibreAppAPI, setStatus: (s: string) => void, onChange?: (state: LabelState) => void): ClassifyUi {
   const L = new Labeller();
   let layer: ObjectsLayer | null = null;
   let current: number | null = null;                // the object the panel is talking about
@@ -81,39 +74,11 @@ export function buildClassify(app: GeoLibreAppAPI, setStatus: (s: string) => voi
   const loadSetB = el("button", "ecd-btn", "Load classes...") as HTMLButtonElement;
   sets.append(el("p", "ecd-muted", "A class set is just your labelled examples: save it and the same classes can be applied to another area."), row(saveSetB, loadSetB));
 
-  // The before/after lens: click toggles it, the arrow holds its years and size (QGIS keeps both
-  // on one button, next to the thing they configure).
-  const lensB = withIcon(el("button", "ecd-btn ecd-small ecd-toggle", "Before/after lens") as HTMLButtonElement, "lens");
-  const lensHint = el("span", "ecd-keyhint");
-  lensB.append(lensHint);
-  lensB.title = "Hover the map to see the before year's imagery under the cursor; hold A to see the after year. "
-    + "Shift+scroll resizes it.\n\nBrings its own imagery (Sentinel-2 cloudless, EOX), so no basemap needs to be open. "
-    + "Clicks still label as usual. The arrow sets the years, size and shortcut key.";
-  const lensSetB = withIcon(btn("", "Lens years, size and shortcut key."), "more", "Lens settings");
-  const lensOpts = el("div", "ecd-options");
-  lensOpts.hidden = true;
-  const yearPick = (v: string) => {
-    const s = select([["", "Auto"], ...EOX_YEARS.map((y) => [String(y), String(y)] as [string, string])], v);
-    s.title = "Auto follows the current change map's years. Pick a year to override it.";
-    return s;
-  };
-  const lensBefore = yearPick(lensPrefs.before), lensAfter = yearPick(lensPrefs.after);
-  const lensSize = Object.assign(el("input", "ecd-number") as HTMLInputElement,
-    { type: "number", min: String(MIN_R), max: String(MAX_R), step: "10", value: String(lensPrefs.size) });
-  const lensKey = Object.assign(el("input", "ecd-number ecd-key") as HTMLInputElement, { maxLength: 1, value: lensPrefs.key });
-  lensKey.title = "Press this key anywhere outside a text box to turn the lens on or off. Leave it empty for no shortcut. "
-    + "A is taken: holding it shows the after year.";
-  lensOpts.append(row(el("span", "", "Before"), lensBefore), row(el("span", "", "After"), lensAfter),
-    row(el("span", "", "Size"), lensSize, el("span", "", "px radius")),
-    row(el("span", "", "Shortcut"), lensKey, el("span", "", "turns the lens on and off")));
-  const lens = new CompareLens(app);
-  lens.setRadius(lensPrefs.size);
-
   // What to do next, in one line, with the button it means lit up: after Generate the panel is a
   // wall of equal-looking buttons and nothing says where to start.
   const guide = el("div", "ecd-guide");
 
-  root.append(guide, list, row(addB, delB, renB, inspectB, optsB, setsB), nameForm, opts, sets, row(lensB, lensSetB), lensOpts, labelB,
+  root.append(guide, list, row(addB, delB, renB, inspectB, optsB, setsB), nameForm, opts, sets, labelB,
     row(el("span", "", "Step through"), cycle, prevB, nextB), row(el("span", "", "This object"), objCls, undoB, discardB), detail);
 
   const tool = new ClickTool(app, () => layer?.fillLayerId ?? null, (r, right) => clicked(r, right));
@@ -378,59 +343,6 @@ export function buildClassify(app: GeoLibreAppAPI, setStatus: (s: string) => voi
     });
   }
 
-  // ---------------- the lens ----------------
-  /** The EOX years to show, Auto resolved; the Auto entries say what they picked. */
-  let lastRun: [number, number] = [2019, 2024];      // a new area with no run yet keeps the last years
-  function syncLens(): void {
-    const run = (lastRun = runYears() ?? lastRun);
-    const [b, a] = ([[lensBefore, run[0]], [lensAfter, run[1]]] as [HTMLSelectElement, number][]).map(([s, y]) => {
-      const got = nearestYear(y);
-      s.options[0].text = got === y ? `Auto (${got})` : `Auto (${got}, nearest to ${y})`;
-      return s.value ? Number(s.value) : got;
-    });
-    lens.setYears(b, a);
-  }
-  function setLens(on: boolean): void {
-    syncLens();
-    lens.setActive(on);
-    if (on && !lens.active) setStatus(lens.error || "The lens could not start.");
-    lensPrefs.on = lens.active;
-    lensB.classList.toggle("ecd-on", lens.active);
-  }
-  lensB.onclick = () => setLens(!lens.active);
-  lensSetB.onclick = () => { lensOpts.hidden = !lensOpts.hidden; };
-  lensBefore.onchange = lensAfter.onchange = () => {
-    lensPrefs.before = lensBefore.value;
-    lensPrefs.after = lensAfter.value;
-    syncLens();
-  };
-  lensSize.onchange = () => { lens.setRadius(Number(lensSize.value) || 100); lensPrefs.size = lens.radius; lensSize.value = String(lens.radius); };
-  lens.onRadiusChanged = (r) => { lensPrefs.size = r; lensSize.value = String(r); };
-  lensKey.oninput = () => {
-    const k = lensKey.value.trim().toUpperCase();
-    lensKey.value = k === "A" ? "" : k;                 // A shows the after year
-    lensPrefs.key = lensKey.value;
-    showKey();
-    if (k === "A") setStatus("A is taken by the lens itself (hold it to see the after year). Pick another key.");
-  };
-  function showKey(): void {
-    lensHint.textContent = lensPrefs.key;
-    lensHint.hidden = !lensPrefs.key;
-    lensHint.title = `Shortcut: ${lensPrefs.key}`;
-  }
-  showKey();
-  // Capture, so the key reaches us before a GeoLibre shortcut; only claimed when it is ours.
-  const onLensKey = (e: KeyboardEvent) => {
-    if (!lensPrefs.key || e.repeat || e.ctrlKey || e.metaKey || e.altKey || editable(e.target)) return;
-    if (e.key.toUpperCase() !== lensPrefs.key) return;
-    e.preventDefault();
-    e.stopPropagation();
-    setLens(!lens.active);
-  };
-  window.addEventListener("keydown", onLensKey, true);
-  syncLens();
-  if (lensPrefs.on) setTimeout(() => setLens(true), 0);
-
   render();
   return {
     root,
@@ -441,8 +353,6 @@ export function buildClassify(app: GeoLibreAppAPI, setStatus: (s: string) => voi
       cycleAt = -1;
       L.setObjects(vectors, n);
       if (state) L.restore(state);
-      lens.setOutlines(l.data);
-      syncLens();
       cls ??= L.classes[0] ?? null;
       paint();
       render();
@@ -451,14 +361,10 @@ export function buildClassify(app: GeoLibreAppAPI, setStatus: (s: string) => voi
       tool.off();
       layer = null;
       current = null;
-      lens.setOutlines(null);
-      syncLens();
       render();
     },
     dispose() {
       tool.off();
-      lens.dispose();
-      window.removeEventListener("keydown", onLensKey, true);
     },
     status: () => L.status,
   };

@@ -1,6 +1,7 @@
 // Step 3: cut the change map into objects and give each its embedding ("Generate Embedded Vector
 // Set" in the QGIS plugin). Runs on the main thread in slices that yield, so the map and panel stay
 // usable, with a progress bar and Cancel.
+import type { FeatureCollection } from "geojson";
 import { mosaicAsync } from "../engine/job";
 import { attachVectors, polygonize } from "../engine/objects";
 import type { GeoLibreAppAPI } from "../host-api";
@@ -31,6 +32,8 @@ type Deps = {
   app: GeoLibreAppAPI; runs: SessionRuns; currentRun: () => string | null; cutoff: () => number;
   /** Objects now exist: they are the answer, so the change raster steps back (QGIS unticks it). */
   onObjectsMade?: () => void;
+  /** The objects on screen (null: none), for the before/after lens to outline too. */
+  onOutlines?: (fc: FeatureCollection | null) => void;
 };
 
 export function buildStep3(deps: Deps): { root: HTMLElement; runChanged(id: string | null): void; dispose(): void } {
@@ -46,8 +49,7 @@ export function buildStep3(deps: Deps): { root: HTMLElement; runChanged(id: stri
   const status = el("p", "ecd-status", "");
   let shown: string | null = null;                  // the run whose objects the panel is showing
   const classify = buildClassify(deps.app, (s) => { status.textContent = s; },
-    (state) => { const r = shown ? deps.runs.get(shown) : null; if (r) r.labelState = state; },
-    () => { const id = deps.currentRun(), r = id ? deps.runs.get(id) : null; return r ? [r.meta.yearA, r.meta.yearB] : null; });
+    (state) => { const r = shown ? deps.runs.get(shown) : null; if (r) r.labelState = state; });
   // Before any objects exist, the classes below have nothing to work on: say Generate comes first.
   const guide = el("div", "ecd-guide");
   guide.append(el("b", "", "Next: "), "Click Generate Embedded Vector Set to cut the change map into objects. "
@@ -119,6 +121,7 @@ export function buildStep3(deps: Deps): { root: HTMLElement; runChanged(id: stri
     shown = null;
     layer = null;
     classify.clear();
+    deps.onOutlines?.(null);
     count.textContent = "";
     const r = id ? deps.runs.get(id) : null;
     if (!r?.objects) return;
@@ -140,6 +143,7 @@ export function buildStep3(deps: Deps): { root: HTMLElement; runChanged(id: stri
     const state = recut ? undefined : r.labelState;
     shown = r.meta.id;
     classify.setObjects(r.objects.vectors, r.objects.polys.length, layer, state);
+    deps.onOutlines?.(layer.data);
   }
 
   nudge();

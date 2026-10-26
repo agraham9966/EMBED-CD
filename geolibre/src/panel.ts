@@ -8,6 +8,7 @@ import { buildStep2 } from "./ui/step2";
 import { buildStep3 } from "./ui/step3";
 import { Accordion } from "./ui/accordion";
 import { el } from "./ui/dom";
+import { buildLens } from "./ui/lensui";
 import { buildPhotos, showPhoto } from "./ui/photos";
 
 export const PANEL_ID = "embed-cd-panel";
@@ -34,6 +35,11 @@ export function registerPanel(app: GeoLibreAppAPI): () => void {
         acc.setEnabled([true, has, has]);
         if (has) acc.foldOnce("step1", 1);
       };
+      // Auto follows the years of the run on screen.
+      const lens = buildLens(app, () => {
+        const id = step1?.current(), r = id ? sessionRuns.get(id) : null;
+        return r ? [r.meta.yearA, r.meta.yearB] : null;
+      });
       const step2 = buildStep2((t) => { step1?.layer()?.setCutoff(t); refresh(); });
       const step3 = buildStep3({ app, runs: sessionRuns, currentRun: () => step1?.current() ?? null, cutoff: () => step2.cutoff(),
         // Through GeoLibre's own visibility (when the host has it), so the Layers panel's eye agrees.
@@ -41,9 +47,10 @@ export function registerPanel(app: GeoLibreAppAPI): () => void {
           const id = step1?.layer()?.changeId;
           if (id) { try { app.setLayerVisibility?.(id, false); } catch { /* layer already gone */ } }
           acc.foldOnce("step2", 2);                       // objects exist: on to classifying
-        } });
+        },
+        onOutlines: (fc) => lens.setOutlines(fc) });
       step1 = buildStep1({ app, runs: sessionRuns, step2, loadIndex: () => TileIndex.load(), startJob,
-        onRunChanged: (id) => { step3.runChanged(id); refresh(); },
+        onRunChanged: (id) => { step3.runChanged(id); lens.sync(); refresh(); },
         onChange: refresh,
         onAreaDrawn: () => { acc.resetFold("step1"); acc.resetFold("step2"); acc.open(0); },
         // The after year's imagery under the result: the default basemap is light, and the change
@@ -53,10 +60,15 @@ export function registerPanel(app: GeoLibreAppAPI): () => void {
       acc.add(step2.root);
       acc.add(step3.root);
       refresh();
-      root.append(acc.root, step1.progressRow, buildPhotos(app),
+      // The lens sits in the Reference imagery section, above the year strip: both bring EOX
+      // imagery, and both are useful at any step.
+      const photos = buildPhotos(app);
+      photos.insertBefore(lens.root, photos.querySelector(".ecd-photo-row"));
+      root.append(acc.root, step1.progressRow, photos,
         el("p", "ecd-muted", "Runs are temporary: they are discarded when GeoLibre closes. Use Save run to keep one as a file."));
       return () => {
         step3.dispose();
+        lens.dispose();
         step1?.dispose();                                  // runs' layers stay on the map
         removeArea((app as any).getMap?.());
         root.remove();
