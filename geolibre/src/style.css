@@ -71,3 +71,5 @@
 .ecd-key { width: 3em; text-align: center; text-transform: uppercase; }
 .ecd-btn.ecd-next { border-color: hsl(var(--primary, 210 70% 50%)); box-shadow: 0 0 0 2px hsl(var(--primary, 210 70% 50%) / 0.35); }
 .ecd-drawing .ecd-lens { display: none; }
+/* The lens row stands apart from the year strip below it: two controls, not one row of buttons. */
+.ecd-lens-ui { margin-bottom: 10px; }

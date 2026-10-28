@@ -443,6 +443,15 @@ class ChangeDock(QDockWidget):
         head.setStyleSheet("font-weight: 600; color: palette(mid);")
         lay.addWidget(head)
 
+        # The before/after lens, above the year strip: both bring EOX imagery, and the lens is
+        # useful at any step, not only while labelling. Its logic stays with the classify panel,
+        # which owns the objects it outlines.
+        lrow = QHBoxLayout()
+        lrow.addWidget(self.classify.lens_btn)
+        lrow.addStretch(1)
+        lay.addLayout(lrow)
+        lay.addSpacing(4)
+
         prow = QHBoxLayout()
         prow.setSpacing(2)
         lbl = QLabel("Photo:")

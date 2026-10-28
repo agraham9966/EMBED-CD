@@ -2079,6 +2079,52 @@ def test_the_change_ramp_is_turbo_over_0_to_half_whatever_the_cutoff():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def test_the_lens_sits_in_reference_imagery_with_a_shortcut_and_the_next_line_leads():
+    """As in GeoLibre: the lens button sits above the year strip (not in step 3), its shortcut
+    key is settable (A refused), and a 'Next:' line names the first step and outlines it."""
+    from qgis.PyQt.QtWidgets import QMainWindow
+    from qgis.gui import QgsMapCanvas
+    from embed_cd_qgis.dock import ChangeDock
+
+    class _Iface:
+        def __init__(self, win, canvas):
+            self._w, self._c = win, canvas
+
+        def mainWindow(self):
+            return self._w
+
+        def mapCanvas(self):
+            return self._c
+
+    dock = ChangeDock(_Iface(QMainWindow(), QgsMapCanvas()))
+    c = dock.classify
+    assert not c.isAncestorOf(c.lens_btn), "the lens button is still inside step 3"
+    assert dock.isAncestorOf(c.lens_btn)
+    assert c.lens_btn.text() == "Before/after lens (L)", c.lens_btn.text()
+    c._lens_key_changed("a")
+    assert c.lens_key.text() == "" and c._lens_shortcut is None
+    c._lens_key_changed("k")
+    assert c.lens_key.text() == "K" and c.lens_btn.text() == "Before/after lens (K)"
+    was = c.lens_btn.isChecked()
+    c._lens_shortcut.activated.emit()
+    assert c.lens_btn.isChecked() != was
+    c._lens_shortcut.activated.emit()
+    assert c.lens_btn.isChecked() == was
+    c._lens_key_changed("l")                       # back to the default for later sessions
+
+    assert c.guide.isHidden()                      # nothing to do yet: no change map
+    dock.vrt_path = "change_2019_2024.vrt"         # a change map, no objects yet
+    c.sync()
+    assert not c.guide.isHidden()
+    assert "Generate Embedded Vector Set" in c.guide.text(), c.guide.text()
+    assert "highlight" in c.make_btn.styleSheet()
+    dock.vrt_path = None
+    c.sync()
+    assert c.guide.isHidden() and c.make_btn.styleSheet() == ""
+    dock.cleanup()
+    print("ok lens in Reference imagery with a settable shortcut; Next line leads to Generate")
+
+
 if __name__ == "__main__":
     test_carried_over_examples_are_named_as_such()
     test_a_rewritten_vrt_is_only_seen_at_a_new_path()
@@ -2113,4 +2159,5 @@ if __name__ == "__main__":
     test_the_panel_and_the_job_agree_on_the_output_size()
     test_clicking_labels_a_polygon_when_the_canvas_crs_differs_from_the_layer()
     test_the_change_ramp_is_turbo_over_0_to_half_whatever_the_cutoff()
+    test_the_lens_sits_in_reference_imagery_with_a_shortcut_and_the_next_line_leads()
     print("all ok")

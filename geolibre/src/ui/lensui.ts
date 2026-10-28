@@ -24,7 +24,8 @@ export type LensUi = {
 export function buildLens(app: GeoLibreAppAPI, runYears: () => [number, number] | null = () => null): LensUi {
   const root = el("div", "ecd-lens-ui");
   const note = el("p", "ecd-muted", "");
-  const setStatus = (s: string) => { note.textContent = s; };
+  note.hidden = true;
+  const setStatus = (s: string) => { note.textContent = s; note.hidden = !s; };
   const smallBtn = (title: string) => { const b = el("button", "ecd-btn ecd-small") as HTMLButtonElement; b.title = title; return b; };
   const lensB = withIcon(el("button", "ecd-btn ecd-small ecd-toggle", "Before/after lens") as HTMLButtonElement, "lens");
   const lensHint = el("span", "ecd-keyhint");

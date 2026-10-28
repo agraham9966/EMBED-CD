@@ -18,6 +18,7 @@ from qgis.PyQt.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QListWidget, QListWidgetItem,
     QDoubleSpinBox, QInputDialog, QFileDialog, QMessageBox, QSlider, QCheckBox,
     QProgressDialog, QApplication, QComboBox, QToolButton, QMenu, QWidgetAction, QSpinBox,
+    QLineEdit,
 )
 from qgis.core import (
     QgsProject, QgsVectorLayer, QgsFeature, QgsGeometry, QgsField,
@@ -34,6 +35,7 @@ log = logging.getLogger(__name__)
 UNKNOWN = "unknown"
 _LENS_ON = "embed_cd/lens_on"
 _LENS_SIZE = "embed_cd/lens_size"
+_LENS_KEY = "embed_cd/lens_key"
 # (what the user sees, what the head is told). Order matters: the first is the default.
 _MODES = (("Transition — what changed", "delta"),
           ("End state — what it is now", "after"))
@@ -160,6 +162,16 @@ class ClassifyPanel(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
 
+        # What to do next, in one line, with the button it means outlined: after a change map the
+        # panel is a wall of equal-looking controls and nothing says where to start.
+        self.guide = QLabel("")
+        self.guide.setWordWrap(True)
+        self.guide.setTextFormat(_scoped(Qt, "TextFormat", "RichText"))
+        self.guide.setStyleSheet("border-left: 3px solid palette(highlight); "
+                                 "background: palette(alternate-base); padding: 6px 8px;")
+        self.guide.hide()
+        lay.addWidget(self.guide)
+
         row = QHBoxLayout()
         self.make_btn = QPushButton("Generate Embedded Vector Set")
         self.make_btn.setToolTip("Cut the change map at the current cutoff and give every "
@@ -215,6 +227,8 @@ class ClassifyPanel(QWidget):
             b.setFixedSize(QSize(28, 26))
             b.clicked.connect(slot)
             crow.addWidget(b)
+            if tip == "Add a class":
+                self.add_btn = b
         self.color_btn = QToolButton()
         _ic = _QApp.getThemeIcon("/mIconColorBox.svg")
         if not _ic.isNull():
@@ -247,8 +261,9 @@ class ClassifyPanel(QWidget):
         self.inspect_btn.setAutoRaise(True)
         self.inspect_btn.setFixedSize(QSize(28, 26))
         self.inspect_btn.clicked.connect(self._toggle_inspect)
+        self.inspect_btn.toggled.connect(lambda _on: self._show_guide())
         crow.addWidget(self.inspect_btn)
-        self._build_lens_btn(crow)
+        self._build_lens_btn()                 # the dock places it in Reference imagery
         crow.addStretch(1)
         self.opts_btn = QToolButton()
         self.opts_btn.setText("⚙")
@@ -308,6 +323,7 @@ class ClassifyPanel(QWidget):
         self.label_btn.setToolTip("Turn this on, then click polygons on the map to put them in "
                                   "the selected class. Right-click removes a label.")
         self.label_btn.clicked.connect(self._toggle_label_tool)
+        self.label_btn.toggled.connect(lambda _on: self._show_guide())
         lay.addWidget(self.label_btn)
 
         self.assign_btn = QPushButton("Assign the selected polygons to this class")
@@ -499,6 +515,55 @@ class ClassifyPanel(QWidget):
         elif ready:
             self.count_lbl.setText("Press 'Generate Embedded Vector Set' to cut the changed area into objects, "
                 "each carrying its own embedding.")
+        self._show_guide()
+
+    def _show_guide(self):
+        """One 'Next:' line and its button outlined, as in the GeoLibre plugin."""
+        if getattr(self, "guide", None) is None or getattr(self, "next_btn", None) is None:
+            return
+        lit = "border: 2px solid palette(highlight); border-radius: 3px;"
+        for b in (self.make_btn, self.add_btn, self.label_btn, self.next_btn):
+            if b.styleSheet() == lit:
+                b.setStyleSheet("")
+        if not self.host.vrt_path:
+            self.guide.hide()
+            return
+        n = len(self.labels)
+        nxt = None
+        if not (self._layer_ok() and self.polys):
+            text = ("Click Generate Embedded Vector Set to cut the change map into objects. "
+                    "Classes and labelling work on those objects.")
+            nxt = self.make_btn
+        elif not self.classes:
+            text = "Click Add (+) and name the kind of change you are after, for example 'Clearcut'."
+            nxt = self.add_btn
+        elif self.inspecting():
+            text = ("Click an object on the map to see how the classifier scores it. "
+                    "Click Inspect again to stop.")
+        elif not self.label_btn.isChecked() and n == 0:
+            text = ("Classes carried over from earlier runs are already colouring the map. Turn on "
+                    "Label by clicking the map and fix any it got wrong."
+                    if sum(self._carried_counts().values()) else
+                    f"Turn on Label by clicking the map, then click a few objects that are "
+                    f"'{self.current_class()}'.")
+            nxt = self.label_btn
+        elif n < 3:
+            text = (f"Click objects on the map that are '{self.current_class()}'. {n} labelled so "
+                    f"far. Right-click removes a label.")
+            nxt = None if self.label_btn.isChecked() else self.label_btn
+        elif len(self.classes) == 1:
+            text = ("The rest are coloured on the map. Now add a second class for what you are NOT "
+                    "after (for example 'Other') and label a few: telling two apart works far "
+                    "better than one alone.")
+            nxt = self.add_btn
+        else:
+            text = ("Check its calls: step through the least certain objects with ▶ and fix any "
+                    "it got wrong. Save the classes to reuse them on another area.")
+            nxt = self.next_btn
+        self.guide.setText(f"<b>Next:</b> {text}")
+        self.guide.show()
+        if nxt is not None:
+            nxt.setStyleSheet(lit)
 
     # ---------------- polygons ----------------
     def make_polygons(self):
@@ -939,6 +1004,7 @@ class ClassifyPanel(QWidget):
         return item.data(_scoped(Qt, "ItemDataRole", "UserRole")) if item else None
 
     def _refresh_list(self):
+        self._show_guide()                # classes and labels just changed
         keep = self.current_class()
         self.list.clear()
         counts = {}
@@ -1905,9 +1971,9 @@ class ClassifyPanel(QWidget):
 
 
     # ---------------- before/after lens ----------------
-    def _build_lens_btn(self, row):
-        """Click toggles the lens; the arrow holds its settings. One button, so it costs the
-        panel nothing, and the settings sit next to the thing they configure."""
+    def _build_lens_btn(self):
+        """Click toggles the lens; the arrow holds its settings. The dock puts the button in its
+        Reference imagery section: the lens brings its own imagery and is useful at any step."""
         from qgis.core import QgsSettings
         from .engine import basemap as BM
         from .lens import lens_icon
@@ -1915,14 +1981,13 @@ class ClassifyPanel(QWidget):
         self.lens_btn.setIcon(lens_icon())
         self.lens_btn.setIconSize(QSize(18, 18))
         self.lens_btn.setCheckable(True)
-        self.lens_btn.setAutoRaise(True)
-        self.lens_btn.setFixedSize(QSize(38, 26))
+        self.lens_btn.setToolButtonStyle(_scoped(Qt, "ToolButtonStyle", "ToolButtonTextBesideIcon"))
         self.lens_btn.setPopupMode(_scoped(QToolButton, "ToolButtonPopupMode", "MenuButtonPopup"))
         self.lens_btn.setToolTip(
             "Before/after lens. Hover the map to see the before year's imagery under the cursor; "
             "hold A to see the after year. Shift+scroll resizes it." + chr(10) * 2 +
             "Brings its own imagery (Sentinel-2 cloudless, EOX), so no basemap needs to be open. "
-            "Clicks still label as usual. The arrow sets the years and size.")
+            "Clicks still label as usual. The arrow sets the years, size and shortcut key.")
         self.lens_btn.toggled.connect(self._toggle_lens)
 
         menu = QMenu(self)
@@ -1947,11 +2012,20 @@ class ClassifyPanel(QWidget):
         self.lens_size.setValue(int(QgsSettings().value(_LENS_SIZE, 100)))
         self.lens_size.valueChanged.connect(self._lens_size_changed)
         pl.addWidget(row_of(QLabel("Size"), self.lens_size))
+        self.lens_key = QLineEdit(str(QgsSettings().value(_LENS_KEY, "L")))
+        self.lens_key.setMaxLength(1)
+        self.lens_key.setFixedWidth(36)
+        self.lens_key.setToolTip("Press this key to turn the lens on or off (not while typing in a "
+                                 "box). Leave it empty for no shortcut. A is taken: holding it "
+                                 "shows the after year.")
+        self.lens_key.textEdited.connect(self._lens_key_changed)
+        pl.addWidget(row_of(QLabel("Shortcut"), self.lens_key))
         act = QWidgetAction(menu)
         act.setDefaultWidget(panel)
         menu.addAction(act)
         self.lens_btn.setMenu(menu)
-        row.addWidget(self.lens_btn)
+        self._lens_shortcut = None
+        self._set_lens_key(self.lens_key.text())
         if str(QgsSettings().value(_LENS_ON, False)).lower() in ("true", "1"):
             QTimer.singleShot(0, lambda: self.lens_btn.setChecked(True))
 
@@ -1996,6 +2070,37 @@ class ClassifyPanel(QWidget):
             self._lens.set_active(on)
         QgsSettings().setValue(_LENS_ON, bool(on))
 
+    def _lens_key_changed(self, text):
+        k = text.strip().upper()
+        if k == "A":                                 # the lens's own after-year key
+            k = ""
+            self.status.setText("A is taken by the lens itself (hold it to see the after year). "
+                                "Pick another key.")
+        self.lens_key.setText(k)
+        self._set_lens_key(k)
+
+    def _set_lens_key(self, k):
+        """The shortcut on the QGIS main window. A text box takes letter keys first (Qt's
+        ShortcutOverride), so typing a name never toggles the lens."""
+        from qgis.core import QgsSettings
+        from qgis.PyQt.QtGui import QKeySequence
+        try:
+            from qgis.PyQt.QtGui import QShortcut          # Qt 6
+        except ImportError:
+            from qgis.PyQt.QtWidgets import QShortcut      # Qt 5
+        QgsSettings().setValue(_LENS_KEY, k)
+        if self._lens_shortcut is not None:
+            self._lens_shortcut.setEnabled(False)
+            self._lens_shortcut.deleteLater()
+            self._lens_shortcut = None
+        if k:
+            win = getattr(self.iface, "mainWindow", lambda: None)()
+            self._lens_shortcut = QShortcut(QKeySequence(k), win or self)
+            self._lens_shortcut.activated.connect(self.lens_btn.toggle)
+            # A key QGIS also uses: both claim it and Qt fires neither; take it anyway.
+            self._lens_shortcut.activatedAmbiguously.connect(self.lens_btn.toggle)
+        self.lens_btn.setText(f"Before/after lens ({k})" if k else "Before/after lens")
+
     def _lens_size_changed(self, v):
         from qgis.core import QgsSettings
         QgsSettings().setValue(_LENS_SIZE, int(v))
@@ -2011,6 +2116,10 @@ class ClassifyPanel(QWidget):
             self._lens.refresh()
 
     def cleanup(self):
+        if getattr(self, "_lens_shortcut", None) is not None:
+            self._lens_shortcut.setEnabled(False)
+            self._lens_shortcut.deleteLater()
+            self._lens_shortcut = None
         if self._lens is not None:
             self._lens.cleanup()
             self._lens = None
