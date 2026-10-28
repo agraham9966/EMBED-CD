@@ -142,7 +142,8 @@ def process_tile(src, tile, year_a, year_b, out_grid, out_dir, cell_px=None,
 
     # Both years at once: most of a tile's time is spent waiting on the network, and the two
     # reads are independent (GDAL releases the GIL while it reads). The GDAL settings are
-    # entered once around both, so on GDAL < 3.6, where they are process-global, one thread
+    # entered once around both, so on older GDAL (no gdal.config_options, e.g. Ubuntu 22.04's
+    # 3.4), where they are process-global, one thread
     # finishing first cannot put the defaults back under the other's read.
     from .source import _gdal_env
     with _gdal_env(), ThreadPoolExecutor(max_workers=2) as ex:
