@@ -15,6 +15,7 @@ COGs, identified by UTM bounds; both years share that grid, which is the invaria
 """
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
@@ -139,8 +140,15 @@ def process_tile(src, tile, year_a, year_b, out_grid, out_dir, cell_px=None,
         if rec is not None:
             return rec                             # else it's stale — fall through and rebuild
 
-    a, crs_a, tr_a = _try_fetch(src, tile, year_a)
-    b, crs_b, tr_b = _try_fetch(src, tile, year_b)
+    # Both years at once: most of a tile's time is spent waiting on the network, and the two
+    # reads are independent (GDAL releases the GIL while it reads). The GDAL settings are
+    # entered once around both, so on GDAL < 3.6, where they are process-global, one thread
+    # finishing first cannot put the defaults back under the other's read.
+    from .source import _gdal_env
+    with _gdal_env(), ThreadPoolExecutor(max_workers=2) as ex:
+        fa = ex.submit(_try_fetch, src, tile, year_a)
+        fb = ex.submit(_try_fetch, src, tile, year_b)
+        (a, crs_a, tr_a), (b, crs_b, tr_b) = fa.result(), fb.result()
     if a is None and b is None:
         return None                                # nothing at all here; VRT leaves it no-tile
     crs = crs_a if crs_a is not None else crs_b
