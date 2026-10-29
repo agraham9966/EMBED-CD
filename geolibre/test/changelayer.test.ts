@@ -170,3 +170,34 @@ test("the run's extent is an outline of the grid's corners, in the run's group, 
   expect(sources.has("ecd-r-extent")).toBe(false);
   expect(gone).toContain("ecd-r-extent-line");
 });
+
+test("drawn pixels follow score > cutoff exactly, through the 16-bit codes and the shared image", () => {
+  const drawn: Uint32Array[] = [];
+  const spy = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(function (this: HTMLCanvasElement) {
+    return {
+      createImageData: (w: number, h: number) => ({ width: w, height: h, data: new Uint8ClampedArray(w * h * 4) }),
+      putImageData: (img: any, _x: number, _y: number, _dx: number, _dy: number, w: number, h: number) => {
+        const px = new Uint32Array(img.data.buffer), out = new Uint32Array(w * h);
+        for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) out[y * w + x] = px[y * img.width + x];
+        drawn.push(out);
+      },
+    } as any;
+  } as any);
+  const sources = new Set<string>();
+  const map: any = { style: { _loaded: true }, on() {}, off() {}, once: (_: string, f: () => void) => f(), triggerRepaint() {},
+    addSource: (id: string) => sources.add(id), getSource: (id: string) => (sources.has(id) ? { play() {}, pause() {} } : undefined),
+    addLayer() {}, getLayer: () => false };
+  const layer = new ChangeLayer({ getMap: () => map } as any, "r", "x", (f) => f());
+  layer.setCutoff(0.2);
+  const g: Grid = { crs: "EPSG:32610", x0: 500000, y0: 5500000, res: 10, width: 4, height: 1 };
+  drawn.length = 0;
+  layer.addTile(g, { window: [0, 1, 0, 4], score: Float32Array.from([0.19995, 0.2001, -1, 0.45]), cov: Uint8Array.from([1, 1, 4, 1]), hist: new Float64Array(256) });
+  const change = drawn[0];                               // change first, then coverage
+  const alpha = Array.from(change, (u) => u >>> 24);
+  expect(alpha).toEqual([0, 255, 0, 255]);               // just under 0.2 hidden; 0.2001 shown; no data never
+  const rgb = (u: number) => [u & 255, (u >>> 8) & 255, (u >>> 16) & 255];
+  expect(rgb(change[3])).toEqual(scoreColour(0.45, 0.2).slice(0, 3));
+  layer.setCutoff(0.21);                                 // the slider: the same codes, a new cut
+  expect(Array.from(drawn.at(-1)!, (u) => u >>> 24)).toEqual([0, 0, 0, 255]);
+  spy.mockRestore();
+});

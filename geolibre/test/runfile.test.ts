@@ -48,7 +48,7 @@ test("the file name says what the run is", () => {
 
 test("cells round-trip through the run file, and files without them still open", async () => {
   const cells = { crs: "EPSG:32610", x0: 500000, y0: 5500000, res: 160, width: 2, height: 1,
-    ma: Float32Array.from({ length: 128 }, (_, i) => i / 100), mb: Float32Array.from({ length: 128 }, (_, i) => -i / 100),
+    ma: Int16Array.from({ length: 128 }, (_, i) => i * 250), mb: Int16Array.from({ length: 128 }, (_, i) => -i * 250),
     n: Float32Array.from([256, 12]), smean: Float32Array.from([0.1, 0.2]), smax: Float32Array.from([0.5, 0.6]) };
   const withCells = tiles.map((t, i) => (i === 0 ? { ...t, cells } : t));
   const back = await readRunFile(await (await writeRunFile(meta, withCells)).arrayBuffer());

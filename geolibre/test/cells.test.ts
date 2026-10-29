@@ -1,4 +1,4 @@
-import { poolCells } from "../src/engine/cells";
+import { CELL_SCALE, poolCells } from "../src/engine/cells";
 import { changeScore } from "../src/engine/score";
 import type { Cube } from "../src/engine/source";
 import { f32, fxJson, i8 } from "./fixtures";
@@ -12,12 +12,14 @@ test("poolCells matches Python's cells.pool", () => {
   const t = { x0: F.fetch["1"].transform[0], y0: F.fetch["1"].transform[1], res: 10 };
   const g = poolCells(a, b, score, cov, 16, t, "EPSG:32610");
   expect([g.height, g.width, g.res, g.x0, g.y0]).toEqual([8, 8, 160, t.x0, t.y0]);
-  const close = (got: Float32Array, file: string) => {
+  const close = (got: ArrayLike<number>, file: string, scale = 1, tol = 1e-6) => {
     const want = f32(file);
     expect(got.length).toBe(want.length);
-    for (let i = 0; i < want.length; i++) expect(Math.abs(got[i] - want[i])).toBeLessThan(1e-6);
+    for (let i = 0; i < want.length; i++) expect(Math.abs(got[i] / scale - want[i])).toBeLessThan(tol);
   };
-  close(g.ma, C.ma.file); close(g.mb, C.mb.file); close(g.n, C.n.file); close(g.smean, C.smean.file); close(g.smax, C.smax.file);
+  // The means are kept in 16 bits: within half a step (1/65534) of Python's float32.
+  const half = 0.5 / CELL_SCALE + 1e-6;
+  close(g.ma, C.ma.file, CELL_SCALE, half); close(g.mb, C.mb.file, CELL_SCALE, half); close(g.n, C.n.file); close(g.smean, C.smean.file); close(g.smax, C.smax.file);
 });
 
 test("a kept window pools only those cells, with the same values", () => {

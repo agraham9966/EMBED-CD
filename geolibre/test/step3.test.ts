@@ -64,7 +64,7 @@ test("after cutting, the change map is switched off so only the outlines show (a
   const runs = new SessionRuns();
   const grid = { crs: "EPSG:32610", x0: 500000, y0: 5500000, res: 10, width: 2, height: 1 };
   const cells = { crs: "EPSG:32610", x0: 500000, y0: 5500000, res: 160, width: 1, height: 1,
-    ma: new Float32Array(64).fill(0.1), mb: new Float32Array(64).fill(0.2), n: Float32Array.from([2]), smean: Float32Array.from([0.9]), smax: Float32Array.from([0.9]) };
+    ma: new Int16Array(64).fill(3277), mb: new Int16Array(64).fill(6553), n: Float32Array.from([2]), smean: Float32Array.from([0.9]), smax: Float32Array.from([0.9]) };
   runs.start({ id: "r", grid, yearA: 2019, yearB: 2024 } as any);
   runs.addTile("r", { window: [0, 1, 0, 2], score: Float32Array.from([0.9, 0.9]), cov: Uint8Array.from([1, 1]), hist: new Float64Array(256), cells });
   const s3 = buildStep3({ app, runs, currentRun: () => "r", cutoff: () => 0.5, onObjectsMade: () => hidden.push("change") });

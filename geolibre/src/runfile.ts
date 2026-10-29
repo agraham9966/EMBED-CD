@@ -3,7 +3,7 @@
 // QGIS plugin's "Save to" folder.
 import { writeArrayBuffer } from "geotiff";
 import { fromArrayBuffer } from "geotiff";
-import type { CellGrid } from "./engine/cells";
+import { CELL_SCALE, type CellGrid } from "./engine/cells";
 import type { Grid } from "./engine/grid";
 import { mosaic, type TileResult } from "./engine/job";
 import { readZip } from "./engine/npz";
@@ -30,21 +30,25 @@ function geotiff(values: Float32Array | Uint8Array, g: Grid, nodata?: number): U
 }
 
 // cells.bin: a little-endian uint32 header length, the JSON header (padded to 4 bytes), then for
-// each grid its ma, mb, n, smean and smax as float32.
+// each grid its ma, mb, n, smean and smax as float32. The file keeps float32 means (older files
+// open, and QGIS reads the same values); in memory they are 16-bit (cells.ts CELL_SCALE).
 const CELL_FIELDS = ["ma", "mb", "n", "smean", "smax"] as const;
+const asFloat = (g: CellGrid, f: (typeof CELL_FIELDS)[number]): Float32Array =>
+  f === "ma" || f === "mb" ? Float32Array.from(g[f], (v) => v / CELL_SCALE) : g[f];
 
 function packCells(grids: CellGrid[]): Uint8Array {
   const head = new TextEncoder().encode(JSON.stringify(grids.map(({ crs, x0, y0, res, width, height }) => ({ crs, x0, y0, res, width, height }))));
   const headLen = Math.ceil(head.length / 4) * 4;
-  const body = grids.reduce((n, g) => n + CELL_FIELDS.reduce((m, f) => m + g[f].byteLength, 0), 0);
+  const body = grids.reduce((n, g) => n + CELL_FIELDS.reduce((m, f) => m + g[f].length * 4, 0), 0);
   const out = new Uint8Array(4 + headLen + body);
   new DataView(out.buffer).setUint32(0, headLen, true);
   out.fill(32, 4, 4 + headLen);
   out.set(head, 4);
   let at = 4 + headLen;
   for (const g of grids) for (const f of CELL_FIELDS) {
-    out.set(new Uint8Array(g[f].buffer, g[f].byteOffset, g[f].byteLength), at);
-    at += g[f].byteLength;
+    const v = asFloat(g, f);
+    out.set(new Uint8Array(v.buffer, v.byteOffset, v.byteLength), at);
+    at += v.byteLength;
   }
   return out;
 }
@@ -57,7 +61,11 @@ function unpackCells(b: Uint8Array): CellGrid[] {
   return head.map((h: Omit<CellGrid, (typeof CELL_FIELDS)[number]>) => {
     const n = h.width * h.height, sizes = { ma: n * 64, mb: n * 64, n, smean: n, smax: n };
     const g: any = { ...h };
-    for (const f of CELL_FIELDS) { g[f] = new Float32Array(buf, at, sizes[f]); at += sizes[f] * 4; }
+    for (const f of CELL_FIELDS) {
+      const v = new Float32Array(buf, at, sizes[f]);
+      g[f] = f === "ma" || f === "mb" ? Int16Array.from(v, (x) => Math.round(x * CELL_SCALE)) : v;
+      at += sizes[f] * 4;
+    }
     return g as CellGrid;
   });
 }

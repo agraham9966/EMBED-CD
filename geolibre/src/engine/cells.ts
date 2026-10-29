@@ -7,10 +7,14 @@ import { dequantize } from "./score";
 import type { Affine, Cube } from "./source";
 
 export const CELL_M = 160;
+/** Cell means are kept in 16 bits, as round(mean * CELL_SCALE). Means of embedding components lie
+ *  in -1..1, and a step of 1/32767 is ~250x finer than the int8 source data's own; in float32 the
+ *  means were the run's biggest memory cost (34 MB a tile at 50 m). */
+export const CELL_SCALE = 32767;
 
 export type CellGrid = {
   crs: string; x0: number; y0: number; res: number; width: number; height: number;
-  ma: Float32Array; mb: Float32Array;           // 64 values per cell, year A and year B
+  ma: Int16Array; mb: Int16Array;               // 64 values per cell, year A and year B, x CELL_SCALE
   n: Float32Array; smean: Float32Array; smax: Float32Array;
 };
 
@@ -25,7 +29,7 @@ export function poolCells(
   const ch = Math.ceil(h / cellPx), cw = Math.ceil(w / cellPx);
   const k = keep ?? { r0: 0, r1: ch, c0: 0, c1: cw };
   const H = k.r1 - k.r0, W = k.c1 - k.c0, n = H * W;
-  const ma = new Float32Array(n * 64), mb = new Float32Array(n * 64);
+  const ma = new Int16Array(n * 64), mb = new Int16Array(n * 64);
   const cnt = new Float32Array(n), smean = new Float32Array(n), smax = new Float32Array(n);
   const sa = new Float64Array(64), sb = new Float64Array(64);
   for (let ci = k.r0; ci < k.r1; ci++) {
@@ -51,8 +55,8 @@ export function poolCells(
       smean[c] = ssum / safe;
       smax[c] = smx;
       for (let d = 0; d < 64; d++) {
-        ma[c * 64 + d] = sa[d] / safe;
-        mb[c * 64 + d] = sb[d] / safe;
+        ma[c * 64 + d] = Math.round((sa[d] / safe) * CELL_SCALE);
+        mb[c * 64 + d] = Math.round((sb[d] / safe) * CELL_SCALE);
       }
     }
   }

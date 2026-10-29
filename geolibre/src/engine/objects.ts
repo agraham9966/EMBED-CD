@@ -143,7 +143,7 @@ export async function polygonize(grid: Grid, score: Float32Array, cutoff: number
 }
 
 // ---- vectors -----------------------------------------------------------------------------------
-import type { CellGrid } from "./cells";
+import { CELL_SCALE, type CellGrid } from "./cells";
 import { transformer } from "./crs";
 
 /** Cells of `g` a polygon touches (GDAL ALL_TOUCHED): every cell its outline passes through, plus
@@ -214,11 +214,11 @@ export async function attachVectors(
     if (progress && (await progress(gi * N, grids.length * N)) === false) return new Float32Array(N * D);
     const burned = burnObjects(g, polys, polyCrs);
     for (let c = 0; c < burned.length; c++) {
-      const i = burned[c] - 1, w = g.n[c];
+      const i = burned[c] - 1, w = g.n[c], ws = w / CELL_SCALE;
       if (i < 0 || !(w > 0)) continue;
       const use = poolCutoff === null || g.smean[c] >= poolCutoff;
       for (let d = 0; d < 64; d++) {
-        const va = g.ma[c * 64 + d] * w, vb = g.mb[c * 64 + d] * w;
+        const va = g.ma[c * 64 + d] * ws, vb = g.mb[c * 64 + d] * ws;
         accAll[i * D + d] += va; accAll[i * D + 64 + d] += vb;
         if (use) { acc[i * D + d] += va; acc[i * D + 64 + d] += vb; }
       }

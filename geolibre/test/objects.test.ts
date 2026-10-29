@@ -73,7 +73,7 @@ function sameVectors(got: Float32Array, file: string) {
   expect(got.length).toBe(want.length);
   let worst = 0;
   for (let i = 0; i < want.length; i++) worst = Math.max(worst, Math.abs(got[i] - want[i]));
-  expect(worst).toBeLessThan(1e-5);
+  expect(worst).toBeLessThan(2e-5);                     // cell means kept in 16 bits (cells.ts CELL_SCALE)
 }
 
 test("object vectors match Python's attach_vectors at 10 m and 50 m", async () => {

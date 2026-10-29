@@ -89,18 +89,31 @@ export function splitWindow(g: Grid, w: Window): Window[] {
 }
 
 type Drawn = {
-  result: TileResult; score: Float32Array; cov: Uint8Array;
+  result: TileResult;
+  /** The piece's composed scores as codes, ceil(score * 10000) (0 for no data): half the size of
+   *  float32, and `code > cutoff * 10000` is exactly `score > cutoff` on the slider's steps. */
+  codes: Uint16Array;
   /** What the canvas covers: the tile's window plus one pixel right and down (see addTile). */
   win: Window;
   canvas: HTMLCanvasElement; covCanvas: HTMLCanvasElement; coordinates: [number, number][];
-  /** The image the colours are drawn into (kept, not remade). */
-  img?: ImageData;
+
 };
 
 /** Stretch the image evenly between its corners. MapLibre 6 otherwise reads a quad that is a hair
  *  wider at the top as a picture seen in perspective, and squeezes its middle: a UTM tile is just
  *  such a quad in web-map space, and the change map sat a pixel off the objects. */
 const flat = (map: any, id: string) => map.getSource(id)?.setWarp?.("flat");
+
+/** One image buffer shared by every canvas (each piece used to keep its own, ~2.7 MB a tile at
+ *  50 m): grown to the largest piece, drawn from with putImageData's dirty rectangle. */
+let shared: { img: ImageData; px: Uint32Array } | null = null;
+function scratch(ctx: CanvasRenderingContext2D, w: number, h: number): [ImageData, Uint32Array] {
+  if (!shared || shared.img.width < w || shared.img.height < h) {
+    const img = ctx.createImageData(Math.max(w, shared?.img.width ?? 0), Math.max(h, shared?.img.height ?? 0));
+    shared = { img, px: new Uint32Array(img.data.buffer) };
+  }
+  return [shared.img, shared.px];
+}
 
 /** The style has its JSON (sources and layers can be added). */
 export const styleReady = (map: any): boolean => !!map?.style?._loaded;
@@ -189,8 +202,7 @@ export class ChangeLayer {
     const all = [...this.tiles.map((t) => t.result), result];
     for (const t of this.tiles) {
       if (overlaps(t.win, result.window)) {
-        Object.assign(t, compose(t.win, all));
-        this.paint(t);
+        this.paint(t, compose(t.win, all));
         this.refresh(this.tiles.indexOf(t));
       }
     }
@@ -202,9 +214,9 @@ export class ChangeLayer {
       const canvas = document.createElement("canvas"), covCanvas = document.createElement("canvas");
       canvas.width = covCanvas.width = win[3] - win[2];
       canvas.height = covCanvas.height = win[1] - win[0];
-      const d: Drawn = { result, win, ...compose(win, all), canvas, covCanvas, coordinates: tileCorners(grid, win) };
+      const d: Drawn = { result, win, codes: new Uint16Array(0), canvas, covCanvas, coordinates: tileCorners(grid, win) };
       this.tiles.push(d);
-      this.paint(d);
+      this.paint(d, compose(win, all));
       this.addToMap(this.tiles.length - 1);
     }
     this.register();
@@ -272,26 +284,37 @@ export class ChangeLayer {
     });
   }
 
-  /** New or recomposed pixels: draw both canvases. */
-  private paint(t: Drawn): void {
-    t.img = undefined;
+  /** New or recomposed pixels: keep the scores as codes, draw both canvases. Coverage does not
+   *  depend on the cutoff, so it is drawn once and not kept. */
+  private paint(t: Drawn, m: { score: Float32Array; cov: Uint8Array }): void {
+    const codes = new Uint16Array(m.score.length);
+    for (let p = 0; p < codes.length; p++) {
+      const v = m.score[p];
+      codes[p] = v === NODATA || !(v > 0) ? 0 : Math.min(65535, Math.ceil(v * 10000));
+    }
+    t.codes = codes;
     this.paintScore(t);
     const ctx = t.covCanvas.getContext("2d");
     if (!ctx) return;
-    const img = ctx.createImageData(t.covCanvas.width, t.covCanvas.height);
-    const px = new Uint32Array(img.data.buffer);
-    for (let p = 0; p < t.cov.length; p++) px[p] = COVERAGE_PX[t.cov[p]] ?? 0;
-    ctx.putImageData(img, 0, 0);
+    const w = t.covCanvas.width, h = t.covCanvas.height, [img, px] = scratch(ctx, w, h), W = img.width;
+    for (let y = 0, p = 0; y < h; y++) for (let x = 0; x < w; x++, p++) px[y * W + x] = COVERAGE_PX[m.cov[p]] ?? 0;
+    ctx.putImageData(img, 0, 0, 0, 0, w, h);
   }
 
-  /** The slider's whole cost: one table lookup per pixel, into an image kept from last time. */
+  /** The slider's whole cost: one table lookup per pixel, into the shared scratch image. */
   private paintScore(t: Drawn): void {
     const ctx = t.canvas.getContext("2d");
     if (!ctx) return;
-    t.img ??= ctx.createImageData(t.canvas.width, t.canvas.height);
-    const px = new Uint32Array(t.img.data.buffer), s = t.score, lut = SCORE_LUT, c = this.cutoff;
-    for (let p = 0; p < s.length; p++) px[p] = s[p] > c ? lut[Math.min(LUT_STEPS, Math.round(s[p] * 1000))] : 0;
-    ctx.putImageData(t.img, 0, 0);
+    const w = t.canvas.width, h = t.canvas.height, [img, px] = scratch(ctx, w, h), W = img.width;
+    const q = t.codes, lut = SCORE_LUT, c = this.cutoff * 10000;
+    for (let y = 0, p = 0; y < h; y++) {
+      const row = y * W;
+      for (let x = 0; x < w; x++, p++) {
+        const v = q[p];
+        px[row + x] = v > c ? lut[Math.min(LUT_STEPS, Math.round(v / 10))] : 0;
+      }
+    }
+    ctx.putImageData(img, 0, 0, 0, 0, w, h);
   }
 
   /** A canvas source re-uploads only while playing: play for one frame, then pause. */
