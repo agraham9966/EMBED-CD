@@ -186,7 +186,10 @@ export function buildStep1(deps: Deps): {
     if (r.change && !r.change.intact) { r.change.clear(); r.change = undefined; }
     const fresh = !r.change;                         // already on the map: reuse, never add twice
     layer = layerFor(meta);
-    if (fresh) for (const t of tiles) layer.addTile(meta.grid, t);
+    if (fresh) {
+      for (const t of tiles) layer.addTile(meta.grid, t);
+      layer.publish();
+    }
     deps.onRunChanged?.(current);                    // after the change map, so objects go on top of it
     showArea(map(), null);                           // a run shows its own extent layer instead
     step2.setHist(Float64Array.from(meta.histTotal.length ? meta.histTotal : sumHist(tiles)));
@@ -405,7 +408,9 @@ export function buildStep1(deps: Deps): {
         if (!e.cancelled && meta.tiles > 0) step2.auto();       // as the QGIS run reports AUTO
       }
     });
+    const runLayer = layer;
     job.done.then(() => {
+      runLayer?.publish();                           // every tile, once (not once per tile)
       job = null;
       picker.disabled = drawBtn.disabled = openBtn.disabled = false;
       refreshPicker(current ?? undefined);

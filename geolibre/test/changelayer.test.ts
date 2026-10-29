@@ -201,3 +201,26 @@ test("drawn pixels follow score > cutoff exactly, through the 16-bit codes and t
   expect(Array.from(drawn.at(-1)!, (u) => u >>> 24)).toEqual([0, 0, 0, 255]);
   spy.mockRestore();
 });
+
+test("GeoLibre is told about the layers on the first tile and once at the end, not on every tile", () => {
+  const regs: any[] = [];
+  const sources = new Set<string>();
+  const map: any = { style: { _loaded: true }, on() {}, off() {}, once: (_: string, f: () => void) => f(), triggerRepaint() {},
+    addSource: (id: string) => sources.add(id), getSource: (id: string) => (sources.has(id) ? { play() {}, pause() {} } : undefined),
+    addLayer() {}, getLayer: () => false, setLayoutProperty: vi.fn() };
+  const layer = new ChangeLayer({ getMap: () => map, registerExternalNativeLayer: (r: any) => regs.push(r) } as any, "r", "x", (f) => f());
+  const g: Grid = { crs: "EPSG:32610", x0: 500000, y0: 5500000, res: 10, width: 6, height: 1 };
+  const tile = (c0: number) => ({ window: [0, 1, c0, c0 + 2] as [number, number, number, number], score: new Float32Array(2).fill(0.5), cov: new Uint8Array(2).fill(1), hist: new Float64Array(256) });
+  layer.addTile(g, tile(0));
+  layer.addTile(g, tile(2));
+  layer.addTile(g, tile(4));
+  const change = () => regs.filter((r) => r.id === "ecd-r-change");
+  expect(change()).toHaveLength(1);                     // the first tile only
+  expect(change()[0].nativeLayerIds).toEqual(["ecd-r-change-0"]);
+  layer.publish();                                      // the run ends
+  expect(change()).toHaveLength(2);
+  expect(change()[1].nativeLayerIds).toEqual(["ecd-r-change-0", "ecd-r-change-1", "ecd-r-change-2"]);
+  // Meanwhile the Layers panel's eye still reaches every piece, registered or not.
+  change()[0].paintBridge.setVisibility(false);
+  expect(map.setLayoutProperty.mock.calls.map((c: any[]) => c[0])).toEqual(["ecd-r-change-0", "ecd-r-change-1", "ecd-r-change-2"]);
+});

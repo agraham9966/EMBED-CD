@@ -219,7 +219,12 @@ export class ChangeLayer {
       this.paint(d, compose(win, all));
       this.addToMap(this.tiles.length - 1);
     }
-    this.register();
+    // GeoLibre is told on the first tile only; the caller publishes the rest when the run ends.
+    // Every registration that changes the layer list makes GeoLibre rebuild its map layer
+    // control, which leaks three map listeners each time (maplibre-gl-layer-control 0.18.2);
+    // registering per tile made tile n cost ~n times more than tile 1. Visibility and opacity
+    // still reach every piece meanwhile, through the paint bridge (it uses this.ids()).
+    if (!this.registered) this.register();
   }
 
   /** Add tile i's sources and layers, unless the style is mid-swap (style.load re-adds them). */
@@ -331,6 +336,12 @@ export class ChangeLayer {
 
   private ids(base: string): string[] {
     return this.tiles.map((_, i) => `${base}-${i}`);
+  }
+
+  /** Tell GeoLibre about every piece drawn so far: at the end of a run, and after a saved run's
+   *  tiles are loaded. */
+  publish(): void {
+    if (this.tiles.length) this.register();
   }
 
   private register(): void {
