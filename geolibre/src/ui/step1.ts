@@ -343,8 +343,7 @@ export function buildStep1(deps: Deps): {
 
   cancelBtn.onclick = () => {
     if (!job) return;
-    job.cancel();
-    status.textContent = "Stopping after the current tile...";
+    job.cancel();                                    // stops at once; the end event says so
   };
 
   runBtn.onclick = () => {

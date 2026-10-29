@@ -48,6 +48,17 @@ test("three cutoff changes in one frame recolour once, with the last value", () 
   expect((layer as any).cutoff).toBe(0.3);
 });
 
+test("setting the cutoff it already has recolours nothing: a run re-sends it with every tile", () => {
+  const frames: (() => void)[] = [];
+  const map: any = { getSource: () => undefined, once() {}, triggerRepaint() {} };
+  const layer = new ChangeLayer({ getMap: () => map } as any, "run1", "2019-2024", (f) => { frames.push(f); });
+  layer.setCutoff(0.2);
+  frames.splice(0).forEach((f) => f());
+  layer.setCutoff(0.2);                                  // tile 2, 3, ... of the same run
+  layer.setCutoff(0.2);
+  expect(frames).toHaveLength(0);
+});
+
 test("tiles wait for the style, and come back after a basemap switch replaces it", () => {
   const handlers: Record<string, (() => void)[]> = {};
   const sources = new Set<string>();

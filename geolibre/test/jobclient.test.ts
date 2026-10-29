@@ -65,3 +65,21 @@ test("tile reads skip the browser's HTTP cache (it tripled a tile's read time)",
   expect(seen.length).toBeGreaterThan(0);
   expect(seen.every((i) => i.cache === "no-store")).toBe(true);
 });
+
+test("cancel stops at once: the worker is shut down and tiles it had already sent are dropped", () => {
+  let onmessage: ((e: { data: unknown }) => void) | null = null;
+  let terminated = false;
+  const w: any = { set onmessage(f: any) { onmessage = f; }, get onmessage() { return onmessage; }, postMessage() {}, terminate: () => { terminated = true; } };
+  const ev: ClientEvent[] = [];
+  const hist = (v: number) => Float64Array.from({ length: 256 }, () => v);
+  const job = startJob(spec, (e) => ev.push(e), () => w);
+  onmessage!({ data: { type: "tile", done: 1, total: 9, result: { hist: hist(1) } } });
+  job.cancel();
+  expect(terminated).toBe(true);
+  expect(ev.at(-1)).toMatchObject({ type: "end", cancelled: true });
+  expect(Array.from((ev.at(-1) as any).histTotal.slice(0, 2))).toEqual([1, 1]);   // the tiles that did land
+  onmessage!({ data: { type: "tile", done: 2, total: 9, result: { hist: hist(1) } } });   // already queued
+  expect(ev.filter((e) => e.type === "tile")).toHaveLength(1);
+  job.cancel();                                          // a second click does nothing more
+  expect(ev.filter((e) => e.type === "end")).toHaveLength(1);
+});

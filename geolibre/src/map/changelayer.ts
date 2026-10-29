@@ -252,6 +252,9 @@ export class ChangeLayer {
 
   /** Coalesced to one recolour per frame: dragging the slider never queues work up. */
   setCutoff(t: number): void {
+    // A run re-sends the cutoff with every tile; recolouring all of them each time made tile n
+    // cost n repaints and texture uploads (a whole-island run crawled after ~40 tiles).
+    if (t === this.cutoff) return;
     this.cutoff = t;
     if (this.pending) return;
     this.pending = true;
