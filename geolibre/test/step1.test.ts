@@ -1,4 +1,4 @@
-import { estimateText, progressText, sizeWarning } from "../src/ui/step1";
+import { estimateText, progressText, recentPace, sizeWarning } from "../src/ui/step1";
 
 test("the estimate reads like QGIS", () => {
   expect(estimateText({ tiles: 4, gb: 0.536, px: 1_000_000 }, { width: 1000, height: 1000 }))
@@ -17,8 +17,8 @@ test("a very large map warns but does not block", () => {
 test("progress reads busy, then counts tiles, then reports failures", () => {
   expect(progressText({ type: "plan", tiles: 3 } as any)).toBe("Starting: reading the first tile (the slowest one)...");
   expect(progressText({ type: "tile", done: 1, total: 3 } as any)).toBe("1 of 3 tiles");
-  expect(progressText({ type: "tile", done: 2, total: 12 } as any, 60)).toBe("2 of 12 tiles, about 5 min left");
-  expect(progressText({ type: "tile", done: 12, total: 12 } as any, 60)).toBe("12 of 12 tiles");
+  expect(progressText({ type: "tile", done: 2, total: 12 } as any, 30)).toBe("2 of 12 tiles, about 5 min left");
+  expect(progressText({ type: "tile", done: 12, total: 12 } as any, 30)).toBe("12 of 12 tiles");
   expect(progressText({ type: "end", failed: 1, cancelled: false } as any)).toBe("Done. 1 tile(s) could not be downloaded and are left out. Make the change map again to fill them in.");
   expect(progressText({ type: "end", failed: 0, cancelled: true } as any)).toBe("Cancelled. The finished tiles are kept.");
   expect(progressText({ type: "end", failed: 0, cancelled: false } as any)).toBe("Done.");
@@ -53,4 +53,15 @@ test("while a run is going, the Area picker, Draw, Open and Save are locked", as
   run.click();
   expect(picker.disabled).toBe(true);
   for (const t of ["Draw area", "Open run...", "Save run..."]) expect(by(t).disabled).toBe(true);
+});
+
+test("the time left follows the recent pace: a run that slows down says so", () => {
+  // Plan at 0 s, then 10 tiles at 4 s each, then 10 at 12 s each.
+  const t = [0];
+  for (let i = 1; i <= 10; i++) t.push(t[t.length - 1] + 4000);
+  expect(recentPace(t)).toBe(4);
+  for (let i = 1; i <= 10; i++) t.push(t[t.length - 1] + 12000);
+  expect(recentPace(t.slice(-11))).toBe(12);                       // the last 10 tiles, not the whole run
+  expect(progressText({ type: "tile", done: 20, total: 90 } as any, recentPace(t.slice(-11)))).toBe("20 of 90 tiles, about 14 min left");
+  expect(recentPace([5])).toBeUndefined();
 });

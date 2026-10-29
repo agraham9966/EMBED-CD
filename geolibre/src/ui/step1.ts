@@ -42,11 +42,16 @@ export function sizeWarning(px: number, detail: string): string {
     : "";
 }
 
-/** `elapsed`: seconds since the run started, for the time left at this connection's own pace. */
-export function progressText(e: JobEvent, elapsed?: number): string {
+/** Seconds per tile over the times given (the plan's, then each tile's), or undefined. */
+export function recentPace(times: number[]): number | undefined {
+  return times.length > 1 ? (times[times.length - 1] - times[0]) / 1000 / (times.length - 1) : undefined;
+}
+
+/** `secPerTile`: the run's recent pace, for the time left. */
+export function progressText(e: JobEvent, secPerTile?: number): string {
   if (e.type === "plan") return "Starting: reading the first tile (the slowest one)...";
   if (e.type === "tile") {
-    const left = e.done < e.total && elapsed ? `, ${durationText((elapsed / e.done) * (e.total - e.done))} left` : "";
+    const left = e.done < e.total && secPerTile ? `, ${durationText(secPerTile * (e.total - e.done))} left` : "";
     return `${e.done} of ${e.total} tiles${left}`;
   }
   if (e.cancelled) return "Cancelled. The finished tiles are kept.";
@@ -359,7 +364,9 @@ export function buildStep1(deps: Deps): {
     current = id;
     deps.onRunChanged?.(current);
     const hist = new Float64Array(HIST_BINS);
-    let started = performance.now();
+    // When each recent tile landed: the time left follows the last 10 tiles' pace, so it moves
+    // when the run speeds up or slows down (a whole-run average barely moved late in a run).
+    const landed: number[] = [];
     // Locked while running: switching area mid-run would send this job's tiles to another layer.
     picker.disabled = drawBtn.disabled = openBtn.disabled = saveBtn.disabled = discardBtn.disabled = true;
     bar.hidden = false;
@@ -374,8 +381,9 @@ export function buildStep1(deps: Deps): {
         status.textContent = `The job stopped: ${e.message}`;
         return;
       }
-      if (e.type === "plan") started = performance.now();
-      status.textContent = progressText(e, (performance.now() - started) / 1000);
+      if (e.type === "plan" || e.type === "tile") landed.push(performance.now());
+      if (landed.length > 11) landed.shift();
+      status.textContent = progressText(e, recentPace(landed));
       if (e.type === "plan") {
         meta.grid = e.grid;
         refreshPicker(id);
