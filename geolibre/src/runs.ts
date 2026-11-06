@@ -56,7 +56,7 @@ export function resolveGroup(base: string, taken: string[]): string {
 
 const detailLabel = (resM: number) => (resM === 10 ? "10 m (full)" : `${resM} m`);
 
-/** How the Area list names a run (dock.py _refresh_run_combo). */
+/** How the Run list names a run (dock.py _refresh_run_combo). */
 export const runLabel = (r: Pick<RunRecord, "userName" | "bbox" | "yearA" | "yearB" | "resM" | "complete">, offMap = false) =>
   `${r.userName?.trim() || autoName(r.bbox)} · ${r.yearA}→${r.yearB} · ${detailLabel(r.resM)}`
   + (r.complete ? "" : " (incomplete)") + (offMap ? " (off the map)" : "");

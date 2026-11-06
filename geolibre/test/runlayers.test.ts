@@ -70,28 +70,38 @@ test("switching back to a run reuses its layers instead of adding them again", a
   expect(h.added.length).toBe(before);
 });
 
-test("naming: a typed name names the next run's group; editing it renames the current run and moves its layers", async () => {
+test("naming: the form names the next run; Rename on its card renames it, moves its layers, and saves the name", async () => {
+  const manifests: any[] = [];
   const h = harness();
-  const moves: [string[], string][] = [], removedGroups: string[] = [];
-  (h as any).s1; const app = (h.s1 as any);
   const name = h.s1.root.querySelector("input.ecd-text") as HTMLInputElement;
+  const button = (t: string) => [...h.s1.root.querySelectorAll("button")].find((b) => b.textContent === t)!;
   (h.s1 as any).setArea([-125.34, 49.63, -125.24, 49.71]);
   expect(name.placeholder).toBe("49.67N 125.29W");
   name.value = "Nanaimo";
-  name.dispatchEvent(new Event("change"));
   await makeRun(h, [-125.34, 49.63, -125.24, 49.71]);
-  expect(h.groups.at(-1)!.name).toBe("Nanaimo  2019→2024");
+  expect(h.groups.at(-1)!.name).toBe("Nanaimo  2019\u21922024");
   const picker = h.s1.root.querySelector("select")!;
-  expect(picker.options[picker.selectedIndex].text).toBe("Nanaimo · 2019→2024 · 10 m (full)");
-  void app; void moves; void removedGroups;
-  name.value = "Nanaimo south";
-  name.dispatchEvent(new Event("change"));
-  expect(h.groups.at(-1)!.name).toBe("Nanaimo south  2019→2024");
+  expect(picker.options[picker.selectedIndex].text).toBe("Nanaimo \u00b7 2019\u21922024 \u00b7 10 m (full)");
   const run = h.runs.list()[0];
-  expect(run.group).toBe("Nanaimo south  2019→2024");
+  h.runs.get(run.id)!.writer = { manifest: (m: unknown) => manifests.push(m), failed: null } as any;
+
+  button("Rename").click();
+  const edit = h.s1.root.querySelector(".ecd-card input") as HTMLInputElement;
+  expect(edit.value).toBe("Nanaimo");
+  edit.value = "Nanaimo south";
+  button("Cancel").click();                             // nothing changes
+  expect(run.userName).toBe("Nanaimo");
+
+  button("Rename").click();
+  edit.value = "Nanaimo south";
+  edit.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+  expect(h.groups.at(-1)!.name).toBe("Nanaimo south  2019\u21922024");
+  expect(run.group).toBe("Nanaimo south  2019\u21922024");
   expect(h.moved.at(-1)).toEqual([expect.arrayContaining([`ecd-${run.id}-change`, `ecd-${run.id}-coverage`]), run.groupId]);
   expect(h.removedGroups).toEqual(["g1"]);
-  expect(picker.options[picker.selectedIndex].text).toBe("Nanaimo south · 2019→2024 · 10 m (full)");
+  expect(picker.options[picker.selectedIndex].text).toBe("Nanaimo south \u00b7 2019\u21922024 \u00b7 10 m (full)");
+  expect(h.s1.root.querySelector(".ecd-cardname")!.textContent).toBe("Nanaimo south");
+  expect(manifests.at(-1).userName).toBe("Nanaimo south");   // back with the run when it is reopened
 });
 
 test("progress and Cancel live outside step 1, so they stay visible when the steps move on (as in QGIS)", async () => {
@@ -112,23 +122,58 @@ test("progress and Cancel live outside step 1, so they stay visible when the ste
   expect(row.textContent).toContain("Done.");
 });
 
-test("a second area: a name typed before Draw area is the new area's, the last run keeps its own, and step 1 has no result yet", async () => {
+test("New run: a clean form, the last run keeps its name and stays, and step 1 has no result yet", async () => {
   const h = harness();
-  document.body.append(h.s1.root);
-  await makeRun(h, [-125.34, 49.63, -125.24, 49.71]);
-  expect(h.s1.hasResult()).toBe(true);
+  const box: [number, number, number, number] = [-125.34, 49.63, -125.24, 49.71];
+  const form = () => h.s1.root.querySelector(".ecd-card")!.previousElementSibling as HTMLElement;
+  const card = () => h.s1.root.querySelector(".ecd-card") as HTMLElement;
+  const button = (t: string) => [...h.s1.root.querySelectorAll("button")].find((b) => b.textContent === t)!;
+  expect([form().hidden, card().hidden]).toEqual([false, true]);
   const name = h.s1.root.querySelector("input.ecd-text") as HTMLInputElement;
-  const draw = [...h.s1.root.querySelectorAll("button")].find((b) => b.textContent === "Draw area")!;
-  name.focus();
-  name.value = "Second";
-  draw.dispatchEvent(new Event("pointerdown"));      // comes before the field's change event
-  name.dispatchEvent(new Event("change"));
-  expect(h.runs.list()[0].userName).toBe("");        // the first run is not renamed
-  h.s1.setArea([-125.0, 49.0, -124.9, 49.1]);
-  expect(name.value).toBe("Second");
+  name.value = "First";
+  await makeRun(h, box);
+  expect(h.s1.hasResult()).toBe(true);
+  expect([form().hidden, card().hidden]).toEqual([true, false]);
+  expect(button("New run").hidden).toBe(false);
+
+  button("New run").click();
+  expect([form().hidden, card().hidden]).toEqual([false, true]);
+  expect(name.value).toBe("");
+  expect(h.runs.list()).toHaveLength(1);
+  expect(h.runs.list()[0].userName).toBe("First");
   expect(h.s1.current()).toBe(null);
-  expect(h.s1.hasResult()).toBe(false);              // so the panel does not fold step 1 away
-  h.s1.root.remove();
+  expect(h.s1.hasResult()).toBe(false);                 // so the panel does not fold step 1 away
+  expect(button("Make change map").disabled).toBe(false);   // the same box, with other years if you like
+
+  const picker = h.s1.root.querySelector("select")!;
+  picker.value = h.runs.list()[0].id;
+  picker.dispatchEvent(new Event("change"));
+  expect(card().hidden).toBe(false);
+  picker.value = "";                                    // New run in the list does the same as the button
+  picker.dispatchEvent(new Event("change"));
+  expect([form().hidden, card().hidden]).toEqual([false, true]);
+});
+
+test("the card says where a run is saved, and offers Save run only when it needs it", async () => {
+  const h = harness({
+    pickDownloadFolder: async () => ({ id: "f1", path: "D:\\runs" }),
+    pickLocalDirectoryFiles: async () => null,
+    writeFileToFolder: async () => ({}),
+  });
+  const button = (t: string) => [...h.s1.root.querySelectorAll("button")].find((b) => b.textContent === t)!;
+  const saved = () => h.s1.root.querySelectorAll(".ecd-card .ecd-muted")[1].textContent;
+  await makeRun(h, [-125.34, 49.63, -125.24, 49.71]);
+  expect(saved()).toContain("Not saved");
+  expect(button("Save run...").hidden).toBe(false);
+  button("New run").click();
+  button("...").click();
+  await new Promise((r) => setTimeout(r, 0));
+  await makeRun(h, [-125.0, 49.0, -124.9, 49.1]);
+  expect(saved()).toMatch(/^Saved in D:\\runs\\embed-cd_2019-2024_/);
+  expect(button("Save run...").hidden).toBe(true);
+  button("Discard run").click();                        // all in its folder: no question, back to the form
+  expect((h.s1.root.querySelector(".ecd-card") as HTMLElement).hidden).toBe(true);
+  expect(button("Make change map").disabled).toBe(true);    // the box went with it
 });
 
 test("layers removed in the Layers panel stay removed; the run stays in Area and choosing it puts them back", async () => {
@@ -260,7 +305,8 @@ test("a run saved to a folder: Discard needs one click, Open folder brings it ba
   button("Open run...").click();
   await new Promise((r) => setTimeout(r, 50));
   expect(h.s1.progressRow.textContent).toContain("Opened 1 tiles.");
-  expect(h.s1.progressRow.textContent).not.toContain("set Save to");
+  expect(h.s1.progressRow.textContent).not.toContain("Keep saving");
+  expect(button("Keep saving...").hidden).toBe(true);
   expect(h.runs.get(id)!.tiles[0].cov.length).toBe(2);
   expect(h.runs.get(id)!.writer).toBeTruthy();          // its folder is the one picked: saving goes on
 
@@ -268,9 +314,11 @@ test("a run saved to a folder: Discard needs one click, Open folder brings it ba
   h.runs.get(id)!.writer = undefined;
   button("Open run...").click();                        // the same run again, folder not picked
   await new Promise((r) => setTimeout(r, 50));
-  expect(h.s1.progressRow.textContent).toContain("To keep saving changes, set Save to to D:/runs.");
-  button("...").click();
+  expect(h.s1.progressRow.textContent).toContain("To keep saving changes, click Keep saving and pick D:/runs.");
+  expect(button("Keep saving...").hidden).toBe(false);
+  button("Keep saving...").click();
   await settle();
+  expect(button("Keep saving...").hidden).toBe(true);
   expect(h.runs.get(id)!.writer).toBeTruthy();          // picking it resumes
   button("stop saving to a folder").click();
 });
@@ -291,12 +339,13 @@ test("Open run lists a folder's runs and run files, and one click opens the run 
   });
   const button = (t: string) => [...h.s1.root.querySelectorAll("button")].find((b) => b.textContent === t)!;
   const settle = (ms = 10) => new Promise((r) => setTimeout(r, ms));
-  expect(button("Open run...").parentElement!.textContent).toContain("Save to");    // one Open, by the folder
+  expect([...h.s1.root.querySelectorAll("button")].filter((b) => b.textContent!.startsWith("Open")).length).toBe(1);
   button("...").click();
   await settle();
   await makeRun(h, [-125.34, 49.63, -125.24, 49.71]);
   await settle();
   await settle(1100);                                   // run names go by the second
+  button("New run").click();
   await makeRun(h, [-120.34, 49.63, -120.24, 49.71]);
   await settle();
   expect(subfolders.size).toBe(2);                      // a folder per run
@@ -312,7 +361,7 @@ test("Open run lists a folder's runs and run files, and one click opens the run 
   expect(list.textContent).toContain("embed-cd_2019-2024_10m_2026-11-05.zip");
   expect(list.textContent).not.toContain("holiday");
 
-  button("Cancel").click();
+  [...list.querySelectorAll("button")].at(-1)!.click();
   expect(list.hidden).toBe(true);
 
   button("Open run...").click();
@@ -342,6 +391,4 @@ test("a name typed before the box stays, even after clicking elsewhere, and name
   await makeRun(h, [-125.5, 49.0, -125.4, 49.1]);
   expect(h.runs.list()[0].userName).toBe("Van Island");
   expect(String(folders[0])).toMatch(/^embed-cd_Van-Island_2019-2024_/);
-  h.s1.setArea([-124.0, 49.0, -123.9, 49.1]);           // the next area: that name was the run's
-  expect(name.value).toBe("");
 });

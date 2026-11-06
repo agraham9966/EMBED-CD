@@ -28,6 +28,18 @@
 .ecd-class.ecd-selected { background: hsl(var(--accent, var(--border))); font-weight: 600; }
 .ecd-unknown { color: hsl(var(--muted-foreground)); cursor: default; }
 .ecd-swatch { width: 18px; height: 18px; padding: 0; border: 1px solid hsl(var(--border)); border-radius: 3px; background: none; cursor: pointer; }
+.ecd-form { display: flex; flex-direction: column; gap: 6px; }
+/* Step 1's grid: every control starts and ends on the same lines. */
+.ecd-field { display: grid; grid-template-columns: 48px minmax(0, 1fr); align-items: center; gap: 6px; }
+.ecd-field.ecd-two { grid-template-columns: 48px minmax(0, 1fr) auto minmax(0, 1fr); }
+.ecd-field.ecd-browse { grid-template-columns: 48px minmax(0, 1fr) 32px; }
+.ecd-field .ecd-select, .ecd-field .ecd-text, .ecd-field .ecd-btn { width: 100%; height: 30px; box-sizing: border-box; min-width: 0; }
+.ecd-field .ecd-btn, .ecd-wide .ecd-btn { justify-content: center; text-align: center; }
+.ecd-wide .ecd-btn { flex: 1 1 0; min-height: 30px; white-space: nowrap; }
+.ecd-card { border: 1px solid hsl(var(--border)); border-radius: 4px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.ecd-card .ecd-wide { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px; }
+.ecd-card .ecd-text { grid-column: 1 / -1; height: 30px; box-sizing: border-box; min-width: 0; }
+.ecd-cardname { font-size: 14px; font-weight: 600; margin: 0; overflow-wrap: anywhere; }
 .ecd-link { all: unset; cursor: pointer; text-decoration: underline; }
 .ecd-runlist { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; }
 .ecd-runlist[hidden] { display: none; }

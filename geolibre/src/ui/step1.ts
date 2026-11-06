@@ -1,5 +1,6 @@
-// Step 1: area, years, Detail, the size estimate, run/cancel with progress, and the Area picker
-// of saved runs. Wording and defaults mirror the QGIS dock.
+// Step 1: the Run picker, then one of two things. No run on screen: the New run form (area, years,
+// Detail, where it saves, Make change map), which only ever sets up the next run. A run on screen:
+// its card, with its own Rename, Save run and Discard. So no field means two things at once.
 import { utmCrs, type Bbox } from "../engine/crs";
 import { estimate, makeGrid, MAX_PIXELS, type Grid } from "../engine/grid";
 import type { JobEvent, TileResult } from "../engine/job";
@@ -91,13 +92,13 @@ export function buildStep1(deps: Deps): {
   const map = () => (app as any).getMap?.();
   const root = el("section", "ecd-step");
 
-  const picker = select([["", "New area"]]);
+  const picker = select([["", "New run"]]);
   picker.classList.add("ecd-grow");                 // one line whatever the run is called: no jumping rows
   const nameIn = el("input", "ecd-text") as HTMLInputElement;
-  nameIn.title = "What to call this area. Its layers go in a group of this name, so several areas can sit in the map at once. "
-    + "Leave it empty and the area's location is used instead.\n\nThis always names the area currently drawn. "
-    + "To rename a run you have already made, switch to it under Area first.";
-  picker.title = "This session's runs. They are discarded when GeoLibre closes unless you save them.";
+  nameIn.placeholder = "Optional";
+  nameIn.title = "What to call the run you are setting up. Its layers go in a group of this name, and its folder starts with it. "
+    + "Leave it empty and the area's location is used instead.";
+  picker.title = "The runs in this session, and New run to set up another.";
   const drawBtn = el("button", "ecd-btn", "Draw area") as HTMLButtonElement;
   drawBtn.title = "Drag a box on the map.";
   const yearA = select(YEARS.map((y) => [String(y), String(y)]), "2019");
@@ -119,11 +120,11 @@ export function buildStep1(deps: Deps): {
   const progressRow = el("div", "ecd-runrow");
   progressRow.append(row(bar, cancelBtn), status);
   const saveBtn = el("button", "ecd-btn", "Save run...") as HTMLButtonElement;
-  saveBtn.title = "Runs are temporary. Save one to a file to keep it; Open run brings it back.";
+  saveBtn.title = "Keep this run as a file. Open run brings it back.";
   const openBtn = el("button", "ecd-btn", "Open run...") as HTMLButtonElement;
   const discardBtn = el("button", "ecd-btn", "Discard run") as HTMLButtonElement;
   discardBtn.title = "Remove this run from EMBED-CD and its layers from the map. A file you saved it to is not touched.\n\n"
-    + "Removing its layers in the Layers panel only takes it off the map: it stays in the Area list.";
+    + "Removing its layers in the Layers panel only takes it off the map: it stays in the Run list.";
   // Save to folder: needs GeoLibre desktop 3.6.1 or later, so the row is only there when it works.
   const host = app as any;
   const canFolder = !!(host.pickDownloadFolder && host.writeFileToFolder && host.pickLocalDirectoryFiles);
@@ -147,19 +148,37 @@ export function buildStep1(deps: Deps): {
     destLink.textContent = saveFolder ? "stop saving to a folder" : "keep them in a folder";
   };
   showFolder();
-  const folderRow = row(el("span", "", "Save to"), folderIn, folderBtn, openBtn);
+  const folderRow = field("Save to", "ecd-browse", folderIn, folderBtn);
   const runList = el("div", "ecd-runlist");
   runList.hidden = true;
   folderRow.hidden = dest.hidden = !canFolder;
-  root.append(row(el("span", "", "Area"), picker), row(drawBtn, ...(canFolder ? [] : [openBtn]), saveBtn, discardBtn), row(el("span", "", "Name"), nameIn),
-    row(el("span", "", "From"), yearA, el("span", "", "To"), yearB),
-    row(el("span", "", "Detail"), detail), folderRow, dest, runList, est, warn, row(runBtn));
+  const form = el("div", "ecd-form");
+  form.append(field("Name", "", nameIn), field("Area", "", drawBtn),
+    field("From", "ecd-two", yearA, el("span", "", "To"), yearB),
+    field("Detail", "", detail), folderRow, dest, est, warn, wide(runBtn));
+  // The run on screen.
+  const cardName = el("p", "ecd-cardname");
+  const renameIn = el("input", "ecd-text") as HTMLInputElement;
+  const renameOk = el("button", "ecd-btn", "Save name") as HTMLButtonElement;
+  const renameCancel = el("button", "ecd-btn", "Cancel") as HTMLButtonElement;
+  const renameRow = wide(renameIn, renameOk, renameCancel);
+  const cardMeta = el("p", "ecd-muted"), cardSaved = el("p", "ecd-muted ecd-path");
+  const renameBtn = el("button", "ecd-btn", "Rename") as HTMLButtonElement;
+  renameBtn.title = "The new name shows in the Run list and the layer group, and comes back when you reopen the run. "
+    + "A folder keeps the name it started with.";
+  const newBtn = el("button", "ecd-btn ecd-primary", "New run") as HTMLButtonElement;
+  newBtn.title = "Set up another run. This one stays on the map and in the Run list.";
+  const keepBtn = el("button", "ecd-btn", "Keep saving...") as HTMLButtonElement;
+  keepBtn.title = "This run was reopened, so GeoLibre needs its folder picked again before changes can be saved there.";
+  const cardActions = wide(renameBtn, keepBtn, saveBtn, discardBtn);
+  const card = el("div", "ecd-card");
+  card.append(cardName, renameRow, cardMeta, cardSaved, cardActions);
+  root.append(field("Run", "", picker), form, card, wide(newBtn, openBtn), runList);
 
   let bbox: Bbox | null = null;
   let layer: ChangeLayer | null = null;
   let job: { cancel(): void; done: Promise<void> } | null = null;
   let cancelDraw: (() => void) | null = null;
-  let nameForNext = false;                          // the Name field's text is for the next box
   let index: Promise<TileIndex> | null = null;
   const res = () => DETAIL.find(([l]) => l === detail.value)![1];
 
@@ -167,7 +186,7 @@ export function buildStep1(deps: Deps): {
     deps.onChange?.();
     warn.textContent = "";
     runBtn.disabled = !bbox || !!job;
-    if (!bbox) return;
+    if (!bbox) { est.textContent = "Draw an area to see what it costs."; return; }
     const g = makeGrid(bbox, utmCrs(bbox), res());
     warn.textContent = sizeWarning(g.width * g.height, detail.value);
     est.textContent = "Reading the tile index...";
@@ -192,12 +211,35 @@ export function buildStep1(deps: Deps): {
     if (on) disarm = window.setTimeout(() => arm(false), 5000);
   }
   function refreshPicker(select_?: string) {
-    picker.replaceChildren(new Option("New area", ""), ...runs.list().map((r) => new Option(runLabel(r, !runs.onMap(r.id)), r.id)));
+    picker.replaceChildren(new Option("New run", ""), ...runs.list().map((r) => new Option(runLabel(r, !runs.onMap(r.id)), r.id)));
     picker.value = select_ ?? "";
     saveBtn.disabled = discardBtn.disabled = !current || !!job;
-    const writer = current ? runs.get(current)?.writer : null;
-    saveBtn.hidden = !!writer && !writer.failed;     // already in its folder: nothing to save
     arm(false);
+    view();
+  }
+  /** The form or the card, as there is a run on screen or not. */
+  function view() {
+    const r = current ? runs.get(current) : null;
+    form.hidden = !!r;
+    card.hidden = !r;
+    newBtn.hidden = !r || !!job;
+    cardActions.hidden = !!job;
+    if (!r || job) rename(false);
+    if (!r) return;
+    const m = r.meta;
+    cardName.textContent = m.userName?.trim() || autoName(m.bbox);
+    cardMeta.textContent = `${m.yearA} to ${m.yearB}, ${detailOf(m.resM)}, ${m.tiles} tiles` + (job || m.complete ? "" : ", not finished");
+    const folder = m.folder && `${m.folder}${m.folder.includes("\\") ? "\\" : "/"}${m.prefix}`;
+    cardSaved.textContent = r.writer?.failed ? `Saving stopped: ${r.writer.failed}`
+      : r.writer ? `Saved in ${folder}`
+      : folder ? `Saved in ${folder}. Changes are not being saved.`
+      : m.saved ? "Saved as a file." : "Not saved. It goes when GeoLibre closes.";
+    saveBtn.hidden = !!r.writer && !r.writer.failed;   // already in its folder: nothing to save
+    keepBtn.hidden = !canFolder || !folder || !!r.writer;
+  }
+  function rename(on: boolean) {
+    renameRow.hidden = !on;
+    cardName.hidden = on;
   }
   // Layers removed in the Layers panel send no event: read the map afresh as the list opens. A
   // run off the map is not left selected, so choosing it is a change that puts it back.
@@ -207,9 +249,6 @@ export function buildStep1(deps: Deps): {
 
   function show(meta: RunRecord, tiles: TileResult[]) {
     bbox = meta.bbox;
-    nameForNext = false;
-    nameIn.value = meta.userName ?? "";
-    nameIn.placeholder = autoName(meta.bbox);
     current = meta.id;
     yearA.value = String(meta.yearA);
     yearB.value = String(meta.yearB);
@@ -230,23 +269,18 @@ export function buildStep1(deps: Deps): {
     void refreshEstimate();
   }
 
-  /** A new area: the name of the run on show stays with that run, so a DIFFERENT box clears it
-   *  (QGIS _on_area). Anything else in the field was typed for the new area, and stays. */
+  /** Off the run on screen, back to the form. The run stays on the map and in the Run list. */
+  function leaveRun() {
+    current = null;
+    layer = null;
+    nameIn.value = "";
+    nameIn.placeholder = "Optional";
+    deps.onRunChanged?.(null);
+    refreshPicker();
+  }
+
   function newArea(b: Bbox) {
-    const moved = !bbox || b.some((v, i) => v !== bbox![i]);
-    const shownName = (current && runs.get(current)?.meta.userName) || "";
-    if (moved && !nameForNext && nameIn.value.trim() === shownName) nameIn.value = "";
-    nameForNext = false;
-    // A different box is a run still to make: the last run's result no longer belongs to step 1,
-    // so steps 2 and 3 wait for this one (its layers stay on the map).
-    const r = current ? runs.get(current) : null;
-    if (r && r.meta.bbox.some((v, i) => v !== b[i])) {
-      current = null;
-      layer = null;
-      deps.onRunChanged?.(null);
-      saveBtn.disabled = discardBtn.disabled = true;
-      arm(false);
-    }
+    if (current) leaveRun();
     bbox = b;
     nameIn.placeholder = autoName(b);
     showArea(map(), b);
@@ -254,15 +288,40 @@ export function buildStep1(deps: Deps): {
     void refreshEstimate();
   }
 
-  /** Renaming applies to the current run only while its area is the one drawn (dock.py _save_meta):
-   *  its label, and its group, by moving its layers into a group of the new name. */
+  /** The area stays, so the same box can be run again with other years. */
+  function newRun() {
+    leaveRun();
+    status.textContent = "";
+    if (bbox) nameIn.placeholder = autoName(bbox);
+    showArea(map(), bbox);
+    deps.onAreaDrawn?.();
+    void refreshEstimate();
+  }
+  newBtn.onclick = newRun;
+
   nameIn.oninput = () => deps.onChange?.();          // the step header follows as you type
-  nameIn.onchange = () => {
-    if (nameForNext) return;                         // typed for the area about to be drawn
+
+  renameBtn.onclick = () => {
     const r = current ? runs.get(current) : null;
-    if (!r || job || !bbox || r.meta.bbox.some((v, i) => v !== bbox![i])) return;
+    if (!r) return;
+    renameIn.value = r.meta.userName ?? "";
+    renameIn.placeholder = autoName(r.meta.bbox);
+    rename(true);
+    renameIn.focus();
+    renameIn.select();
+  };
+  renameCancel.onclick = () => rename(false);
+  renameIn.onkeydown = (e) => {
+    if (e.key === "Enter") renameOk.click();
+    if (e.key === "Escape") rename(false);
+  };
+  /** The run's label and group, by moving its layers into a group of the new name (dock.py
+   *  _save_meta), and its saved record, so the name comes back with it. */
+  renameOk.onclick = () => {
+    const r = current ? runs.get(current) : null;
+    if (!r) return;
     const meta = r.meta;
-    meta.userName = nameIn.value.trim();
+    meta.userName = renameIn.value.trim();
     const groups = ((app as any).listLayerGroups?.() ?? []) as { id: string; name: string }[];
     const next = resolveGroup(groupName(meta.userName, autoName(meta.bbox), meta.yearA, meta.yearB),
       groups.filter((g) => g.id !== meta.groupId).map((g) => g.name));
@@ -276,6 +335,8 @@ export function buildStep1(deps: Deps): {
       if (r.change) r.change.groupId = id;
       if (r.objectsLayer) r.objectsLayer.groupId = id;
     }
+    r.writer?.manifest(meta);
+    rename(false);
     refreshPicker(meta.id);
     deps.onChange?.();
   };
@@ -291,9 +352,6 @@ export function buildStep1(deps: Deps): {
     return r.change;
   }
 
-  // Type a name, then press Draw area: the name is for the new area, not a rename of the last
-  // run. pointerdown comes before the Name field's change event, so it can say so in time.
-  drawBtn.onpointerdown = () => { nameForNext = document.activeElement === nameIn; };
   drawBtn.onclick = () => {
     const m = map();
     if (!m) return;
@@ -310,7 +368,7 @@ export function buildStep1(deps: Deps): {
 
   picker.onchange = () => {
     const r = picker.value ? runs.get(picker.value) : null;
-    if (!r) return;
+    if (!r) return newRun();
     show(r.meta, r.tiles);
     status.textContent = r.meta.complete ? `Showing ${r.tiles.length} tiles.` : `Showing ${r.tiles.length} tiles. This run was not finished.`;
     refreshPicker(r.meta.id);
@@ -359,12 +417,16 @@ export function buildStep1(deps: Deps): {
       const picked = await host.pickDownloadFolder();
       if (picked) saveFolder = picked;
       showFolder();
-      if (current) resumeSaving(current);
+      const r = current ? runs.get(current) : null;
+      if (picked && r?.meta.folder) {
+        status.textContent = resumeSaving(r.meta.id) ? "Saving changes to this run again." : `To keep saving this run, pick ${r.meta.folder}.`;
+      }
       refreshPicker(current ?? undefined);
     } catch (e) {
       status.textContent = `Could not use that folder: ${(e as Error)?.message ?? e}`;
     }
   };
+  keepBtn.onclick = () => folderBtn.click();
   destLink.onclick = () => {
     if (!saveFolder) return folderBtn.click();
     saveFolder = null;
@@ -406,7 +468,7 @@ export function buildStep1(deps: Deps): {
       (app as any).fitBounds?.(meta.bbox);
       status.textContent = `Opened ${tiles.length} tiles${objects ? ` and ${objects.polys.length} objects` : ""}.`
         + (meta.complete ? "" : " This run was not finished.")
-        + (saving || !meta.folder ? "" : ` To keep saving changes, set Save to to ${meta.folder}.`);
+        + (saving || !meta.folder ? "" : ` To keep saving changes, click Keep saving and pick ${meta.folder}.`);
     } catch (e) {
       status.textContent = `Could not open that run: ${(e as Error)?.message ?? e}`;
     }
@@ -471,13 +533,10 @@ export function buildStep1(deps: Deps): {
     arm(false);
     runs.remove(r.meta.id);
     if (r.meta.groupId) (app as any).removeLayerGroup?.(r.meta.groupId);
-    current = null;
-    layer = null;
-    nameIn.value = "";                               // it named the run just discarded
-    deps.onRunChanged?.(null);
-    refreshPicker();
+    bbox = null;
+    leaveRun();
+    void refreshEstimate();
     status.textContent = `Discarded ${runLabel(r.meta)}.`;
-    deps.onChange?.();
   };
 
   cancelBtn.onclick = () => {
@@ -538,6 +597,7 @@ export function buildStep1(deps: Deps): {
         layer?.setCutoff(step2.cutoff());
         meta.tiles++;
         runs.addTile(id, e.result);
+        view();
         deps.onChange?.();
       } else {
         meta.complete = !e.cancelled;
@@ -548,6 +608,7 @@ export function buildStep1(deps: Deps): {
         writer?.manifest(meta);
       }
     });
+    view();
     const runLayer = layer;
     job.done.then(async () => {
       runLayer?.publish();                           // every tile, once (not once per tile)
@@ -579,7 +640,11 @@ export function buildStep1(deps: Deps): {
     layer: () => layer,
     current: () => current,
     setArea: (b: Bbox) => newArea(b),
-    summary: () => (bbox ? `${nameIn.value.trim() || autoName(bbox)}, ${yearA.value}→${yearB.value}, ${detail.value}` : null),
+    summary: () => {
+      if (!bbox) return null;
+      const r = current ? runs.get(current) : null;
+      return `${(r ? r.meta.userName : nameIn.value)?.trim() || autoName(bbox)}, ${yearA.value}→${yearB.value}, ${detail.value}`;
+    },
     hasResult: () => !!layer && layer.count > 0,
     dispose() {
       map()?.off?.("style.load", reShow);
@@ -589,6 +654,23 @@ export function buildStep1(deps: Deps): {
     },
   };
 }
+
+/** A row on the step's grid: the label in its own column, the controls on one shared left edge. */
+function field(label: string, kind: string, ...controls: HTMLElement[]): HTMLElement {
+  const r = row(el("span", "", label), ...controls);
+  r.classList.add("ecd-field");
+  if (kind) r.classList.add(kind);
+  return r;
+}
+
+/** Buttons sharing the row's width equally. */
+function wide(...controls: HTMLElement[]): HTMLElement {
+  const r = row(...controls);
+  r.classList.add("ecd-wide");
+  return r;
+}
+
+const detailOf = (resM: number) => DETAIL.find(([, v]) => v === resM)?.[0] ?? `${resM} m`;
 
 function sumHist(tiles: TileResult[]): Float64Array {
   const h = new Float64Array(HIST_BINS);
