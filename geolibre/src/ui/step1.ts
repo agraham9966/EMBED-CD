@@ -10,6 +10,7 @@ import type { GeoLibreAppAPI } from "../host-api";
 import type { ClientEvent } from "../jobclient";
 import { ChangeLayer } from "../map/changelayer";
 import { drawBox, keepAreaOnTop, showArea } from "../map/drawbox";
+import { FolderWriter, listFolderRuns, loadFolderRun, runPrefix, type FolderRun } from "../runfolder";
 import { saveBinary } from "../export";
 import { cellsOf, readRunFile, runFileName, writeRunFile } from "../runfile";
 import { autoName, ensureGroup, groupName, resolveGroup, runLabel, runName, type RunRecord, type SessionRuns } from "../runs";
@@ -59,6 +60,9 @@ export function progressText(e: JobEvent, secPerTile?: number): string {
     ? `Done. ${e.failed} tile(s) could not be downloaded and are left out. Make the change map again to fill them in.`
     : "Done.";
 }
+
+// The folder runs save to. A picked folder lasts as long as the app does, so this outlives the panel.
+let saveFolder: { id: string; path: string } | null = null;
 
 type Deps = {
   app: GeoLibreAppAPI;
@@ -120,9 +124,36 @@ export function buildStep1(deps: Deps): {
   const discardBtn = el("button", "ecd-btn", "Discard run") as HTMLButtonElement;
   discardBtn.title = "Remove this run from EMBED-CD and its layers from the map. A file you saved it to is not touched.\n\n"
     + "Removing its layers in the Layers panel only takes it off the map: it stays in the Area list.";
-  root.append(row(el("span", "", "Area"), picker), row(drawBtn, openBtn, saveBtn, discardBtn), row(el("span", "", "Name"), nameIn),
+  // Save to folder: needs GeoLibre desktop 3.6.1 or later, so the row is only there when it works.
+  const host = app as any;
+  const canFolder = !!(host.pickDownloadFolder && host.writeFileToFolder && host.pickLocalDirectoryFiles);
+  openBtn.title = canFolder
+    ? "Reopen a run. Pick a folder and choose from the runs in it, finished or not. Objects and labels come back too."
+    : "Reopen a run from a file made with Save run.";
+  const folderIn = el("input", "ecd-text ecd-grow") as HTMLInputElement;
+  folderIn.readOnly = true;
+  folderIn.placeholder = "(temporary, discarded on exit)";
+  folderIn.title = "Optional. Each run writes itself to its own folder inside this one as it goes, so finished tiles survive a "
+    + "crash or closing GeoLibre. Its objects and labels are saved there too.";
+  const folderBtn = el("button", "ecd-btn", "...") as HTMLButtonElement;
+  folderBtn.title = "Choose the folder runs save to.";
+  const dest = el("p", "ecd-muted ecd-path", "");
+  const destText = document.createTextNode("");
+  const destLink = el("button", "ecd-link", "") as HTMLButtonElement;
+  dest.append(destText, destLink);
+  const showFolder = () => {
+    folderIn.value = saveFolder?.path ?? "";
+    destText.textContent = saveFolder ? `Results \u2192 ${saveFolder.path} \u00b7 ` : "Results \u2192 memory only, discarded when GeoLibre closes \u00b7 ";
+    destLink.textContent = saveFolder ? "stop saving to a folder" : "keep them in a folder";
+  };
+  showFolder();
+  const folderRow = row(el("span", "", "Save to"), folderIn, folderBtn, openBtn);
+  const runList = el("div", "ecd-runlist");
+  runList.hidden = true;
+  folderRow.hidden = dest.hidden = !canFolder;
+  root.append(row(el("span", "", "Area"), picker), row(drawBtn, ...(canFolder ? [] : [openBtn]), saveBtn, discardBtn), row(el("span", "", "Name"), nameIn),
     row(el("span", "", "From"), yearA, el("span", "", "To"), yearB),
-    row(el("span", "", "Detail"), detail), est, warn, row(runBtn));
+    row(el("span", "", "Detail"), detail), folderRow, dest, runList, est, warn, row(runBtn));
 
   let bbox: Bbox | null = null;
   let layer: ChangeLayer | null = null;
@@ -164,6 +195,8 @@ export function buildStep1(deps: Deps): {
     picker.replaceChildren(new Option("New area", ""), ...runs.list().map((r) => new Option(runLabel(r, !runs.onMap(r.id)), r.id)));
     picker.value = select_ ?? "";
     saveBtn.disabled = discardBtn.disabled = !current || !!job;
+    const writer = current ? runs.get(current)?.writer : null;
+    saveBtn.hidden = !!writer && !writer.failed;     // already in its folder: nothing to save
     arm(false);
   }
   // Layers removed in the Layers panel send no event: read the map afresh as the list opens. A
@@ -197,11 +230,12 @@ export function buildStep1(deps: Deps): {
     void refreshEstimate();
   }
 
-  /** A new area: a typed name belongs to it, so a DIFFERENT box clears the field (QGIS _on_area),
-   *  unless the name was typed for this very box (Draw area pressed straight from the Name field). */
+  /** A new area: the name of the run on show stays with that run, so a DIFFERENT box clears it
+   *  (QGIS _on_area). Anything else in the field was typed for the new area, and stays. */
   function newArea(b: Bbox) {
     const moved = !bbox || b.some((v, i) => v !== bbox![i]);
-    if (moved && !nameForNext) nameIn.value = "";
+    const shownName = (current && runs.get(current)?.meta.userName) || "";
+    if (moved && !nameForNext && nameIn.value.trim() === shownName) nameIn.value = "";
     nameForNext = false;
     // A different box is a run still to make: the last run's result no longer belongs to step 1,
     // so steps 2 and 3 wait for this one (its layers stay on the map).
@@ -297,35 +331,128 @@ export function buildStep1(deps: Deps): {
     }
   };
 
-  openBtn.onclick = () => {
-    const input = el("input") as HTMLInputElement;
-    input.type = "file";
-    input.accept = ".zip";
-    input.onchange = async () => {
-      const f = input.files?.[0];
-      if (!f) return;
-      try {
-        const { meta, tiles, cells, objects, labelState } = await readRunFile(await f.arrayBuffer());
-        meta.saved = true;
-        if (!runs.get(meta.id)) {
-          meta.groupId = undefined;                   // a fresh session: its group is made anew
-          runs.start(meta);
-          for (const t of tiles) runs.addTile(meta.id, t);
-          runs.setCells(meta.id, cells);
-          if (objects) runs.setObjects(meta.id, objects);
-          if (labelState) runs.get(meta.id)!.labelState = labelState;
-        }
-        // Back where the objects were cut, so the map and the outlines agree (QGIS restore).
-        if (objects) step2.setCutoff(objects.cutoff);
-        show(meta, runs.get(meta.id)!.tiles);
-        refreshPicker(meta.id);
-        (app as any).fitBounds?.(meta.bbox);           // take you to the run you opened
-        status.textContent = `Opened ${f.name}.`;
-      } catch (e) {
-        status.textContent = `Could not open ${f.name}: ${(e as Error)?.message ?? e}`;
+  async function openZip(f: File) {
+    try {
+      const { meta, tiles, cells, objects, labelState } = await readRunFile(await f.arrayBuffer());
+      meta.saved = true;
+      if (!runs.get(meta.id)) {
+        meta.groupId = undefined;                   // a fresh session: its group is made anew
+        runs.start(meta);
+        for (const t of tiles) runs.addTile(meta.id, t);
+        runs.setCells(meta.id, cells);
+        if (objects) runs.setObjects(meta.id, objects);
+        if (labelState) runs.get(meta.id)!.labelState = labelState;
       }
+      // Back where the objects were cut, so the map and the outlines agree (QGIS restore).
+      if (objects) step2.setCutoff(objects.cutoff);
+      show(meta, runs.get(meta.id)!.tiles);
+      refreshPicker(meta.id);
+      (app as any).fitBounds?.(meta.bbox);           // take you to the run you opened
+      status.textContent = `Opened ${f.name}.`;
+    } catch (e) {
+      status.textContent = `Could not open ${f.name}: ${(e as Error)?.message ?? e}`;
+    }
+  }
+
+  folderBtn.onclick = async () => {
+    try {
+      const picked = await host.pickDownloadFolder();
+      if (picked) saveFolder = picked;
+      showFolder();
+      if (current) resumeSaving(current);
+      refreshPicker(current ?? undefined);
+    } catch (e) {
+      status.textContent = `Could not use that folder: ${(e as Error)?.message ?? e}`;
+    }
+  };
+  destLink.onclick = () => {
+    if (!saveFolder) return folderBtn.click();
+    saveFolder = null;
+    showFolder();
+  };
+
+  const newWriter = (folder: { id: string; path: string }, meta: RunRecord) => {
+    const prefix = (meta.prefix ??= runPrefix(meta));
+    // Each run in its own folder. A GeoLibre without subfolders ignores the option and writes them
+    // side by side, which still reads back: every file name carries the prefix.
+    return new FolderWriter((name, data) => host.writeFileToFolder(folder.id, name, data, { subfolder: prefix }), prefix,
+      (why) => { status.textContent = `Saving to the folder stopped: ${why} Save run still works.`; });
+  };
+
+  /** A reopened run keeps saving once the folder it was saved in is the one picked (a picked folder
+   *  cannot be told from the files Open run reads, and lasts only as long as the app does). */
+  function resumeSaving(id: string): boolean {
+    const r = runs.get(id);
+    if (!r || r.writer || !saveFolder || r.meta.folder !== saveFolder.path) return !!r?.writer;
+    r.writer = newWriter(saveFolder, r.meta);
+    r.writer.objectsStamp = r.meta.objectsStamp ?? 0;
+    return true;
+  }
+
+  async function openFolderRun(run: FolderRun) {
+    status.textContent = `Reading ${run.tiles} tiles...`;
+    try {
+      const { meta, tiles, objects, labelState } = await loadFolderRun(run);
+      if (!runs.get(meta.id)) {
+        runs.start(meta);
+        for (const t of tiles) runs.addTile(meta.id, t);
+        if (objects) runs.setObjects(meta.id, objects);
+        if (labelState) runs.get(meta.id)!.labelState = labelState;
+      }
+      if (objects) step2.setCutoff(objects.cutoff);  // where they were cut, as a run file does
+      show(meta, runs.get(meta.id)!.tiles);
+      const saving = resumeSaving(meta.id);
+      refreshPicker(meta.id);
+      (app as any).fitBounds?.(meta.bbox);
+      status.textContent = `Opened ${tiles.length} tiles${objects ? ` and ${objects.polys.length} objects` : ""}.`
+        + (meta.complete ? "" : " This run was not finished.")
+        + (saving || !meta.folder ? "" : ` To keep saving changes, set Save to to ${meta.folder}.`);
+    } catch (e) {
+      status.textContent = `Could not open that run: ${(e as Error)?.message ?? e}`;
+    }
+  }
+
+  /** The runs in a folder to pick from, as QGIS asks: one opens at once, several are listed. */
+  function chooseRun(found: { label: string; open(): Promise<void> }[]) {
+    if (found.length === 1) return void found[0].open();
+    const pick = (label: string, then?: () => void) => {
+      const b = el("button", "ecd-btn", label) as HTMLButtonElement;
+      b.onclick = () => { runList.hidden = true; then?.(); };
+      return b;
     };
-    input.click();
+    runList.replaceChildren(el("p", "ecd-muted", `${found.length} saved runs in that folder:`),
+      ...found.map((r) => pick(r.label, () => void r.open())), pick("Cancel"));
+    runList.hidden = false;
+    status.textContent = "";
+  }
+
+  openBtn.onclick = async () => {
+    if (!canFolder) {
+      const input = el("input") as HTMLInputElement;
+      input.type = "file";
+      input.accept = ".zip";
+      input.onchange = () => { if (input.files?.[0]) void openZip(input.files[0]); };
+      return input.click();
+    }
+    runList.hidden = true;
+    status.textContent = "Reading the folder...";
+    try {
+      // ponytail: the host reads every file in the folder before we see a name, so a folder of many
+      // big runs takes its whole size in memory. Picking one run's own folder reads just that run.
+      const files: File[] | null = await host.pickLocalDirectoryFiles();
+      if (!files) return void (status.textContent = "");
+      const found = (await listFolderRuns(files)).map((r) => ({
+        label: `${runLabel(r.meta)}, ${r.tiles} tiles${r.objects ? ", objects" : ""}${r.meta.complete ? "" : ", not finished"}`,
+        open: () => openFolderRun(r),
+      }));
+      for (const f of files) {
+        if (/^embed-cd_.*\.zip$/i.test(f.name)) found.push({ label: f.name, open: () => openZip(f) });
+      }
+      if (found.length) chooseRun(found);
+      else status.textContent = "No EMBED-CD runs in that folder.";
+    } catch (e) {
+      status.textContent = `Could not read that folder: ${(e as Error)?.message ?? e}`;
+    }
   };
 
   // An unsaved run cannot be brought back: the first click turns the button itself into the
@@ -333,9 +460,12 @@ export function buildStep1(deps: Deps): {
   discardBtn.onclick = () => {
     const r = current ? runs.get(current) : null;
     if (!r || job) return;
-    if (!r.meta.saved && !discardBtn.classList.contains("ecd-danger")) {
+    const kept = r.meta.saved || (r.writer && !r.writer.failed);       // its folder has everything
+    if (!kept && !discardBtn.classList.contains("ecd-danger")) {
       arm(true);
-      status.textContent = "This run was never saved, so it cannot be brought back.";
+      status.textContent = r.meta.folder
+        ? "Changes since this run stopped saving to its folder would be lost."
+        : "This run was never saved, so it cannot be brought back.";
       return;
     }
     arm(false);
@@ -343,6 +473,7 @@ export function buildStep1(deps: Deps): {
     if (r.meta.groupId) (app as any).removeLayerGroup?.(r.meta.groupId);
     current = null;
     layer = null;
+    nameIn.value = "";                               // it named the run just discarded
     deps.onRunChanged?.(null);
     refreshPicker();
     status.textContent = `Discarded ${runLabel(r.meta)}.`;
@@ -356,13 +487,18 @@ export function buildStep1(deps: Deps): {
 
   runBtn.onclick = () => {
     if (job || !bbox) return;
-    const spec = { bbox, yearA: Number(yearA.value), yearB: Number(yearB.value), resM: res() };
+    const folder = canFolder ? saveFolder : null;
+    const spec = { bbox, yearA: Number(yearA.value), yearB: Number(yearB.value), resM: res(), pack: !!folder };
     const id = `run-${Date.now()}`;
     const meta: RunRecord = {
       id, name: runName(spec.yearA, spec.yearB, spec.resM, new Date()), createdAt: Date.now(), userName: nameIn.value.trim(),
-      ...spec, grid: null as unknown as Grid, histTotal: [], complete: false, failed: 0, tiles: 0,
+      bbox: spec.bbox, yearA: spec.yearA, yearB: spec.yearB, resM: spec.resM, folder: folder?.path,
+      grid: null as unknown as Grid, histTotal: [], complete: false, failed: 0, tiles: 0,
     };
+    const writer = folder ? newWriter(folder, meta) : null;
+    const saving = () => (writer?.failed ? ` Saving to the folder stopped: ${writer.failed} Save run still works.` : "");
     runs.start(meta);
+    runs.get(id)!.writer = writer ?? undefined;
     layer = layerFor(meta);
     current = id;
     deps.onRunChanged?.(current);
@@ -371,7 +507,8 @@ export function buildStep1(deps: Deps): {
     // when the run speeds up or slows down (a whole-run average barely moved late in a run).
     const landed: number[] = [];
     // Locked while running: switching area mid-run would send this job's tiles to another layer.
-    picker.disabled = drawBtn.disabled = openBtn.disabled = saveBtn.disabled = discardBtn.disabled = true;
+    picker.disabled = drawBtn.disabled = openBtn.disabled = folderBtn.disabled = saveBtn.disabled = discardBtn.disabled = true;
+    runList.hidden = true;
     bar.hidden = false;
     bar.removeAttribute("value");                    // busy until the first tile lands
     status.textContent = "Checking coverage...";
@@ -386,14 +523,16 @@ export function buildStep1(deps: Deps): {
       }
       if (e.type === "plan" || e.type === "tile") landed.push(performance.now());
       if (landed.length > 11) landed.shift();
-      status.textContent = progressText(e, recentPace(landed));
+      status.textContent = progressText(e, recentPace(landed)) + saving();
       if (e.type === "plan") {
         meta.grid = e.grid;
+        writer?.manifest(meta);
         refreshPicker(id);
       } else if (e.type === "tile") {
         bar.max = e.total;
         bar.value = e.done;
         layer?.addTile(meta.grid, e.result);
+        if (e.packed) writer?.tile(e.done, e.packed);
         for (let i = 0; i < HIST_BINS; i++) hist[i] += e.result.hist[i];
         if (meta.tiles === 0) step2.setHist(hist);
         layer?.setCutoff(step2.cutoff());
@@ -406,13 +545,20 @@ export function buildStep1(deps: Deps): {
         meta.histTotal = Array.from(e.histTotal);
         step2.setHist(Float64Array.from(e.histTotal));
         if (!e.cancelled && meta.tiles > 0) step2.auto();       // as the QGIS run reports AUTO
+        writer?.manifest(meta);
       }
     });
     const runLayer = layer;
-    job.done.then(() => {
+    job.done.then(async () => {
       runLayer?.publish();                           // every tile, once (not once per tile)
+      if (writer) {
+        const said = status.textContent;
+        status.textContent = "Finishing writing to the folder...";
+        await writer.done();
+        status.textContent = said + (saving() || ` Saved to ${folder!.path}.`);
+      }
       job = null;
-      picker.disabled = drawBtn.disabled = openBtn.disabled = false;
+      picker.disabled = drawBtn.disabled = openBtn.disabled = folderBtn.disabled = false;
       refreshPicker(current ?? undefined);
       bar.hidden = true;
       cancelBtn.hidden = true;

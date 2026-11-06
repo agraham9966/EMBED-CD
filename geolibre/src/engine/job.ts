@@ -12,7 +12,11 @@ import { factorFor, fetchTile, type Affine, type Cube } from "./source";
 import { listTiles, TILE_PX, type Tile, type TileIndex } from "./tileindex";
 
 export type TileResult = { window: Window; score: Float32Array; cov: Uint8Array; hist: Float64Array; cells?: CellGrid };
-export type JobSpec = { bbox: Bbox; yearA: number; yearB: number; resM: number };
+export type JobSpec = {
+  bbox: Bbox; yearA: number; yearB: number; resM: number;
+  /** Save to folder: the worker packs each tile (runfolder.ts) before sending it. */
+  pack?: boolean;
+};
 export type JobEvent =
   | { type: "plan"; grid: Grid; tiles: number; partial: number; gb: number }
   | { type: "tile"; done: number; total: number; result: TileResult }

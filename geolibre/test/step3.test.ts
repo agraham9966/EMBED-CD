@@ -109,3 +109,31 @@ test("objects removed in the Layers panel are not put back by labelling; Generat
   layer.set(polys, grid);
   expect(store.has("ecd-r-objects")).toBe(true);
 });
+
+test("a run saving to a folder hands over its objects when cut, and its labels as they change", async () => {
+  const { SessionRuns } = await import("../src/runs");
+  const { buildStep3 } = await import("../src/ui/step3");
+  const map: any = { style: { _loaded: true }, on() {}, off() {}, getSource: () => undefined, addSource() {},
+    addLayer() {}, getLayer: () => false, removeLayer() {}, removeSource() {} };
+  const app: any = { getMap: () => map, registerExternalNativeLayer() {}, unregisterExternalNativeLayer() {} };
+  const runs = new SessionRuns();
+  const grid = { crs: "EPSG:32610", x0: 500000, y0: 5500000, res: 10, width: 2, height: 1 };
+  const cells = { crs: "EPSG:32610", x0: 500000, y0: 5500000, res: 160, width: 1, height: 1,
+    ma: new Int16Array(64).fill(3277), mb: new Int16Array(64).fill(6553), n: Float32Array.from([2]), smean: Float32Array.from([0.9]), smax: Float32Array.from([0.9]) };
+  runs.start({ id: "r", grid, yearA: 2019, yearB: 2024 } as any);
+  runs.addTile("r", { window: [0, 1, 0, 2], score: Float32Array.from([0.9, 0.9]), cov: Uint8Array.from([1, 1]), hist: new Float64Array(256), cells });
+  const writer = { objects: vi.fn(), labels: vi.fn() };
+  runs.get("r")!.writer = writer as any;
+  const s3 = buildStep3({ app, runs, currentRun: () => "r", cutoff: () => 0.5 });
+  (s3.root.querySelector("input") as HTMLInputElement).value = "0";
+  (s3.root.querySelector("button") as HTMLButtonElement).click();
+  await new Promise((r) => setTimeout(r, 50));
+  expect(writer.objects).toHaveBeenCalledTimes(1);
+  expect(writer.objects.mock.calls[0][0].polys).toHaveLength(1);
+  const button = (t: string) => [...s3.root.querySelectorAll("button")].find((b) => b.textContent === t)!;
+  button("Add").click();
+  (s3.root.querySelector(".ecd-nameform input") as HTMLInputElement).value = "clearcut";
+  button("OK").click();
+  expect(writer.labels).toHaveBeenCalled();
+  expect(writer.labels.mock.calls.at(-1)![0].classes).toContain("clearcut");
+});

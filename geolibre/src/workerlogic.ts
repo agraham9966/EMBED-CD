@@ -2,9 +2,10 @@
 import { BaseClient, BaseResponse, fromCustomClient, type GeoTIFF } from "geotiff";
 import { runJob, type JobEvent, type JobSpec } from "./engine/job";
 import { TileIndex } from "./engine/tileindex";
+import { packTile } from "./runfolder";
 
 export type WorkerIn = { type: "start"; spec: JobSpec } | { type: "cancel" };
-export type WorkerOut = JobEvent | { type: "error"; message: string };
+export type WorkerOut = (JobEvent & { packed?: Uint8Array }) | { type: "error"; message: string };
 export type WorkerDeps = {
   loadIndex: () => Promise<TileIndex>;
   open: (url: string) => Promise<GeoTIFF>;
@@ -53,8 +54,11 @@ export function createHandler(post: (msg: WorkerOut, transfer?: Transferable[]) 
       for await (const e of runJob(msg.spec, { index: idx, open, tilePx: deps.tilePx }, signal)) {
         if (e.type === "tile") {
           const c = e.result.cells;
-          post(e, [e.result.score.buffer, e.result.cov.buffer, e.result.hist.buffer,
-            ...(c ? [c.ma.buffer, c.mb.buffer, c.n.buffer, c.smean.buffer, c.smax.buffer] : [])]);
+          // Here, off the page. If it fails, one tile goes unsaved: the run itself is fine.
+          const packed = msg.spec.pack ? await packTile(e.result).catch(() => undefined) : undefined;
+          post({ ...e, packed }, [e.result.score.buffer, e.result.cov.buffer, e.result.hist.buffer,
+            ...(c ? [c.ma.buffer, c.mb.buffer, c.n.buffer, c.smean.buffer, c.smax.buffer] : []),
+            ...(packed ? [packed.buffer] : [])]);
         }
         else post(e);
       }

@@ -49,7 +49,10 @@ export function buildStep3(deps: Deps): { root: HTMLElement; runChanged(id: stri
   const status = el("p", "ecd-status", "");
   let shown: string | null = null;                  // the run whose objects the panel is showing
   const classify = buildClassify(deps.app, (s) => { status.textContent = s; },
-    (state) => { const r = shown ? deps.runs.get(shown) : null; if (r) r.labelState = state; });
+    (state) => {
+      const r = shown ? deps.runs.get(shown) : null;
+      if (r) { r.labelState = state; r.writer?.labels(state); }
+    });
   // Before any objects exist, the classes below have nothing to work on: say Generate comes first.
   const guide = el("div", "ecd-guide");
   guide.append(el("b", "", "Next: "), "Click Generate Embedded Vector Set to cut the change map into objects. "
@@ -98,6 +101,7 @@ export function buildStep3(deps: Deps): { root: HTMLElement; runChanged(id: stri
         return true;
       });
       deps.runs.setObjects(meta.id, { polys, vectors, cutoff, minArea: min });
+      run.writer?.objects(run.objects!);
       show(meta.id, true);
       deps.onObjectsMade?.();
       count.textContent = countText(polys.length, cutoff);

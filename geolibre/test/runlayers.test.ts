@@ -1,8 +1,9 @@
+import { packTile } from "../src/runfolder";
 import { SessionRuns } from "../src/runs";
 import { buildStep1 } from "../src/ui/step1";
 import { buildStep2 } from "../src/ui/step2";
 
-function harness() {
+function harness(extra: Record<string, unknown> = {}) {
   const sources = new Set<string>(), added: string[] = [], regs: any[] = [], groups: { id: string; name: string }[] = [];
   const map: any = {
     style: { _loaded: true }, on() {}, off() {}, once: (_: string, f: () => void) => f(), triggerRepaint() {},
@@ -13,6 +14,7 @@ function harness() {
     getCanvas: () => ({ style: {} }), dragPan: { disable() {}, enable() {} }, boxZoom: { disable() {}, enable() {} },
   };
   const app: any = {
+    ...extra,
     getMap: () => map,
     registerExternalNativeLayer: (r: any) => { regs.push(r); store.add(r.id); },
     unregisterExternalNativeLayer: (id: string) => store.delete(id),
@@ -24,10 +26,10 @@ function harness() {
   };
   const moved: [string[], string][] = [], removedGroups: string[] = [], store = new Set<string>(), seq: string[] = [], data = new Map<string, any>();
   const grid = { crs: "EPSG:32610", x0: 500000, y0: 5500000, res: 10, width: 2, height: 1 };
-  const startJob = (_spec: any, on: (e: any) => void) => {
+  const startJob = (spec: any, on: (e: any) => void) => {
     queueMicrotask(() => {
       on({ type: "plan", grid, tiles: 1, partial: 0, gb: 0 });
-      on({ type: "tile", done: 1, total: 1, result: { window: [0, 1, 0, 2], score: Float32Array.from([0.5, 0.6]), cov: Uint8Array.from([1, 1]), hist: new Float64Array(256) } });
+      on({ type: "tile", done: 1, total: 1, packed: spec.pack ? ((extra.packed as Uint8Array) ?? new Uint8Array(8)) : undefined, result: { window: [0, 1, 0, 2], score: Float32Array.from([0.5, 0.6]), cov: Uint8Array.from([1, 1]), hist: new Float64Array(256) } });
       on({ type: "end", histTotal: new Float64Array(256), failed: 0, cancelled: false });
     });
     return { cancel() {}, done: new Promise<void>((r) => setTimeout(r, 0)) };
@@ -193,4 +195,153 @@ test("the drawn box shows until the run starts; then the run's own extent layer 
   await makeRun(h, [-125.34, 49.63, -125.24, 49.71]);
   expect(h.data.get("ecd-area").features).toHaveLength(0);
   expect(h.regs.some((r) => r.id.endsWith("-extent"))).toBe(true);
+});
+
+test("Save to folder: only offered where the host can do it, and a run writes itself there", async () => {
+  const saveRow = (h: ReturnType<typeof harness>) =>
+    [...h.s1.root.querySelectorAll<HTMLElement>(".ecd-row")].find((r) => r.textContent?.startsWith("Save to"))!;
+  expect(saveRow(harness()).hidden).toBe(true);
+  const written = new Map<string, unknown>();
+  let fail = false;
+  const h = harness({
+    pickDownloadFolder: async () => ({ id: "f1", path: "D:/runs" }),
+    pickLocalDirectoryFiles: async () => null,
+    writeFileToFolder: async (id: string, name: string, data: unknown) => {
+      expect(id).toBe("f1");
+      if (fail) throw new Error("disk full");
+      written.set(name, data);
+    },
+  });
+  const button = (t: string) => [...h.s1.root.querySelectorAll("button")].find((b) => b.textContent === t)!;
+  expect(saveRow(h).hidden).toBe(false);
+  button("...").click();
+  await new Promise((r) => setTimeout(r, 0));
+  expect(h.s1.root.textContent).toContain("D:/runs");
+  await makeRun(h, [-125.34, 49.63, -125.24, 49.71]);
+  const names = [...written.keys()];
+  expect(names.some((n) => n.endsWith("_run.json"))).toBe(true);
+  expect(names.some((n) => n.endsWith("_t0001_p1of1.part"))).toBe(true);
+  const manifest = JSON.parse(written.get(names.find((n) => n.endsWith("_run.json"))!) as string);
+  expect(manifest.meta).toMatchObject({ complete: true, folder: "D:/runs", tiles: 1 });
+  expect(h.s1.progressRow.textContent).toContain("Saved to D:/runs.");
+
+  fail = true;                                          // the disk fills up: the run itself is fine
+  await makeRun(h, [-125.0, 49.63, -124.9, 49.71]);
+  expect(h.runs.list()).toHaveLength(2);
+  expect(h.s1.progressRow.textContent).toContain("Saving to the folder stopped: disk full");
+
+  button("stop saving to a folder").click();            // saveFolder lasts the session: leave it clear
+  expect(h.s1.root.textContent).not.toContain("D:/runs");
+});
+
+test("a run saved to a folder: Discard needs one click, Open folder brings it back, and it keeps saving", async () => {
+  const score = Float32Array.from([0.5, 0.6]), cov = Uint8Array.from([1, 1]);
+  const packed = await packTile({ window: [0, 1, 0, 2], score, cov, hist: new Float64Array(256) });
+  const disk = new Map<string, Uint8Array>();
+  const h = harness({
+    packed,
+    pickDownloadFolder: async () => ({ id: "f1", path: "D:/runs" }),
+    pickLocalDirectoryFiles: async () => [...disk].map(([n, b]) => new File([b as BlobPart], n)),
+    writeFileToFolder: async (_id: string, name: string, data: string | Uint8Array) => {
+      disk.set(name, typeof data === "string" ? new TextEncoder().encode(data) : data.slice());
+    },
+  });
+  const button = (t: string) => [...h.s1.root.querySelectorAll("button")].find((b) => b.textContent === t)!;
+  const settle = () => new Promise((r) => setTimeout(r, 10));
+  button("...").click();
+  await settle();
+  await makeRun(h, [-125.34, 49.63, -125.24, 49.71]);
+  await settle();
+  const id = h.runs.list()[0].id;
+
+  button("Discard run").click();                        // everything is in the folder: no question
+  expect(h.runs.list()).toEqual([]);
+
+  button("Open run...").click();
+  await new Promise((r) => setTimeout(r, 50));
+  expect(h.s1.progressRow.textContent).toContain("Opened 1 tiles.");
+  expect(h.s1.progressRow.textContent).not.toContain("set Save to");
+  expect(h.runs.get(id)!.tiles[0].cov.length).toBe(2);
+  expect(h.runs.get(id)!.writer).toBeTruthy();          // its folder is the one picked: saving goes on
+
+  button("stop saving to a folder").click();
+  h.runs.get(id)!.writer = undefined;
+  button("Open run...").click();                        // the same run again, folder not picked
+  await new Promise((r) => setTimeout(r, 50));
+  expect(h.s1.progressRow.textContent).toContain("To keep saving changes, set Save to to D:/runs.");
+  button("...").click();
+  await settle();
+  expect(h.runs.get(id)!.writer).toBeTruthy();          // picking it resumes
+  button("stop saving to a folder").click();
+});
+
+test("Open run lists a folder's runs and run files, and one click opens the run chosen", async () => {
+  const score = Float32Array.from([0.5, 0.6]), cov = Uint8Array.from([1, 1]);
+  const packed = await packTile({ window: [0, 1, 0, 2], score, cov, hist: new Float64Array(256) });
+  const disk = new Map<string, Uint8Array>();
+  const subfolders = new Set<unknown>();
+  const h = harness({
+    packed,
+    pickDownloadFolder: async () => ({ id: "f1", path: "D:/runs" }),
+    pickLocalDirectoryFiles: async () => [...disk].map(([n, b]) => new File([b as BlobPart], n)),
+    writeFileToFolder: async (_id: string, name: string, data: string | Uint8Array, o: { subfolder?: string }) => {
+      subfolders.add(o?.subfolder);
+      disk.set(name, typeof data === "string" ? new TextEncoder().encode(data) : data.slice());
+    },
+  });
+  const button = (t: string) => [...h.s1.root.querySelectorAll("button")].find((b) => b.textContent === t)!;
+  const settle = (ms = 10) => new Promise((r) => setTimeout(r, ms));
+  expect(button("Open run...").parentElement!.textContent).toContain("Save to");    // one Open, by the folder
+  button("...").click();
+  await settle();
+  await makeRun(h, [-125.34, 49.63, -125.24, 49.71]);
+  await settle();
+  await settle(1100);                                   // run names go by the second
+  await makeRun(h, [-120.34, 49.63, -120.24, 49.71]);
+  await settle();
+  expect(subfolders.size).toBe(2);                      // a folder per run
+  expect([...subfolders].every((n) => /^embed-cd_/.test(String(n)))).toBe(true);
+  disk.set("embed-cd_2019-2024_10m_2026-11-05.zip", new Uint8Array(4));
+  disk.set("holiday.zip", new Uint8Array(4));
+
+  button("Open run...").click();
+  await settle(50);
+  const list = h.s1.root.querySelector(".ecd-runlist") as HTMLElement;
+  expect(list.hidden).toBe(false);
+  expect(list.textContent).toContain("3 saved runs in that folder:");
+  expect(list.textContent).toContain("embed-cd_2019-2024_10m_2026-11-05.zip");
+  expect(list.textContent).not.toContain("holiday");
+
+  button("Cancel").click();
+  expect(list.hidden).toBe(true);
+
+  button("Open run...").click();
+  await settle(50);
+  list.querySelector("button")!.click();
+  await settle(50);
+  expect(list.hidden).toBe(true);
+  expect(h.s1.progressRow.textContent).toContain("Opened 1 tiles.");
+});
+
+test("a name typed before the box stays, even after clicking elsewhere, and names the run and its folder", async () => {
+  const folders: unknown[] = [];
+  const h = harness({
+    pickDownloadFolder: async () => ({ id: "f1", path: "D:/runs" }),
+    pickLocalDirectoryFiles: async () => null,
+    writeFileToFolder: async (_id: string, _name: string, _data: unknown, o: { subfolder?: string }) => { folders.push(o?.subfolder); },
+  });
+  const name = h.s1.root.querySelector("input.ecd-text") as HTMLInputElement;
+  [...h.s1.root.querySelectorAll("button")].find((b) => b.textContent === "...")!.click();
+  await new Promise((r) => setTimeout(r, 0));
+  name.value = "Van Island";
+  name.dispatchEvent(new Event("change"));              // clicked away: focus left the field
+  h.s1.setArea([-125.0, 49.0, -124.9, 49.1]);
+  expect(name.value).toBe("Van Island");
+  h.s1.setArea([-125.5, 49.0, -125.4, 49.1]);           // redrawn before running: still this name
+  expect(name.value).toBe("Van Island");
+  await makeRun(h, [-125.5, 49.0, -125.4, 49.1]);
+  expect(h.runs.list()[0].userName).toBe("Van Island");
+  expect(String(folders[0])).toMatch(/^embed-cd_Van-Island_2019-2024_/);
+  h.s1.setArea([-124.0, 49.0, -123.9, 49.1]);           // the next area: that name was the run's
+  expect(name.value).toBe("");
 });

@@ -8,6 +8,7 @@ import type { ChangeLayer } from "./map/changelayer";
 import type { ObjectsLayer } from "./map/objectslayer";
 import type { LabelState } from "./labeller";
 import type { CellGrid } from "./engine/cells";
+import type { FolderWriter } from "./runfolder";
 
 export type RunObjects = { polys: ObjectPoly[]; vectors: Float32Array; cutoff: number; minArea: number };
 
@@ -21,6 +22,12 @@ export type RunRecord = {
   histTotal: number[]; complete: boolean; failed: number; tiles: number;
   /** Written to a file, or opened from one: discarding it loses nothing. */
   saved?: boolean;
+  /** The folder it is being saved to as it runs (see runfolder.ts), for display. */
+  folder?: string;
+  /** Reopened from a folder: the object set in it, so labels written later still match it. */
+  objectsStamp?: number;
+  /** What its files in that folder start with (runfolder.ts). */
+  prefix?: string;
 };
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -65,6 +72,8 @@ export function ensureGroup(app: any, meta: RunRecord): void {
 
 /** A run in this session, with the map layers showing it (they outlive the panel being closed). */
 export type SessionRun = {
+  /** Saving this run to its folder (see runfolder.ts). */
+  writer?: FolderWriter;
   meta: RunRecord; tiles: TileResult[]; objects?: RunObjects; cells?: CellGrid[];
   change?: ChangeLayer; objectsLayer?: ObjectsLayer;
   /** This run's labelling progress, kept after every change (QGIS autosaves it to the run folder). */

@@ -83,3 +83,13 @@ test("cancel stops at once: the worker is shut down and tiles it had already sen
   job.cancel();                                          // a second click does nothing more
   expect(ev.filter((e) => e.type === "end")).toHaveLength(1);
 });
+
+test("saving to a folder: every tile arrives packed, in order, and the end comes after the last", async () => {
+  const ev: ClientEvent[] = [];
+  await startJob({ ...spec, pack: true }, (e) => ev.push(e), inProcessWorker).done;
+  const tiles = ev.filter((e) => e.type === "tile") as any[];
+  expect(tiles.length).toBeGreaterThan(0);
+  expect(tiles.map((t) => t.done)).toEqual(tiles.map((_, i) => i + 1));
+  expect(tiles.every((t) => t.packed instanceof Uint8Array && t.packed.length > 0)).toBe(true);
+  expect(ev.at(-1)).toMatchObject({ type: "end", cancelled: false });
+});

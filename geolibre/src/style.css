@@ -28,6 +28,10 @@
 .ecd-class.ecd-selected { background: hsl(var(--accent, var(--border))); font-weight: 600; }
 .ecd-unknown { color: hsl(var(--muted-foreground)); cursor: default; }
 .ecd-swatch { width: 18px; height: 18px; padding: 0; border: 1px solid hsl(var(--border)); border-radius: 3px; background: none; cursor: pointer; }
+.ecd-link { all: unset; cursor: pointer; text-decoration: underline; }
+.ecd-runlist { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; }
+.ecd-runlist[hidden] { display: none; }
+.ecd-runlist .ecd-btn { justify-content: flex-start; text-align: left; white-space: normal; }
 .ecd-small { padding: 3px 6px; font-size: 12px; line-height: 16px; min-height: 24px; justify-content: center; }
 .ecd-toggle.ecd-on, .ecd-small.ecd-on { background: hsl(var(--primary, 210 70% 50%)); color: hsl(var(--primary-foreground, 0 0% 100%)); }
 .ecd-options, .ecd-nameform:not(:empty) { border: 1px solid hsl(var(--border)); border-radius: 4px; padding: 6px 8px; display: flex; flex-direction: column; gap: 6px; }

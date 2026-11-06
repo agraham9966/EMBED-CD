@@ -146,7 +146,7 @@ async function deflateRaw(b: Uint8Array): Promise<Uint8Array> {
   return new Uint8Array(await new Response(out).arrayBuffer());
 }
 
-async function writeZip(files: Record<string, Uint8Array>): Promise<Blob> {
+export async function writeZip(files: Record<string, Uint8Array>): Promise<Blob> {
   const parts: BlobPart[] = [], central: Uint8Array[] = [];
   let offset = 0;
   for (const [name, data] of Object.entries(files)) {
