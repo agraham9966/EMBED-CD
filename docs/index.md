@@ -1,18 +1,18 @@
 # EMBED-CD
 
-Generate annual land change maps from satellite imagery RAPIDLY, at small and large-scale using QGIS. Draw a rectangle, pick
+Generate annual land change maps from satellite imagery RAPIDLY, at small and large-scale using QGIS or GeoLibre. Draw a rectangle, pick
 two years, press one button — then teach it what the changes *are* by clicking a few of them.
 
 <video controls autoplay loop muted playsinline
        style="width: 100%; border-radius: 4px; margin: 1.2em 0;">
-  <source src="assets/embed-cd-overview.mp4" type="video/mp4">
+  <source src="assets/embed-cd-geolibre-demo.mp4" type="video/mp4">
   Your browser cannot play this video —
-  <a href="assets/embed-cd-overview.mp4">download it instead</a>.
+  <a href="assets/embed-cd-geolibre-demo.mp4">download it instead</a>.
 </video>
 
 ## What's new
 
-- **GeoLibre (October 2026):** EMBED-CD now also runs inside GeoLibre, on desktop and on the web. Install it from GeoLibre's plugin manager. [More](geolibre.md)
+- **GeoLibre (November 2026):** EMBED-CD is now in GeoLibre's plugin registry and runs on desktop and on the web. In GeoLibre, open Settings → Manage Plugins and install EMBED-CD. [More](geolibre.md)
 - **1.1 (October 2026):** A before and after lens. Turn it on with the magnifier button under the class list, then move over the map to see the older imagery under your cursor. Hold A to see the newer year.
 
 ---

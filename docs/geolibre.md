@@ -13,7 +13,7 @@ You can also install a zip by hand: download `embed-cd-<version>.zip` from
 [Releases](https://github.com/agraham9966/EMBED-CD/releases), then use **Settings → Manage
 Plugins → Settings → Install from file**.
 
-Needs GeoLibre 3.4 or newer. Nothing else to install, and no account or API key.
+Needs GeoLibre 3.7 or newer. Nothing else to install, and no account or API key.
 
 ## Use it
 
